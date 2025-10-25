@@ -1,0 +1,13 @@
+#!/usr/bin/env node
+
+// ContextKeeper Quick Config Tool
+// Usage: ck [project-path]
+
+const { execSync } = require('child_process');
+const path = require('path');
+
+const projectPath = process.argv[2] || process.cwd();
+const configurePath = path.join(__dirname, '..', 'configure-project.js');
+
+console.log(`🧠 ContextKeeper: Switching to ${projectPath}`);
+execSync(`node "${configurePath}" "${projectPath}"`, { stdio: 'inherit' });
