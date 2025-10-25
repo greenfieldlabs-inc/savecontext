@@ -1,6 +1,8 @@
-# ContextKeeper
+# ContextKeeper 🧠
 
 > MCP Server for zero-context-loss AI tool switching
+> 
+> **Status:** Self-hosting! ContextKeeper is now running on itself during development.
 
 ## The Problem
 
