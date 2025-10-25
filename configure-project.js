@@ -7,6 +7,7 @@ const os = require('os');
 // Configuration paths for different AI tools
 const CONFIG_PATHS = {
   'Claude Desktop': path.join(os.homedir(), 'Library/Application Support/Claude/claude_desktop_config.json'),
+  'Claude Code CLI': path.join(os.homedir(), '.claude.json'),
   'VS Code Claude Dev': path.join(os.homedir(), 'Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json'),
   'Factory AI': path.join(os.homedir(), '.factory/mcp.json')
 };
@@ -19,13 +20,25 @@ function updateConfig(configPath, projectPath, toolName) {
       config.mcpServers = {};
     }
     
-    config.mcpServers.contextkeeper = {
-      command: "node",
-      args: ["/Users/shane/code/dev/contextkeeper/server/dist/index.js"],
-      env: {
-        PROJECT_PATH: projectPath
-      }
-    };
+    // Claude Code CLI needs "type": "stdio" field
+    if (toolName === 'Claude Code CLI') {
+      config.mcpServers.contextkeeper = {
+        type: "stdio",
+        command: "node",
+        args: ["/Users/shane/code/dev/contextkeeper/server/dist/index.js"],
+        env: {
+          PROJECT_PATH: projectPath
+        }
+      };
+    } else {
+      config.mcpServers.contextkeeper = {
+        command: "node",
+        args: ["/Users/shane/code/dev/contextkeeper/server/dist/index.js"],
+        env: {
+          PROJECT_PATH: projectPath
+        }
+      };
+    }
     
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
     console.log(`✅ ${toolName}: Updated to ${projectPath}`);

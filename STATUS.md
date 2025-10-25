@@ -5,6 +5,7 @@
 | Tool | Config Location | Status |
 |------|----------------|---------|
 | **Claude Desktop** | `~/Library/Application Support/Claude/claude_desktop_config.json` | ✅ Configured |
+| **Claude Code CLI** | `~/.claude.json` | ✅ Configured |
 | **VS Code Claude Dev** | `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` | ✅ Configured |
 | **Factory AI** | `~/.factory/mcp.json` | ✅ Configured |
 
