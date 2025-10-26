@@ -1,0 +1,334 @@
+// ContextKeeper Database Schema
+// Production-ready PostgreSQL schema for multi-tenant SaaS
+// Last updated: 2025-10-25
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// USER MANAGEMENT
+// ============================================================================
+
+model User {
+  id                 String    @id @default(uuid())
+  email              String    @unique
+  emailVerified      DateTime? // NULL until email is verified
+  stripeCustomerId   String?   @unique
+  subscriptionStatus String    @default("free") // 'free' | 'pro' | 'canceled'
+
+  // Soft delete for GDPR compliance
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  sessions    Session[]
+  apiKeys     ApiKey[]
+  usageStats  UsageStats[]
+  auditLogs   AuditLog[]
+  accounts    Account[] // NextAuth accounts
+
+  @@index([email])
+  @@index([emailVerified])
+  @@index([stripeCustomerId])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+// ============================================================================
+// AUTHENTICATION (NextAuth)
+// ============================================================================
+
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String // 'email' | 'oauth'
+  provider          String // 'email' | 'google' | 'github'
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model VerificationToken {
+  identifier String // Email address
+  token      String @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@index([expires])
+  @@map("verification_tokens")
+}
+
+// ============================================================================
+// API KEYS (Multiple keys per user with expiration)
+// ============================================================================
+
+model ApiKey {
+  id        String    @id @default(uuid())
+  userId    String
+  keyHash   String    @unique // bcrypt hash, NEVER plain text
+  name      String // User-defined name like "Production Server"
+  lastUsed  DateTime?
+  expiresAt DateTime? // Optional expiration date
+  revokedAt DateTime? // Soft delete for audit trail
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([keyHash])
+  @@index([expiresAt])
+  @@index([revokedAt])
+  @@map("api_keys")
+}
+
+// ============================================================================
+// SESSIONS (Structured data instead of JSON blob)
+// ============================================================================
+
+model Session {
+  id          String   @id @default(uuid())
+  userId      String
+  projectName String
+  toolUsed    String // 'claude-code' | 'cursor' | 'factory' | 'codex'
+  tokenCount  Int
+
+  // Encrypted context data (for backward compatibility)
+  encryptedContext String? @db.Text
+
+  // Soft delete for GDPR
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations (structured data)
+  files    SessionFile[]
+  tasks    SessionTask[]
+  memories SessionMemory[]
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)]) // Composite index for pagination
+  @@index([projectName])
+  @@index([toolUsed])
+  @@index([deletedAt])
+  @@map("sessions")
+}
+
+// ============================================================================
+// SESSION FILES (Searchable file content)
+// ============================================================================
+
+model SessionFile {
+  id        String @id @default(uuid())
+  sessionId String
+  path      String
+  content   String @db.Text
+  lineCount Int
+  language  String? // 'typescript' | 'python' | 'javascript' etc.
+
+  createdAt DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([path])
+  @@map("session_files")
+}
+
+// ============================================================================
+// SESSION TASKS (Current work items)
+// ============================================================================
+
+model SessionTask {
+  id          String  @id @default(uuid())
+  sessionId   String
+  description String  @db.Text
+  completed   Boolean @default(false)
+  priority    String  @default("medium") // 'high' | 'medium' | 'low'
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([completed])
+  @@map("session_tasks")
+}
+
+// ============================================================================
+// SESSION MEMORIES (Key-value pairs per session)
+// ============================================================================
+
+model SessionMemory {
+  id        String @id @default(uuid())
+  sessionId String
+  key       String
+  value     String @db.Text
+  type      String @default("other") // 'api' | 'schema' | 'decision' | 'bug' | 'credential' | 'pattern' | 'other'
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, key])
+  @@index([sessionId])
+  @@index([type])
+  @@map("session_memories")
+}
+
+// ============================================================================
+// USAGE STATISTICS (Daily aggregation)
+// ============================================================================
+
+model UsageStats {
+  id              String   @id @default(uuid())
+  userId          String
+  date            DateTime @db.Date
+  sessionsCreated Int      @default(0)
+  tokensUsed      Int      @default(0)
+  apiCallsMade    Int      @default(0)
+
+  // Tool-specific breakdowns
+  claudeCodeSessions Int @default(0)
+  cursorSessions     Int @default(0)
+  factorySessions    Int @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId, date(sort: Desc)])
+  @@index([date])
+  @@map("usage_stats")
+}
+
+// ============================================================================
+// AUDIT LOGS (Track all sensitive actions)
+// ============================================================================
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  action     String // 'create' | 'read' | 'update' | 'delete' | 'export' | 'login'
+  resource   String // 'session' | 'api_key' | 'user' | 'subscription'
+  resourceId String? // ID of the affected resource
+  metadata   Json? // Additional context
+
+  // Request context
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([action])
+  @@index([resource, resourceId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================================================
+// GIT SNAPSHOTS (Optional: Track git state per session)
+// ============================================================================
+
+model GitSnapshot {
+  id              String  @id @default(uuid())
+  userId          String
+  projectName     String
+  branch          String
+  commitHash      String?
+  uncommittedDiff String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, projectName])
+  @@index([projectName, createdAt(sort: Desc)])
+  @@map("git_snapshots")
+}
+
+// ============================================================================
+// SUBSCRIPTION EVENTS (Stripe webhook history)
+// ============================================================================
+
+model SubscriptionEvent {
+  id                 String   @id @default(uuid())
+  userId             String?
+  stripeEventId      String   @unique
+  stripeCustomerId   String?
+  eventType          String // 'checkout.session.completed' | 'subscription.created' etc.
+  subscriptionId     String?
+  subscriptionStatus String? // 'active' | 'canceled' | 'past_due'
+  planId             String? // price_xxxxx
+  amount             Int? // in cents
+  currency           String?  @default("usd")
+
+  // Raw Stripe event data
+  rawData Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([stripeCustomerId])
+  @@index([eventType])
+  @@index([createdAt])
+  @@map("subscription_events")
+}
+
+// ============================================================================
+// FEATURE FLAGS (Optional: For gradual rollouts)
+// ============================================================================
+
+model FeatureFlag {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  description String?
+  enabled     Boolean @default(false)
+  percentage  Int     @default(100) // Rollout percentage (0-100)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([enabled])
+  @@map("feature_flags")
+}
+
+// ============================================================================
+// USER FEATURE FLAGS (Per-user feature overrides)
+// ============================================================================
+
+model UserFeatureFlag {
+  id            String  @id @default(uuid())
+  userId        String
+  featureFlagId String
+  enabled       Boolean
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, featureFlagId])
+  @@index([userId])
+  @@map("user_feature_flags")
+}

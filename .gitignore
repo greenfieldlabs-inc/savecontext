@@ -11,6 +11,7 @@ build/
 
 # Local data
 .contextkeeper/
+.claude/
 *.db
 *.sqlite
 
@@ -44,6 +45,25 @@ htmlcov/
 *.temp
 outputs/
 test_repos/
+archive-research/
+scripts/
+docs/
 
 # Python
 uv.lock
+
+# Amplify
+.amplify/
+amplify/
+
+# Next.js
+.next/
+out/
+
+# Prisma
+prisma/.env
+
+# Secrets and keys
+*.pem
+*.key
+keys.json
