@@ -1,8 +1,8 @@
 {
-  "name": "@contextkeeper/database",
+  "name": "@savecontext/db",
   "version": "0.1.0",
   "private": true,
-  "description": "Shared Prisma database schema for ContextKeeper",
+  "description": "Shared Prisma database schema for SaveContext",
   "scripts": {
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",
@@ -12,9 +12,11 @@
     "seed": "tsx seed.ts"
   },
   "dependencies": {
-    "@prisma/client": "^5.7.1"
+    "@prisma/client": "^5.7.1",
+    "bcryptjs": "^3.0.2"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^3.0.0",
     "prisma": "^5.7.1",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3"

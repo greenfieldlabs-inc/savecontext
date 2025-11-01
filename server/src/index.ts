@@ -7,6 +7,10 @@ import { GitManager } from "./git/GitManager.js";
 import { ContextBuilder } from "./context/ContextBuilder.js";
 import { SessionManager } from "./context/SessionManager.js";
 import { CompressionEngine } from "./compression/CompressionEngine.js";
+import { countTokens, countMessageTokens, countContextTokens, formatTokenCount } from "./token-counter.js";
+import { syncSessionToCloud, isProUser, getUsageStats } from "./sync.js";
+import { syncQueue } from "./queue.js";
+import { storeApiKey, getApiKey } from "./crypto.js";
 import path from "path";
 import fs from "fs/promises";
 
@@ -21,7 +25,7 @@ const compressionEngine = new CompressionEngine();
 
 // Create MCP server
 const server = new McpServer({
-  name: "contextkeeper",
+  name: "savecontext",
   version: "0.1.0"
 });
 
@@ -91,28 +95,116 @@ server.registerTool(
   }
 );
 
-// Register tool: save_session
+// Register tool: save_session (ENHANCED with token counting and cloud sync)
 server.registerTool(
   "save_session",
   {
-    description: "Save current session state",
+    description: "Save current session state with accurate token counting and cloud sync for Pro users",
     inputSchema: {
+      session_id: z.string().optional(),
+      user_id: z.string().optional(),
+      tool: z.string().optional(),
+      timestamp: z.string().optional(),
+      project: z.object({
+        name: z.string().optional(),
+        path: z.string().optional(),
+        languages: z.array(z.string()).optional(),
+      }).optional(),
+      conversation: z.object({
+        messages: z.array(z.any()).optional(),
+      }).optional(),
+      user_prompt: z.string().optional(),
+      git: z.object({
+        branch: z.string().optional(),
+        status: z.string().optional(),
+        last_commit: z.object({
+          hash: z.string().optional(),
+          message: z.string().optional(),
+        }).optional(),
+        uncommitted_diff: z.string().optional(),
+      }).optional(),
+      platform_data: z.object({
+        session_id: z.string().optional(),
+        permission_mode: z.string().optional(),
+        is_remote: z.boolean().optional(),
+      }).optional(),
+      // Legacy support
       messages: z.array(z.any()).optional(),
       metadata: z.record(z.any()).optional(),
     }
   },
   async (args) => {
-    const sessionId = await sessionManager.saveSession({
-      messages: args.messages || [],
-      metadata: args.metadata || {},
-      git_snapshot: await gitManager.getStatus(),
+    // Extract messages from either conversation.messages or legacy messages field
+    const messages = args.conversation?.messages || args.messages || [];
+
+    // Calculate accurate token count
+    const tokenCount = messages.length > 0
+      ? countMessageTokens(messages)
+      : 0;
+
+    // Build comprehensive metadata
+    const metadata = {
+      ...args.metadata,
+      tokenCount,
+      tokenCountFormatted: formatTokenCount(tokenCount),
+      tool: args.tool || process.env.MCP_TOOL || 'unknown',
+      userPrompt: args.user_prompt,
+      platformData: args.platform_data,
+    };
+
+    // Build git snapshot from hook data or fallback to gitManager
+    const git_snapshot = args.git || await gitManager.getStatus();
+
+    // Save to local database
+    const sessionId = args.session_id || args.platform_data?.session_id || await sessionManager.saveSession({
+      messages,
+      metadata,
+      git_snapshot,
     });
-    
+
+    // Try to sync to cloud if Pro user
+    const userId = args.user_id || process.env.USER_ID || 'local-user';
+    const isPro = await isProUser(userId);
+
+    let syncStatus = 'local-only (Free tier)';
+
+    if (isPro) {
+      const projectName = args.project?.name || path.basename(args.project?.path || PROJECT_PATH);
+
+      const syncResult = await syncSessionToCloud({
+        id: sessionId,
+        userId,
+        projectName,
+        toolUsed: args.tool || process.env.MCP_TOOL || 'unknown',
+        tokenCount,
+        context: { messages, metadata, git: git_snapshot, project: args.project },
+        metadata,
+        createdAt: new Date(args.timestamp || Date.now()),
+      });
+
+      if (syncResult.success) {
+        syncStatus = '✓ synced to cloud';
+      } else {
+        // Add to offline queue
+        await syncQueue.add({
+          id: sessionId,
+          userId,
+          projectName,
+          toolUsed: args.tool || process.env.MCP_TOOL || 'unknown',
+          tokenCount,
+          context: { messages, metadata, git: git_snapshot, project: args.project },
+          metadata,
+          createdAt: new Date(args.timestamp || Date.now()),
+        }, syncResult.error);
+        syncStatus = '⏳ queued for sync';
+      }
+    }
+
     return {
       content: [
         {
           type: "text",
-          text: `Session saved: ${sessionId}`,
+          text: `Session saved: ${sessionId}\nTokens: ${formatTokenCount(tokenCount)}\nStatus: ${syncStatus}`,
         },
       ],
     };
@@ -238,6 +330,103 @@ server.registerTool(
   }
 );
 
+// Register tool: sync_now (Pro only)
+server.registerTool(
+  "sync_now",
+  {
+    description: "Force immediate sync of all pending sessions to cloud (Pro users only)",
+    inputSchema: {}
+  },
+  async () => {
+    const userId = process.env.USER_ID || 'local-user';
+    const isPro = await isProUser(userId);
+
+    if (!isPro) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "⚠️  This feature requires a Pro subscription.\nUpgrade at https://savecontext.io/pricing",
+          },
+        ],
+      };
+    }
+
+    const result = await syncQueue.syncNow();
+    const queueStatus = syncQueue.getStatus();
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `✓ Sync completed\n\nSynced: ${result.synced} sessions\nFailed: ${result.failed} sessions\nQueue status: ${queueStatus.total} total, ${queueStatus.ready} ready, ${queueStatus.failed} permanently failed`,
+        },
+      ],
+    };
+  }
+);
+
+// Register tool: get_stats (Pro only)
+server.registerTool(
+  "get_stats",
+  {
+    description: "Get usage statistics and quota information (Pro users only)",
+    inputSchema: {}
+  },
+  async () => {
+    const userId = process.env.USER_ID || 'local-user';
+    const isPro = await isProUser(userId);
+
+    if (!isPro) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "⚠️  This feature requires a Pro subscription.\nUpgrade at https://savecontext.io/pricing",
+          },
+        ],
+      };
+    }
+
+    const stats = await getUsageStats(userId);
+
+    if (!stats) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "❌ Failed to fetch usage statistics from cloud.\nCheck your API key and internet connection.",
+          },
+        ],
+      };
+    }
+
+    const quotaPercentage = ((1000000 - stats.quotaRemaining) / 1000000) * 100;
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `📊 Usage Statistics
+
+Today:
+  Sessions: ${stats.today.sessions}
+  Tokens: ${formatTokenCount(stats.today.tokens)}
+
+This Week:
+  Sessions: ${stats.thisWeek.sessions}
+  Tokens: ${formatTokenCount(stats.thisWeek.tokens)}
+
+Daily Quota:
+  Used: ${formatTokenCount(1000000 - stats.quotaRemaining)} (${quotaPercentage.toFixed(1)}%)
+  Remaining: ${formatTokenCount(stats.quotaRemaining)}
+  Limit: ${formatTokenCount(1000000)}`,
+        },
+      ],
+    };
+  }
+);
+
 // Register tool: explain_codebase
 server.registerTool(
   "explain_codebase",
@@ -262,18 +451,31 @@ server.registerTool(
 
 // Initialize server on startup
 async function initialize() {
-  process.stderr.write(`ContextKeeper MCP Server v0.1.0\n`);
+  process.stderr.write(`SaveContext MCP Server v0.1.0 (Enhanced)\n`);
   process.stderr.write(`Project: ${PROJECT_PATH}\n`);
-  
+
   // Check if git repository
   const isGitRepo = await gitManager.isGitRepository();
   if (!isGitRepo) {
     process.stderr.write("Warning: Not a git repository. Git features will be limited.\n");
   }
-  
+
   // Initialize session manager
   await sessionManager.initialize();
-  
+
+  // Initialize sync queue (for offline sync)
+  await syncQueue.initialize();
+  process.stderr.write("✓ Sync queue initialized\n");
+
+  // Check Pro status
+  const userId = process.env.USER_ID || 'local-user';
+  const isPro = await isProUser(userId);
+  if (isPro) {
+    process.stderr.write("✓ Pro user detected - cloud sync enabled\n");
+  } else {
+    process.stderr.write("ℹ Free tier - local storage only. Upgrade at https://savecontext.io/pricing\n");
+  }
+
   // Check for existing .claude/sessions and offer to migrate
   const claudePath = path.join(PROJECT_PATH, ".claude/sessions");
   try {
@@ -282,8 +484,8 @@ async function initialize() {
   } catch {
     // No existing sessions
   }
-  
-  process.stderr.write("Server ready for connections\n");
+
+  process.stderr.write("✓ Server ready for connections\n");
 }
 
 // Start server

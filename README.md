@@ -1,95 +1,72 @@
-# ContextKeeper 🧠
+# SaveContext
 
-> MCP Server for zero-context-loss AI tool switching
-> 
-> **Status:** Self-hosting! ContextKeeper is now running on itself during development.
+SaveContext is a zero-context-loss MCP server that solves a critical problem: AI tools fragment and lose context as you work. They pre-compact conversations, drop important details, and force you to re-explain your project from scratch. SaveContext is your single source of truth—preserving complete, uncompressed context across every tool.
 
-## The Problem
-
-Every time you switch between AI coding tools (Claude Desktop, Factory AI, Cursor, Copilot), you lose context. You have to re-explain your project, rebuild the conversation, and hope the new tool understands what you were doing.
-
-## The Solution
-
-ContextKeeper is an MCP (Model Context Protocol) server that maintains persistent context across all your AI tools. It automatically:
+## Why SaveContext?
 
 - **Tracks your codebase** - Git status, recent changes, file structure
 - **Maintains memory** - API endpoints, schemas, decisions, patterns
 - **Enables seamless switching** - Move between tools without losing context
-- **Compresses intelligently** - Fits context into each tool's token limits
+- **Preserves complete context** - No pre-compaction, no dropped details
 - **Works immediately** - Zero configuration for existing projects
 
 ## Quick Start
 
-### 1. Install
+### Prerequisites
+
+- Node.js 18+
+- PostgreSQL (local or remote)
+- pnpm (recommended) or npm
+
+### Installation
 
 ```bash
-npm install -g contextkeeper
-# or use directly with npx
-npx contextkeeper init
+# Clone the repository
+git clone https://github.com/greenfieldlabs-inc/savecontext.git
+cd savecontext
+
+# Install dependencies
+pnpm install
+
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your DATABASE_URL
+
+# Run Prisma migrations
+cd db
+npx prisma migrate dev
+cd ..
+
+# Build the server
+cd server
+npm run build
+cd ..
 ```
 
-### 2. Initialize in your project
+### Configure Claude Code
 
-```bash
-cd your-project
-npx contextkeeper init
-```
-
-This creates:
-- `.contextkeeper/` - Local context storage
-- Configuration for Claude Desktop
-
-### 3. Start the MCP server
-
-```bash
-npx contextkeeper serve
-```
-
-### 4. Connect from Claude Desktop
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Add to `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
-    "contextkeeper": {
+    "savecontext": {
+      "type": "stdio",
       "command": "npx",
-      "args": ["contextkeeper", "serve"],
+      "args": ["tsx", "/absolute/path/to/savecontext/server/src/index.ts"],
       "env": {
-        "PROJECT_PATH": "/path/to/your/project"
+        "DATABASE_URL": "postgresql://username@localhost:5432/savecontext_dev",
+        "USER_ID": "your-user-id"
       }
     }
   }
 }
 ```
 
-## How It Works
-
-When you connect an AI tool to your project, ContextKeeper:
-
-1. **Detects your environment** - Git repo, languages, frameworks
-2. **Builds context automatically** - Recent changes, file structure, project profile
-3. **Streams to the AI tool** - No manual explanation needed
-4. **Maintains continuity** - Saves sessions for seamless switching
-
-### Example Workflow
-
-```
-# Working in Claude Desktop
-User: "Help me refactor the auth middleware"
-Claude: [works on auth.ts, makes changes]
-
-# Switch to Factory AI (better for testing)
-# ContextKeeper automatically provides:
-# - What Claude just changed
-# - Current git diff
-# - Project context
-# - Conversation summary
-
-# In Factory AI
-User: "Write tests for the refactored auth"
-Factory: "I see you just refactored the auth middleware. Let me write comprehensive tests..."
-```
+Replace:
+- `/absolute/path/to/savecontext` with your actual installation path
+- `username` with your PostgreSQL username
+- `your-user-id` with a unique identifier
 
 ## MCP Tools Available
 
@@ -100,116 +77,138 @@ Factory: "I see you just refactored the auth middleware. Let me write comprehens
 - `explain_codebase` - Auto-generated codebase explanation
 
 ### Session Management
-- `save_session` - Save current conversation state
+- `save_session` - Save current conversation state with token counting
 - `load_session` - Load previous session
 - `compress_context` - Fit context into token limits
+- `sync_now` - Force immediate sync (Pro users)
+- `get_stats` - Usage statistics and quota information (Pro users)
 
 ### Memory System
 - `remember` - Store important information (API keys, patterns, decisions)
 - `recall` - Retrieve stored information
-- `list_memories` - See all stored memories
 
 ## Features
 
-### 🔧 Git-Native Integration
+### Git-Native Integration
 - Tracks branch, uncommitted changes, recent commits
 - Understands what changed between sessions
 - Provides git context automatically
 
-### 🧠 Smart Compression
+### Smart Compression
 - Keeps recent messages verbatim
 - Summarizes older conversations
 - Compresses code intelligently
 - Respects each tool's token limits
 
-### 💾 Persistent Memory
+### Persistent Memory
 - API endpoints and schemas
 - Architecture decisions
 - Known bugs and solutions
 - User preferences
 
-### 🔄 Tool-Agnostic
+### Tool-Agnostic
 - Works with any MCP-compatible tool
 - Adapts format for each tool
 - Maintains context across switches
 
+### Secure Storage
+- OS keychain integration for API keys
+- Encrypted context storage
+- Soft delete for GDPR compliance
+
 ## Architecture
 
 ```
-Your Project
-    ├── .git/                 # Git repository
-    ├── .contextkeeper/       # Local context storage
-    │   ├── profile.json      # Project profile
-    │   └── claude_desktop_config.json
-    │
-    └── [Your code files]
-
-~/.contextkeeper/             # Global storage
-    └── contextkeeper.db      # SQLite database
-        ├── sessions          # Conversation history
-        ├── memories          # Persistent knowledge
-        └── git_snapshots     # Git state tracking
+savecontext/
+├── server/           # MCP server (TypeScript)
+│   └── src/
+│       ├── git/      # Git integration
+│       ├── context/  # Context building
+│       ├── crypto.ts # Secure API key storage
+│       ├── sync.ts   # Database synchronization
+│       └── queue.ts  # Offline sync queue
+├── db/               # Prisma schema and migrations
+│   ├── schema.prisma
+│   └── migrations/
+└── app/              # Next.js dashboard (planned)
 ```
+
+## Database Schema
+
+SaveContext uses PostgreSQL with Prisma ORM:
+
+- **Users** - Authentication and subscription management
+- **Sessions** - Conversation history with token counts
+- **SessionFiles** - Searchable file content
+- **SessionTasks** - Current work items
+- **SessionMemory** - Key-value pairs per session
+- **GitSnapshots** - Git state tracking
+- **UsageStats** - Daily aggregation for quota management
+- **AuditLog** - Security and compliance tracking
 
 ## Development
 
-### Setup
+### Running the Server
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/contextkeeper
-cd contextkeeper
+# Development mode with auto-reload
+cd server
+npm run serve
 
-# Install dependencies
-npm install
-
-# Build
+# Production mode
 npm run build
+npm start
 ```
 
-### Project Structure
+### Testing
 
+```bash
+# Test local PostgreSQL sync
+cd server
+node test-sync.mjs
 ```
-contextkeeper/
-├── server/           # MCP server (TypeScript)
-│   └── src/
-│       ├── git/     # Git integration
-│       ├── context/ # Context building
-│       └── compression/
-├── cli/             # CLI tool
-└── src/             # Python compression (from research)
+
+### Database Management
+
+```bash
+# Generate Prisma client
+cd db
+npx prisma generate
+
+# Create new migration
+npx prisma migrate dev --name migration_name
+
+# View database
+npx prisma studio
 ```
 
 ## Roadmap
 
-### Phase 1: Core (Current)
-- ✅ Git integration
-- ✅ Session management
-- ✅ Text compression
-- ✅ Memory system
-- ✅ Claude Desktop support
+### Current Status
+- Local PostgreSQL storage
+- Accurate token counting with tiktoken
+- Secure API key management
+- Offline sync queue with retry logic
+- 10 MCP tools available
 
-### Phase 2: Enhanced Compression
-- [ ] Vision compression for large files (using Qwen research)
-- [ ] LLM-powered summarization
-- [ ] Incremental updates
-- [ ] Smart caching
-
-### Phase 3: More Tools
-- [ ] Cursor integration
-- [ ] Factory AI support
-- [ ] Copilot compatibility
-- [ ] VS Code extension
-
-### Phase 4: Team Features
-- [ ] Shared project contexts
-- [ ] Team memories
-- [ ] Hosted service option
-- [ ] Analytics dashboard
+### Planned Features
+- Cloud synchronization API
+- Next.js dashboard for session visualization
+- NextAuth integration
+- Stripe payment processing
+- Enhanced compression with vision models
+- Multi-tool integration (Cursor, Factory AI, Copilot)
+- Team collaboration features
 
 ## Contributing
 
-Contributions welcome! Please read our [Contributing Guide](CONTRIBUTING.md) first.
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
 
@@ -219,11 +218,11 @@ MIT - See [LICENSE](LICENSE) file
 
 Built on top of:
 - [Model Context Protocol](https://modelcontextprotocol.io) by Anthropic
-- Research on visual compression for code understanding
-- Community feedback and contributions
+- [Prisma](https://www.prisma.io) for database management
+- [tiktoken](https://github.com/openai/tiktoken) for accurate token counting
 
 ---
 
-**Problem?** Open an issue: [github.com/yourusername/contextkeeper/issues](https://github.com/yourusername/contextkeeper/issues)
+**Issues:** [github.com/greenfieldlabs-inc/savecontext/issues](https://github.com/greenfieldlabs-inc/savecontext/issues)
 
-**Questions?** Start a discussion: [github.com/yourusername/contextkeeper/discussions](https://github.com/yourusername/contextkeeper/discussions)
+**Discussions:** [github.com/greenfieldlabs-inc/savecontext/discussions](https://github.com/greenfieldlabs-inc/savecontext/discussions)

@@ -32,15 +32,15 @@ export class SessionManager {
   constructor(projectPath: string) {
     this.projectPath = projectPath;
     // Store database in user's home directory
-    this.contextKeeperDir = path.join(os.homedir(), '.contextkeeper');
+    this.contextKeeperDir = path.join(os.homedir(), '.savecontext');
   }
   
   async initialize(): Promise<void> {
-    // Create .contextkeeper directory if it doesn't exist
+    // Create .savecontext directory if it doesn't exist
     await fs.mkdir(this.contextKeeperDir, { recursive: true });
     
     // Initialize SQLite database
-    const dbPath = path.join(this.contextKeeperDir, 'contextkeeper.db');
+    const dbPath = path.join(this.contextKeeperDir, 'savecontext.db');
     this.db = new Database(dbPath);
     
     // Create tables

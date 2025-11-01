@@ -11,9 +11,11 @@ build/
 
 # Local data
 .contextkeeper/
+.savecontext/
 .claude/
 *.db
 *.sqlite
+sync-queue.json
 
 # Environment
 .env

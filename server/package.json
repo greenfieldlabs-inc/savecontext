@@ -1,7 +1,7 @@
 {
-  "name": "@contextkeeper/server",
+  "name": "@savecontext/mcp",
   "version": "0.1.0",
-  "description": "MCP server for zero-context-loss AI tool switching",
+  "description": "MCP server for SaveContext - Zero-context-loss AI tool switching",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
@@ -12,8 +12,12 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.2",
+    "@prisma/client": "^5.7.1",
+    "bcryptjs": "^3.0.2",
     "better-sqlite3": "^11.6.0",
+    "keytar": "^7.9.0",
     "simple-git": "^3.27.0",
+    "tiktoken": "^1.0.22",
     "zod": "^3.24.1"
   },
   "devDependencies": {
