@@ -125,7 +125,7 @@ The server integrates with git through Node.js child processes:
 
 Git information is optional and only captured when `include_git: true` is specified.
 
-## API Reference
+## Tool Reference
 
 ### Session Management
 
