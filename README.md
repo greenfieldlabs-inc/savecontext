@@ -1,228 +1,249 @@
 # SaveContext
 
-SaveContext is a zero-context-loss MCP server that solves a critical problem: AI tools fragment and lose context as you work. They pre-compact conversations, drop important details, and force you to re-explain your project from scratch. SaveContext is your single source of truth—preserving complete, uncompressed context across every tool.
+MCP server for persistent context management across AI coding sessions.
 
-## Why SaveContext?
+## Overview
 
-- **Tracks your codebase** - Git status, recent changes, file structure
-- **Maintains memory** - API endpoints, schemas, decisions, patterns
-- **Enables seamless switching** - Move between tools without losing context
-- **Preserves complete context** - No pre-compaction, no dropped details
-- **Works immediately** - Zero configuration for existing projects
+SaveContext is a Model Context Protocol (MCP) server that provides stateful session management for AI coding assistants. It solves the problem of context loss when switching between AI tools or when conversations exceed token limits by maintaining persistent storage of decisions, tasks, and session state with checkpoint/restore capabilities.
 
-## Quick Start
+## Features
 
-### Prerequisites
+- **Session Management**: Organize work by sessions with automatic channel detection from git branches
+- **Checkpoints**: Create named snapshots of session state with optional git status capture
+- **Smart Compaction**: Analyze priority items and generate restoration summaries when approaching context limits
+- **Channel System**: Automatically derive channels from git branches (e.g., `feature/auth` → `feature-auth`)
+- **Local Storage**: SQLite database with WAL mode for fast, reliable persistence
+- **Cross-Tool Compatible**: Works with any MCP-compatible client (Claude Code, Cursor, Factory, Codex, Cline, etc.)
 
-- Node.js 18+
-- PostgreSQL (local or remote)
-- pnpm (recommended) or npm
-
-### Installation
+## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/greenfieldlabs-inc/savecontext.git
-cd savecontext
-
-# Install dependencies
+git clone https://github.com/ShaneOxM/savecontext.git
+cd savecontext/server
 pnpm install
-
-# Set up environment variables
-cp .env.example .env
-# Edit .env with your DATABASE_URL
-
-# Run Prisma migrations
-cd db
-npx prisma migrate dev
-cd ..
-
-# Build the server
-cd server
-npm run build
-cd ..
+pnpm build
 ```
 
-### Configure Claude Code
+## Configuration
 
-Add to `~/.claude.json`:
+Add to your MCP client configuration file:
 
 ```json
 {
   "mcpServers": {
     "savecontext": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["tsx", "/absolute/path/to/savecontext/server/src/index.ts"],
-      "env": {
-        "DATABASE_URL": "postgresql://username@localhost:5432/savecontext_dev",
-        "USER_ID": "your-user-id"
-      }
+      "command": "node",
+      "args": ["/absolute/path/to/savecontext/server/dist/index.js"]
     }
   }
 }
 ```
 
-Replace:
-- `/absolute/path/to/savecontext` with your actual installation path
-- `username` with your PostgreSQL username
-- `your-user-id` with a unique identifier
-
-## MCP Tools Available
-
-### Core Context Tools
-- `get_project_context` - Full project overview with git status
-- `get_recent_changes` - Changes since last session
-- `get_file_structure` - Project file tree
-- `explain_codebase` - Auto-generated codebase explanation
-
-### Session Management
-- `save_session` - Save current conversation state with token counting
-- `load_session` - Load previous session
-- `compress_context` - Fit context into token limits
-- `sync_now` - Force immediate sync (Pro users)
-- `get_stats` - Usage statistics and quota information (Pro users)
-
-### Memory System
-- `remember` - Store important information (API keys, patterns, decisions)
-- `recall` - Retrieve stored information
-
-## Features
-
-### Git-Native Integration
-- Tracks branch, uncommitted changes, recent commits
-- Understands what changed between sessions
-- Provides git context automatically
-
-### Smart Compression
-- Keeps recent messages verbatim
-- Summarizes older conversations
-- Compresses code intelligently
-- Respects each tool's token limits
-
-### Persistent Memory
-- API endpoints and schemas
-- Architecture decisions
-- Known bugs and solutions
-- User preferences
-
-### Tool-Agnostic
-- Works with any MCP-compatible tool
-- Adapts format for each tool
-- Maintains context across switches
-
-### Secure Storage
-- OS keychain integration for API keys
-- Encrypted context storage
-- Soft delete for GDPR compliance
+The server communicates via stdio using the MCP protocol.
 
 ## Architecture
 
+### Server Implementation
+
+The MCP server is built on `@modelcontextprotocol/sdk` and provides 10 tools for context management. The server maintains a single active session per connection and stores all data in a local SQLite database.
+
 ```
-savecontext/
-├── server/           # MCP server (TypeScript)
-│   └── src/
-│       ├── git/      # Git integration
-│       ├── context/  # Context building
-│       ├── crypto.ts # Secure API key storage
-│       ├── sync.ts   # Database synchronization
-│       └── queue.ts  # Offline sync queue
-├── db/               # Prisma schema and migrations
-│   ├── schema.prisma
-│   └── migrations/
-└── app/              # Next.js dashboard (planned)
+server/
+├── src/
+│   ├── index.ts              # MCP server with tool handlers
+│   ├── database/
+│   │   ├── index.ts          # DatabaseManager class
+│   │   └── schema.sql        # SQLite schema
+│   ├── utils/
+│   │   ├── channels.ts       # Channel derivation and normalization
+│   │   ├── git.ts            # Git branch and status integration
+│   │   └── validation.ts     # Input validation
+│   └── types/
+│       └── index.ts          # TypeScript type definitions
+└── dist/                      # Compiled JavaScript
 ```
 
-## Database Schema
+### Database Schema
 
-SaveContext uses PostgreSQL with Prisma ORM:
+The server uses SQLite with the following schema:
 
-- **Users** - Authentication and subscription management
-- **Sessions** - Conversation history with token counts
-- **SessionFiles** - Searchable file content
-- **SessionTasks** - Current work items
-- **SessionMemory** - Key-value pairs per session
-- **GitSnapshots** - Git state tracking
-- **UsageStats** - Daily aggregation for quota management
-- **AuditLog** - Security and compliance tracking
+**sessions** - Tracks coding sessions
+- `id` (TEXT PRIMARY KEY) - Unique session identifier
+- `name` (TEXT) - Session name
+- `description` (TEXT) - Optional description
+- `channel` (TEXT) - Derived from git branch or session name
+- `branch` (TEXT) - Git branch name if available
+- `created_at` (INTEGER) - Timestamp
+- `updated_at` (INTEGER) - Timestamp
+
+**context_items** - Stores individual context entries
+- `id` (TEXT PRIMARY KEY)
+- `session_id` (TEXT) - Foreign key to sessions
+- `key` (TEXT) - Unique identifier within session
+- `value` (TEXT) - Context content
+- `category` (TEXT) - One of: task, decision, progress, note
+- `priority` (TEXT) - One of: high, normal, low
+- `channel` (TEXT) - Channel for filtering
+- `size` (INTEGER) - Character count
+- `created_at` (INTEGER)
+- `updated_at` (INTEGER)
+
+**checkpoints** - Session snapshots
+- `id` (TEXT PRIMARY KEY)
+- `session_id` (TEXT)
+- `name` (TEXT)
+- `description` (TEXT)
+- `item_count` (INTEGER) - Number of items in checkpoint
+- `total_size` (INTEGER) - Total character count
+- `git_status` (TEXT) - Optional git working tree status
+- `git_branch` (TEXT) - Optional git branch
+- `created_at` (INTEGER)
+
+**checkpoint_items** - Links checkpoints to context items
+- `checkpoint_id` (TEXT)
+- `item_id` (TEXT)
+- `item_snapshot` (TEXT) - JSON snapshot of context_item
+
+### Channel System
+
+Channels provide automatic organization of context based on git branches:
+
+1. When starting a session, the server checks for the current git branch
+2. Branch name is normalized to a channel identifier (e.g., `feature/auth` → `feature-auth`)
+3. All context items inherit the session's channel by default
+4. Context can be filtered by channel when retrieving
+
+This allows context to be automatically scoped to the current branch without manual tagging.
+
+### Git Integration
+
+The server integrates with git through Node.js child processes:
+
+- **Branch Detection**: Executes `git rev-parse --abbrev-ref HEAD` to get current branch
+- **Status Capture**: Executes `git status --porcelain` for checkpoint metadata
+- **Graceful Fallback**: Works in non-git directories by skipping git features
+
+Git information is optional and only captured when `include_git: true` is specified.
+
+## API Reference
+
+### Session Management
+
+**context_session_start**
+```javascript
+{
+  name: string,           // Required: session name
+  description?: string,   // Optional: session description
+  channel?: string        // Optional: override auto-derived channel
+}
+```
+Creates a new session and sets it as active. Auto-derives channel from git branch if available.
+
+**context_save**
+```javascript
+{
+  key: string,                              // Required: unique identifier
+  value: string,                            // Required: context content
+  category?: 'task'|'decision'|'progress'|'note',  // Default: 'note'
+  priority?: 'high'|'normal'|'low',        // Default: 'normal'
+  channel?: string                          // Default: session channel
+}
+```
+Saves a context item to the active session.
+
+**context_get**
+```javascript
+{
+  key?: string,          // Optional: retrieve specific item
+  category?: string,     // Optional: filter by category
+  priority?: string,     // Optional: filter by priority
+  channel?: string,      // Optional: filter by channel
+  limit?: number,        // Default: 100
+  offset?: number        // Default: 0
+}
+```
+Retrieves context items with optional filtering.
+
+**context_status**
+```javascript
+{}
+```
+Returns session statistics including item count, size, checkpoint count, and compaction recommendations.
+
+**context_session_rename**
+```javascript
+{
+  new_name: string  // Required: new session name
+}
+```
+Renames the current active session.
+
+**context_list_sessions**
+```javascript
+{
+  limit?: number  // Default: 10
+}
+```
+Lists recent sessions ordered by most recently updated.
+
+### Checkpoint Management
+
+**context_checkpoint**
+```javascript
+{
+  name: string,           // Required: checkpoint name
+  description?: string,   // Optional: checkpoint description
+  include_git?: boolean   // Default: false
+}
+```
+Creates a named checkpoint of the current session state. If `include_git` is true, captures git branch and working tree status.
+
+**context_restore**
+```javascript
+{
+  checkpoint_id: string  // Required: checkpoint ID to restore
+}
+```
+Restores all context items from a checkpoint into the current session.
+
+**context_list_checkpoints**
+```javascript
+{}
+```
+Lists all checkpoints for the current session with metadata.
+
+**context_prepare_compaction**
+```javascript
+{}
+```
+Creates an automatic checkpoint and analyzes the session to generate a restoration summary. Returns:
+- Checkpoint metadata
+- Session statistics
+- High-priority items (top 5)
+- Pending tasks
+- Key decisions
+- Restoration instructions
+
+This tool is designed for AI agents to call proactively when `context_status` indicates high item counts.
+
+## Storage
+
+All data is stored locally at `~/.savecontext/data/savecontext.db`. The database uses WAL mode for better concurrency and reliability.
 
 ## Development
 
-### Running the Server
-
 ```bash
-# Development mode with auto-reload
 cd server
-npm run serve
-
-# Production mode
-npm run build
-npm start
+pnpm install
+pnpm build    # Compile TypeScript and copy schema.sql
+pnpm dev      # Run with tsx watch for development
+pnpm start    # Run compiled version
 ```
-
-### Testing
-
-```bash
-# Test local PostgreSQL sync
-cd server
-node test-sync.mjs
-```
-
-### Database Management
-
-```bash
-# Generate Prisma client
-cd db
-npx prisma generate
-
-# Create new migration
-npx prisma migrate dev --name migration_name
-
-# View database
-npx prisma studio
-```
-
-## Roadmap
-
-### Current Status
-- Local PostgreSQL storage
-- Accurate token counting with tiktoken
-- Secure API key management
-- Offline sync queue with retry logic
-- 10 MCP tools available
-
-### Planned Features
-- Cloud synchronization API
-- Next.js dashboard for session visualization
-- NextAuth integration
-- Stripe payment processing
-- Enhanced compression with vision models
-- Multi-tool integration (Cursor, Factory AI, Copilot)
-- Team collaboration features
 
 ## Contributing
 
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
 
 ## License
 
-MIT - See [LICENSE](LICENSE) file
-
-## Acknowledgments
-
-Built on top of:
-- [Model Context Protocol](https://modelcontextprotocol.io) by Anthropic
-- [Prisma](https://www.prisma.io) for database management
-- [tiktoken](https://github.com/openai/tiktoken) for accurate token counting
-
----
-
-**Issues:** [github.com/greenfieldlabs-inc/savecontext/issues](https://github.com/greenfieldlabs-inc/savecontext/issues)
-
-**Discussions:** [github.com/greenfieldlabs-inc/savecontext/discussions](https://github.com/greenfieldlabs-inc/savecontext/discussions)
+MIT - see [LICENSE](LICENSE)

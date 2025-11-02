@@ -49,7 +49,9 @@ outputs/
 test_repos/
 archive-research/
 scripts/
-docs/
+
+# Documentation moved to parent
+# docs/ - moved to ../docs/ at monorepo root
 
 # Python
 uv.lock

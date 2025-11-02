@@ -1,502 +1,774 @@
 #!/usr/bin/env node
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
-import { GitManager } from "./git/GitManager.js";
-import { ContextBuilder } from "./context/ContextBuilder.js";
-import { SessionManager } from "./context/SessionManager.js";
-import { CompressionEngine } from "./compression/CompressionEngine.js";
-import { countTokens, countMessageTokens, countContextTokens, formatTokenCount } from "./token-counter.js";
-import { syncSessionToCloud, isProUser, getUsageStats } from "./sync.js";
-import { syncQueue } from "./queue.js";
-import { storeApiKey, getApiKey } from "./crypto.js";
-import path from "path";
-import fs from "fs/promises";
+/**
+ * SaveContext MCP Server
+ * Cloud-first context management with AI processing
+ * Built clean from scratch, learned from Memory Keeper
+ */
 
-// Get project path from environment or current directory
-const PROJECT_PATH = process.env.PROJECT_PATH || process.cwd();
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 
-// Initialize managers
-const gitManager = new GitManager(PROJECT_PATH);
-const contextBuilder = new ContextBuilder(PROJECT_PATH);
-const sessionManager = new SessionManager(PROJECT_PATH);
-const compressionEngine = new CompressionEngine();
+import { DatabaseManager } from './database/index.js';
+import { deriveDefaultChannel, normalizeChannel } from './utils/channels.js';
+import { getCurrentBranch, getGitStatus, formatGitStatus } from './utils/git.js';
+import {
+  validateCreateSession,
+  validateSaveContext,
+  validateGetContext,
+  validateCreateCheckpoint,
+  validateRestoreCheckpoint,
+} from './utils/validation.js';
+import {
+  SessionError,
+  SaveContextError,
+  ValidationError,
+  ToolResponse,
+  SaveContextResponse,
+  GetContextResponse,
+  CheckpointResponse,
+  SessionResponse,
+  SessionStatus,
+} from './types/index.js';
 
-// Create MCP server
-const server = new McpServer({
-  name: "savecontext",
-  version: "0.1.0"
-});
+// Initialize database
+const db = new DatabaseManager();
 
-// Register tool: get_project_context
-server.registerTool(
-  "get_project_context",
+// Track current session
+let currentSessionId: string | null = null;
+
+// Initialize MCP server
+const server = new Server(
   {
-    description: "Get complete project context including git status, recent changes, and file structure",
-    inputSchema: {
-      include_uncommitted: z.boolean().optional().describe("Include uncommitted changes"),
-      max_commits: z.number().optional().default(10).describe("Number of recent commits to include"),
-    }
+    name: 'savecontext',
+    version: '0.1.0',
   },
-  async (args) => {
-    const gitStatus = await gitManager.getStatus();
-    const recentCommits = await gitManager.getRecentCommits(args.max_commits || 10);
-    const fileStructure = await contextBuilder.getFileStructure({});
-    const profile = await contextBuilder.getProjectProfile();
-    
-    const context = {
-      project_path: PROJECT_PATH,
-      git: {
-        branch: gitStatus.branch,
-        status: gitStatus.status,
-        recent_commits: recentCommits,
-        has_uncommitted_changes: gitStatus.hasChanges,
-      },
-      structure: fileStructure,
-      profile: profile,
-      timestamp: new Date().toISOString(),
-    };
-    
-    if (args.include_uncommitted && gitStatus.hasChanges) {
-      (context.git as any).uncommitted = await gitManager.getUncommittedChanges();
-    }
-    
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(context, null, 2),
-        },
-      ],
-    };
+  {
+    capabilities: {
+      tools: {},
+    },
   }
 );
 
-// Register tool: get_recent_changes
-server.registerTool(
-  "get_recent_changes",
-  {
-    description: "Get changes since last session or specified time",
-    inputSchema: {
-      since: z.string().optional().describe("Time reference (e.g., '1 hour ago', 'last-session')"),
-    }
-  },
-  async (args) => {
-    const changes = await gitManager.getChangesSince(args.since || "1 hour ago");
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(changes, null, 2),
-        },
-      ],
-    };
+// ====================
+// Helper Functions
+// ====================
+
+/**
+ * Ensure we have an active session
+ */
+function ensureSession(): string {
+  if (!currentSessionId) {
+    throw new SessionError('No active session. Use context_session_start first.');
   }
-);
+  return currentSessionId;
+}
 
-// Register tool: save_session (ENHANCED with token counting and cloud sync)
-server.registerTool(
-  "save_session",
-  {
-    description: "Save current session state with accurate token counting and cloud sync for Pro users",
-    inputSchema: {
-      session_id: z.string().optional(),
-      user_id: z.string().optional(),
-      tool: z.string().optional(),
-      timestamp: z.string().optional(),
-      project: z.object({
-        name: z.string().optional(),
-        path: z.string().optional(),
-        languages: z.array(z.string()).optional(),
-      }).optional(),
-      conversation: z.object({
-        messages: z.array(z.any()).optional(),
-      }).optional(),
-      user_prompt: z.string().optional(),
-      git: z.object({
-        branch: z.string().optional(),
-        status: z.string().optional(),
-        last_commit: z.object({
-          hash: z.string().optional(),
-          message: z.string().optional(),
-        }).optional(),
-        uncommitted_diff: z.string().optional(),
-      }).optional(),
-      platform_data: z.object({
-        session_id: z.string().optional(),
-        permission_mode: z.string().optional(),
-        is_remote: z.boolean().optional(),
-      }).optional(),
-      // Legacy support
-      messages: z.array(z.any()).optional(),
-      metadata: z.record(z.any()).optional(),
-    }
-  },
-  async (args) => {
-    // Extract messages from either conversation.messages or legacy messages field
-    const messages = args.conversation?.messages || args.messages || [];
+/**
+ * Create tool response
+ */
+function success<T>(data: T, message?: string): ToolResponse<T> {
+  return {
+    success: true,
+    data,
+    message,
+  };
+}
 
-    // Calculate accurate token count
-    const tokenCount = messages.length > 0
-      ? countMessageTokens(messages)
-      : 0;
+function error(message: string, err?: any): ToolResponse {
+  return {
+    success: false,
+    error: message,
+    message: err instanceof Error ? err.message : String(err),
+  };
+}
 
-    // Build comprehensive metadata
-    const metadata = {
-      ...args.metadata,
-      tokenCount,
-      tokenCountFormatted: formatTokenCount(tokenCount),
-      tool: args.tool || process.env.MCP_TOOL || 'unknown',
-      userPrompt: args.user_prompt,
-      platformData: args.platform_data,
-    };
+// ====================
+// Tool Handlers
+// ====================
 
-    // Build git snapshot from hook data or fallback to gitManager
-    const git_snapshot = args.git || await gitManager.getStatus();
+/**
+ * Start a new session or continue an existing one
+ */
+async function handleSessionStart(args: any) {
+  try {
+    const validated = validateCreateSession(args);
 
-    // Save to local database
-    const sessionId = args.session_id || args.platform_data?.session_id || await sessionManager.saveSession({
-      messages,
-      metadata,
-      git_snapshot,
+    // Try to get git branch
+    const branch = await getCurrentBranch();
+
+    // Derive channel from branch or name
+    const channel = normalizeChannel(
+      validated.channel || deriveDefaultChannel(branch || undefined, validated.name)
+    );
+
+    // Create session
+    const session = db.createSession({
+      name: validated.name,
+      description: validated.description,
+      branch: branch || undefined,
+      channel,
     });
 
-    // Try to sync to cloud if Pro user
-    const userId = args.user_id || process.env.USER_ID || 'local-user';
-    const isPro = await isProUser(userId);
+    // Set as current session
+    currentSessionId = session.id;
 
-    let syncStatus = 'local-only (Free tier)';
+    const response: SessionResponse = {
+      id: session.id,
+      name: session.name,
+      channel: session.channel,
+      created_at: session.created_at,
+    };
 
-    if (isPro) {
-      const projectName = args.project?.name || path.basename(args.project?.path || PROJECT_PATH);
+    return success(
+      response,
+      `Session '${session.name}' started (channel: ${session.channel})`
+    );
+  } catch (err) {
+    return error('Failed to start session', err);
+  }
+}
 
-      const syncResult = await syncSessionToCloud({
-        id: sessionId,
-        userId,
-        projectName,
-        toolUsed: args.tool || process.env.MCP_TOOL || 'unknown',
-        tokenCount,
-        context: { messages, metadata, git: git_snapshot, project: args.project },
-        metadata,
-        createdAt: new Date(args.timestamp || Date.now()),
-      });
+/**
+ * Save context to current session
+ */
+async function handleSaveContext(args: any) {
+  try {
+    const sessionId = ensureSession();
+    const validated = validateSaveContext(args);
 
-      if (syncResult.success) {
-        syncStatus = '✓ synced to cloud';
-      } else {
-        // Add to offline queue
-        await syncQueue.add({
-          id: sessionId,
-          userId,
-          projectName,
-          toolUsed: args.tool || process.env.MCP_TOOL || 'unknown',
-          tokenCount,
-          context: { messages, metadata, git: git_snapshot, project: args.project },
-          metadata,
-          createdAt: new Date(args.timestamp || Date.now()),
-        }, syncResult.error);
-        syncStatus = '⏳ queued for sync';
+    // Get session to use its default channel if not specified
+    const session = db.getSession(sessionId);
+    if (!session) {
+      throw new SessionError('Current session not found');
+    }
+
+    const channel = validated.channel || session.channel;
+
+    // Save context item
+    const item = db.saveContextItem({
+      session_id: sessionId,
+      key: validated.key,
+      value: validated.value,
+      category: validated.category || 'note',
+      priority: validated.priority || 'normal',
+      channel: normalizeChannel(channel),
+      size: validated.key.length + validated.value.length,
+    });
+
+    const response: SaveContextResponse = {
+      id: item.id,
+      key: item.key,
+      session_id: item.session_id,
+      created_at: item.created_at,
+    };
+
+    return success(response, `Saved '${item.key}' to ${channel} channel`);
+  } catch (err) {
+    return error('Failed to save context', err);
+  }
+}
+
+/**
+ * Get context from current session
+ */
+async function handleGetContext(args: any) {
+  try {
+    const sessionId = ensureSession();
+    const validated = validateGetContext(args);
+
+    // If key is provided, get single item
+    if (validated.key) {
+      const item = db.getContextItem(sessionId, validated.key);
+      if (!item) {
+        return success(
+          { items: [], total: 0, session_id: sessionId },
+          `No item found with key '${validated.key}'`
+        );
+      }
+
+      const response: GetContextResponse = {
+        items: [item],
+        total: 1,
+        session_id: sessionId,
+      };
+
+      return success(response);
+    }
+
+    // Otherwise, get filtered items
+    const items = db.getContextItems(sessionId, {
+      category: validated.category,
+      priority: validated.priority,
+      channel: validated.channel,
+      limit: validated.limit || 100,
+      offset: validated.offset || 0,
+    });
+
+    const response: GetContextResponse = {
+      items,
+      total: items.length,
+      session_id: sessionId,
+    };
+
+    return success(response, `Found ${items.length} items`);
+  } catch (err) {
+    return error('Failed to get context', err);
+  }
+}
+
+/**
+ * Create checkpoint of current session state
+ */
+async function handleCreateCheckpoint(args: any) {
+  try {
+    const sessionId = ensureSession();
+    const validated = validateCreateCheckpoint(args);
+
+    let git_status: string | undefined;
+    let git_branch: string | undefined;
+
+    // Get git info if requested
+    if (validated.include_git) {
+      const status = await getGitStatus();
+      if (status) {
+        git_status = formatGitStatus(status);
+        git_branch = status.branch || undefined;
       }
     }
 
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Session saved: ${sessionId}\nTokens: ${formatTokenCount(tokenCount)}\nStatus: ${syncStatus}`,
-        },
-      ],
-    };
-  }
-);
+    // Create checkpoint
+    const checkpoint = db.createCheckpoint({
+      session_id: sessionId,
+      name: validated.name,
+      description: validated.description,
+      git_status,
+      git_branch,
+    });
 
-// Register tool: load_session
-server.registerTool(
-  "load_session",
-  {
-    description: "Load a previous session",
-    inputSchema: {
-      session_id: z.string().optional().describe("Session ID to load, or latest if not specified"),
-    }
-  },
-  async (args) => {
-    const session = await sessionManager.loadSession(args.session_id);
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(session, null, 2),
-        },
-      ],
+    const response: CheckpointResponse = {
+      id: checkpoint.id,
+      name: checkpoint.name,
+      session_id: checkpoint.session_id,
+      item_count: checkpoint.item_count,
+      total_size: checkpoint.total_size,
+      created_at: checkpoint.created_at,
     };
-  }
-);
 
-// Register tool: remember
-server.registerTool(
-  "remember",
-  {
-    description: "Add something to project memory",
-    inputSchema: {
-      key: z.string().describe("Memory key (e.g., 'api_endpoint', 'db_schema')"),
-      value: z.any().describe("Value to remember"),
-      type: z.enum(["api", "schema", "decision", "bug", "credential", "pattern", "other"]).optional(),
-    }
-  },
-  async (args) => {
-    await sessionManager.addMemory(args.key, args.value, args.type || "other");
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Remembered: ${args.key}`,
-        },
-      ],
-    };
-  }
-);
-
-// Register tool: recall
-server.registerTool(
-  "recall",
-  {
-    description: "Retrieve something from project memory",
-    inputSchema: {
-      key: z.string().describe("Memory key to retrieve"),
-    }
-  },
-  async (args) => {
-    const memory = await sessionManager.getMemory(args.key);
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(memory, null, 2),
-        },
-      ],
-    };
-  }
-);
-
-// Register tool: compress_context
-server.registerTool(
-  "compress_context",
-  {
-    description: "Compress context to fit within token limit",
-    inputSchema: {
-      context: z.any().describe("Context to compress"),
-      target_tokens: z.number().describe("Target token count"),
-      provider: z.enum(["claude", "cursor", "factory", "copilot"]).optional(),
-    }
-  },
-  async (args) => {
-    const compressed = await compressionEngine.compress(
-      args.context,
-      args.target_tokens,
-      args.provider
+    return success(
+      response,
+      `Checkpoint '${checkpoint.name}' created with ${checkpoint.item_count} items`
     );
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(compressed, null, 2),
-        },
-      ],
-    };
+  } catch (err) {
+    return error('Failed to create checkpoint', err);
   }
-);
-
-// Register tool: get_file_structure
-server.registerTool(
-  "get_file_structure",
-  {
-    description: "Get project file structure",
-    inputSchema: {
-      max_depth: z.number().optional().default(3).describe("Maximum directory depth"),
-      include_hidden: z.boolean().optional().default(false),
-    }
-  },
-  async (args) => {
-    const structure = await contextBuilder.getFileStructure(args);
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(structure, null, 2),
-        },
-      ],
-    };
-  }
-);
-
-// Register tool: sync_now (Pro only)
-server.registerTool(
-  "sync_now",
-  {
-    description: "Force immediate sync of all pending sessions to cloud (Pro users only)",
-    inputSchema: {}
-  },
-  async () => {
-    const userId = process.env.USER_ID || 'local-user';
-    const isPro = await isProUser(userId);
-
-    if (!isPro) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "⚠️  This feature requires a Pro subscription.\nUpgrade at https://savecontext.io/pricing",
-          },
-        ],
-      };
-    }
-
-    const result = await syncQueue.syncNow();
-    const queueStatus = syncQueue.getStatus();
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: `✓ Sync completed\n\nSynced: ${result.synced} sessions\nFailed: ${result.failed} sessions\nQueue status: ${queueStatus.total} total, ${queueStatus.ready} ready, ${queueStatus.failed} permanently failed`,
-        },
-      ],
-    };
-  }
-);
-
-// Register tool: get_stats (Pro only)
-server.registerTool(
-  "get_stats",
-  {
-    description: "Get usage statistics and quota information (Pro users only)",
-    inputSchema: {}
-  },
-  async () => {
-    const userId = process.env.USER_ID || 'local-user';
-    const isPro = await isProUser(userId);
-
-    if (!isPro) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "⚠️  This feature requires a Pro subscription.\nUpgrade at https://savecontext.io/pricing",
-          },
-        ],
-      };
-    }
-
-    const stats = await getUsageStats(userId);
-
-    if (!stats) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "❌ Failed to fetch usage statistics from cloud.\nCheck your API key and internet connection.",
-          },
-        ],
-      };
-    }
-
-    const quotaPercentage = ((1000000 - stats.quotaRemaining) / 1000000) * 100;
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: `📊 Usage Statistics
-
-Today:
-  Sessions: ${stats.today.sessions}
-  Tokens: ${formatTokenCount(stats.today.tokens)}
-
-This Week:
-  Sessions: ${stats.thisWeek.sessions}
-  Tokens: ${formatTokenCount(stats.thisWeek.tokens)}
-
-Daily Quota:
-  Used: ${formatTokenCount(1000000 - stats.quotaRemaining)} (${quotaPercentage.toFixed(1)}%)
-  Remaining: ${formatTokenCount(stats.quotaRemaining)}
-  Limit: ${formatTokenCount(1000000)}`,
-        },
-      ],
-    };
-  }
-);
-
-// Register tool: explain_codebase
-server.registerTool(
-  "explain_codebase",
-  {
-    description: "Generate an automatic explanation of the codebase structure and purpose",
-    inputSchema: {
-      focus_areas: z.array(z.string()).optional().describe("Specific areas to focus on"),
-    }
-  },
-  async (args) => {
-    const explanation = await contextBuilder.explainCodebase(args.focus_areas);
-    return {
-      content: [
-        {
-          type: "text",
-          text: explanation,
-        },
-      ],
-    };
-  }
-);
-
-// Initialize server on startup
-async function initialize() {
-  process.stderr.write(`SaveContext MCP Server v0.1.0 (Enhanced)\n`);
-  process.stderr.write(`Project: ${PROJECT_PATH}\n`);
-
-  // Check if git repository
-  const isGitRepo = await gitManager.isGitRepository();
-  if (!isGitRepo) {
-    process.stderr.write("Warning: Not a git repository. Git features will be limited.\n");
-  }
-
-  // Initialize session manager
-  await sessionManager.initialize();
-
-  // Initialize sync queue (for offline sync)
-  await syncQueue.initialize();
-  process.stderr.write("✓ Sync queue initialized\n");
-
-  // Check Pro status
-  const userId = process.env.USER_ID || 'local-user';
-  const isPro = await isProUser(userId);
-  if (isPro) {
-    process.stderr.write("✓ Pro user detected - cloud sync enabled\n");
-  } else {
-    process.stderr.write("ℹ Free tier - local storage only. Upgrade at https://savecontext.io/pricing\n");
-  }
-
-  // Check for existing .claude/sessions and offer to migrate
-  const claudePath = path.join(PROJECT_PATH, ".claude/sessions");
-  try {
-    await fs.access(claudePath);
-    process.stderr.write(`Found existing .claude/sessions - these will be accessible via load_session\n`);
-  } catch {
-    // No existing sessions
-  }
-
-  process.stderr.write("✓ Server ready for connections\n");
 }
 
-// Start server
+/**
+ * Prepare for context compaction with smart analysis
+ * Creates checkpoint + analyzes priority items + generates summary
+ */
+async function handlePrepareCompaction() {
+  try {
+    const sessionId = ensureSession();
+
+    // Generate auto-checkpoint name
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    const checkpointName = `pre-compact-${timestamp}`;
+
+    // Get git info
+    const status = await getGitStatus();
+    let git_status: string | undefined;
+    let git_branch: string | undefined;
+
+    if (status) {
+      git_status = formatGitStatus(status);
+      git_branch = status.branch || undefined;
+    }
+
+    // Create checkpoint
+    const checkpoint = db.createCheckpoint({
+      session_id: sessionId,
+      name: checkpointName,
+      description: 'Automatic checkpoint before context compaction',
+      git_status,
+      git_branch,
+    });
+
+    // Analyze critical context
+    const highPriorityItems = db.getContextItems(sessionId, {
+      priority: 'high',
+      limit: 50,
+    });
+
+    const tasks = db.getContextItems(sessionId, {
+      category: 'task',
+      limit: 20,
+    });
+
+    const decisions = db.getContextItems(sessionId, {
+      category: 'decision',
+      limit: 20,
+    });
+
+    const progress = db.getContextItems(sessionId, {
+      category: 'progress',
+      limit: 10,
+    });
+
+    // Identify unfinished tasks
+    const nextSteps = tasks.filter(
+      (t) =>
+        !t.value.toLowerCase().includes('completed') &&
+        !t.value.toLowerCase().includes('done') &&
+        !t.value.toLowerCase().includes('[completed]')
+    );
+
+    // Build summary
+    const summary = {
+      checkpoint: {
+        id: checkpoint.id,
+        name: checkpoint.name,
+        session_id: checkpoint.session_id,
+        created_at: checkpoint.created_at,
+      },
+      stats: {
+        total_items_saved: checkpoint.item_count,
+        critical_items: highPriorityItems.length,
+        pending_tasks: nextSteps.length,
+        decisions_made: decisions.length,
+        total_size_bytes: checkpoint.total_size,
+      },
+      critical_context: {
+        high_priority_items: highPriorityItems.slice(0, 5).map((i) => ({
+          key: i.key,
+          value: i.value,
+          category: i.category,
+          priority: i.priority,
+          created_at: i.created_at,
+        })),
+        next_steps: nextSteps.slice(0, 5).map((t) => ({
+          key: t.key,
+          value: t.value,
+          priority: t.priority,
+        })),
+        key_decisions: decisions.slice(0, 10).map((d) => ({
+          key: d.key,
+          value: d.value,
+          created_at: d.created_at,
+        })),
+        recent_progress: progress.slice(0, 3).map((p) => ({
+          key: p.key,
+          value: p.value,
+          created_at: p.created_at,
+        })),
+      },
+      restore_instructions: {
+        tool: 'context_restore',
+        checkpoint_id: checkpoint.id,
+        message: `To continue this session, restore from checkpoint: ${checkpoint.name}`,
+        summary: `Session has ${nextSteps.length} pending tasks and ${decisions.length} key decisions recorded.`,
+      },
+    };
+
+    // Save summary as special context item for AI to read in next session
+    const summaryValue = JSON.stringify(summary);
+    db.saveContextItem({
+      session_id: sessionId,
+      key: `compaction_summary_${checkpoint.id}`,
+      value: summaryValue,
+      category: 'progress',
+      priority: 'high',
+      channel: 'system',
+      size: summaryValue.length,
+    });
+
+    return success(
+      summary,
+      `Compaction prepared: ${checkpoint.item_count} items saved, ${highPriorityItems.length} critical, ${nextSteps.length} tasks pending`
+    );
+  } catch (err) {
+    return error('Failed to prepare compaction', err);
+  }
+}
+
+/**
+ * Restore from checkpoint
+ */
+async function handleRestoreCheckpoint(args: any) {
+  try {
+    const sessionId = ensureSession();
+    const validated = validateRestoreCheckpoint(args);
+
+    // Verify checkpoint exists
+    const checkpoint = db.getCheckpoint(validated.checkpoint_id);
+    if (!checkpoint) {
+      throw new SaveContextError(
+        `Checkpoint '${validated.checkpoint_id}' not found`,
+        'NOT_FOUND'
+      );
+    }
+
+    // Restore items
+    const restored = db.restoreCheckpoint(validated.checkpoint_id, sessionId);
+
+    return success(
+      { restored_items: restored, checkpoint_name: checkpoint.name },
+      `Restored ${restored} items from checkpoint '${checkpoint.name}'`
+    );
+  } catch (err) {
+    return error('Failed to restore checkpoint', err);
+  }
+}
+
+/**
+ * List all checkpoints for current session
+ */
+async function handleListCheckpoints() {
+  try {
+    const sessionId = ensureSession();
+    const checkpoints = db.listCheckpoints(sessionId);
+
+    return success(
+      { checkpoints, count: checkpoints.length },
+      `Found ${checkpoints.length} checkpoints`
+    );
+  } catch (err) {
+    return error('Failed to list checkpoints', err);
+  }
+}
+
+/**
+ * Get status of current session
+ */
+async function handleSessionStatus() {
+  try {
+    if (!currentSessionId) {
+      return success({ current_session_id: null }, 'No active session');
+    }
+
+    const session = db.getSession(currentSessionId);
+    if (!session) {
+      throw new SessionError('Current session not found');
+    }
+
+    const stats = db.getSessionStats(currentSessionId);
+    const checkpoints = db.listCheckpoints(currentSessionId);
+
+    // Compaction suggestions
+    const itemCount = stats?.total_items || 0;
+    const shouldCompact = itemCount >= 40;
+    const compactionReason = shouldCompact
+      ? `High item count (${itemCount} items, recommended: prepare at 40+ items)`
+      : null;
+
+    const status: SessionStatus = {
+      current_session_id: currentSessionId,
+      session_name: session.name,
+      channel: session.channel,
+      item_count: itemCount,
+      total_size: stats?.total_size || 0,
+      checkpoint_count: checkpoints.length,
+      last_updated: session.updated_at,
+      should_compact: shouldCompact,
+      compaction_reason: compactionReason,
+    };
+
+    return success(status);
+  } catch (err) {
+    return error('Failed to get session status', err);
+  }
+}
+
+/**
+ * Rename current session
+ */
+async function handleSessionRename(args: any) {
+  try {
+    const sessionId = ensureSession();
+    const { new_name } = args;
+
+    if (!new_name || typeof new_name !== 'string' || new_name.trim().length === 0) {
+      throw new ValidationError('new_name is required and must be a non-empty string');
+    }
+
+    const trimmedName = new_name.trim();
+
+    // Update session name
+    db.getDatabase()
+      .prepare('UPDATE sessions SET name = ?, updated_at = ? WHERE id = ?')
+      .run(trimmedName, Date.now(), sessionId);
+
+    return success(
+      { session_id: sessionId, new_name: trimmedName },
+      `Session renamed to '${trimmedName}'`
+    );
+  } catch (err) {
+    return error('Failed to rename session', err);
+  }
+}
+
+/**
+ * List recent sessions
+ */
+async function handleListSessions(args: any) {
+  try {
+    const limit = args?.limit || 10;
+    const sessions = db.listSessions(limit);
+
+    return success(
+      { sessions, count: sessions.length },
+      `Found ${sessions.length} sessions`
+    );
+  } catch (err) {
+    return error('Failed to list sessions', err);
+  }
+}
+
+// ====================
+// MCP Server Handlers
+// ====================
+
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  return {
+    tools: [
+      {
+        name: 'context_session_start',
+        description: 'Start a new coding session or resume existing one. Auto-derives channel from git branch. Call at conversation start or when switching contexts.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: {
+              type: 'string',
+              description: 'Session name (e.g., "Implementing Authentication")',
+            },
+            description: {
+              type: 'string',
+              description: 'Optional session description',
+            },
+            channel: {
+              type: 'string',
+              description: 'Optional channel name (auto-derived from git branch if not provided)',
+            },
+          },
+          required: ['name'],
+        },
+      },
+      {
+        name: 'context_save',
+        description: 'Save individual context items (decisions, tasks, notes, progress). Use frequently to capture important information. Supports categories (task/decision/progress/note) and priorities (high/normal/low).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            key: {
+              type: 'string',
+              description: 'Unique key for this context item (e.g., "current_task", "auth_decision")',
+            },
+            value: {
+              type: 'string',
+              description: 'The context value to save',
+            },
+            category: {
+              type: 'string',
+              enum: ['task', 'decision', 'progress', 'note'],
+              description: 'Category of this context item',
+            },
+            priority: {
+              type: 'string',
+              enum: ['high', 'normal', 'low'],
+              description: 'Priority level',
+            },
+            channel: {
+              type: 'string',
+              description: 'Channel to save to (uses session default if not specified)',
+            },
+          },
+          required: ['key', 'value'],
+        },
+      },
+      {
+        name: 'context_get',
+        description: 'Retrieve saved context items with filtering by category, priority, channel. Use to recall previous decisions, check task status, or review session history.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            key: {
+              type: 'string',
+              description: 'Specific key to retrieve (if not provided, returns filtered list)',
+            },
+            category: {
+              type: 'string',
+              enum: ['task', 'decision', 'progress', 'note'],
+              description: 'Filter by category',
+            },
+            priority: {
+              type: 'string',
+              enum: ['high', 'normal', 'low'],
+              description: 'Filter by priority',
+            },
+            channel: {
+              type: 'string',
+              description: 'Filter by channel',
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum items to return (default: 100)',
+            },
+            offset: {
+              type: 'number',
+              description: 'Number of items to skip (for pagination)',
+            },
+          },
+        },
+      },
+      {
+        name: 'context_checkpoint',
+        description: 'Create named checkpoint snapshot for manual saves. Use before major refactors, git branch switches, or experimental changes. For auto-save before context fills up, use context_prepare_compaction instead.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            name: {
+              type: 'string',
+              description: 'Checkpoint name (e.g., "before-refactor", "auth-complete")',
+            },
+            description: {
+              type: 'string',
+              description: 'Optional checkpoint description',
+            },
+            include_git: {
+              type: 'boolean',
+              description: 'Include git status in checkpoint (default: false)',
+            },
+          },
+          required: ['name'],
+        },
+      },
+      {
+        name: 'context_restore',
+        description: 'Restore session state from checkpoint. Use to continue previous work, recover from mistakes, or restore after context compaction. Restores all context items to current session.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            checkpoint_id: {
+              type: 'string',
+              description: 'ID of checkpoint to restore',
+            },
+          },
+          required: ['checkpoint_id'],
+        },
+      },
+      {
+        name: 'context_list_checkpoints',
+        description: 'List all checkpoints for current session with metadata. Use to find restoration points or review session history.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
+        name: 'context_status',
+        description: 'Get current session statistics: item count, categories breakdown, priorities, recent activity. Use to understand session state or decide when to checkpoint. Includes compaction suggestions when item count is high.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
+        name: 'context_prepare_compaction',
+        description: 'Smart checkpoint for context compaction. Call when conversation gets long (40+ messages) or before context limit. Analyzes priority items, identifies next steps, generates restoration summary. Returns critical context for seamless session continuation. Works across all AI coding tools.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
+        name: 'context_session_rename',
+        description: 'Rename current session. Use when initial name wasn\'t descriptive enough or context changed direction.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            new_name: {
+              type: 'string',
+              description: 'New session name',
+            },
+          },
+          required: ['new_name'],
+        },
+      },
+      {
+        name: 'context_list_sessions',
+        description: 'List recent sessions with summary. Use at conversation start to find previous work or when user asks to continue from earlier session.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            limit: {
+              type: 'number',
+              description: 'Maximum sessions to return (default: 10)',
+            },
+          },
+        },
+      },
+    ],
+  };
+});
+
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  try {
+    const { name, arguments: args } = request.params;
+
+    switch (name) {
+      case 'context_session_start':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleSessionStart(args), null, 2) }] };
+      case 'context_save':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleSaveContext(args), null, 2) }] };
+      case 'context_get':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleGetContext(args), null, 2) }] };
+      case 'context_checkpoint':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleCreateCheckpoint(args), null, 2) }] };
+      case 'context_prepare_compaction':
+        return { content: [{ type: 'text', text: JSON.stringify(await handlePrepareCompaction(), null, 2) }] };
+      case 'context_restore':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleRestoreCheckpoint(args), null, 2) }] };
+      case 'context_list_checkpoints':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleListCheckpoints(), null, 2) }] };
+      case 'context_status':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleSessionStatus(), null, 2) }] };
+      case 'context_session_rename':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleSessionRename(args), null, 2) }] };
+      case 'context_list_sessions':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleListSessions(args), null, 2) }] };
+      default:
+        return {
+          content: [{ type: 'text', text: JSON.stringify(error(`Unknown tool: ${name}`)) }],
+          isError: true,
+        };
+    }
+  } catch (err) {
+    return {
+      content: [{ type: 'text', text: JSON.stringify(error('Tool execution failed', err)) }],
+      isError: true,
+    };
+  }
+});
+
+// ====================
+// Start Server
+// ====================
+
 async function main() {
-  await initialize();
-  
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Log to stderr (stdout is used for MCP protocol)
+  console.error('SaveContext MCP Server v0.1.0 (Clean)');
+  console.error('Ready for connections...');
 }
 
 main().catch((error) => {
-  process.stderr.write(`Server error: ${error}\n`);
+  console.error('Fatal error:', error);
   process.exit(1);
 });
