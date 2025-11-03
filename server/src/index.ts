@@ -16,6 +16,7 @@ import {
 import { DatabaseManager } from './database/index.js';
 import { deriveDefaultChannel, normalizeChannel } from './utils/channels.js';
 import { getCurrentBranch, getGitStatus, formatGitStatus } from './utils/git.js';
+import { getCurrentProjectPath, normalizeProjectPath } from './utils/project.js';
 import {
   validateCreateSession,
   validateSaveContext,
@@ -93,6 +94,7 @@ function error(message: string, err?: any): ToolResponse {
 
 /**
  * Start a new session or continue an existing one
+ * Auto-detects project path and checks for existing active sessions
  */
 async function handleSessionStart(args: any) {
   try {
@@ -101,17 +103,47 @@ async function handleSessionStart(args: any) {
     // Try to get git branch
     const branch = await getCurrentBranch();
 
+    // Get or derive project path
+    const projectPath = validated.project_path
+      ? normalizeProjectPath(validated.project_path)
+      : normalizeProjectPath(getCurrentProjectPath());
+
+    // Check for existing active session in this project
+    const existingActive = db.getActiveSession(projectPath);
+
+    if (existingActive) {
+      // Resume existing active session instead of creating new one
+      currentSessionId = existingActive.id;
+      const stats = db.getSessionStats(existingActive.id);
+
+      return success(
+        {
+          id: existingActive.id,
+          name: existingActive.name,
+          channel: existingActive.channel,
+          project_path: existingActive.project_path,
+          status: existingActive.status,
+          item_count: stats?.total_items || 0,
+          created_at: existingActive.created_at,
+          resumed: true,
+        },
+        `Resumed existing active session '${existingActive.name}' (${stats?.total_items || 0} items)`
+      );
+    }
+
     // Derive channel from branch or name
     const channel = normalizeChannel(
       validated.channel || deriveDefaultChannel(branch || undefined, validated.name)
     );
 
-    // Create session
+    // Create new session
     const session = db.createSession({
       name: validated.name,
       description: validated.description,
       branch: branch || undefined,
       channel,
+      project_path: projectPath,
+      status: 'active',
     });
 
     // Set as current session
@@ -121,12 +153,14 @@ async function handleSessionStart(args: any) {
       id: session.id,
       name: session.name,
       channel: session.channel,
+      project_path: session.project_path,
+      status: session.status,
       created_at: session.created_at,
     };
 
     return success(
       response,
-      `Session '${session.name}' started (channel: ${session.channel})`
+      `Session '${session.name}' started (channel: ${session.channel}, project: ${projectPath})`
     );
   } catch (err) {
     return error('Failed to start session', err);
@@ -459,6 +493,10 @@ async function handleSessionStatus() {
     const stats = db.getSessionStats(currentSessionId);
     const checkpoints = db.listCheckpoints(currentSessionId);
 
+    // Calculate session duration
+    const endTime = session.ended_at || Date.now();
+    const durationMs = endTime - session.created_at;
+
     // Compaction suggestions
     const itemCount = stats?.total_items || 0;
     const shouldCompact = itemCount >= 40;
@@ -470,10 +508,13 @@ async function handleSessionStatus() {
       current_session_id: currentSessionId,
       session_name: session.name,
       channel: session.channel,
+      project_path: session.project_path,
+      status: session.status,
       item_count: itemCount,
       total_size: stats?.total_size || 0,
       checkpoint_count: checkpoints.length,
       last_updated: session.updated_at,
+      session_duration_ms: durationMs,
       should_compact: shouldCompact,
       compaction_reason: compactionReason,
     };
@@ -518,7 +559,15 @@ async function handleSessionRename(args: any) {
 async function handleListSessions(args: any) {
   try {
     const limit = args?.limit || 10;
-    const sessions = db.listSessions(limit);
+    const projectPath = args?.project_path || getCurrentProjectPath();
+    const status = args?.status;
+    const includeCompleted = args?.include_completed || false;
+
+    const sessions = db.listSessions(limit, {
+      project_path: projectPath ? normalizeProjectPath(projectPath) : undefined,
+      status,
+      include_completed: includeCompleted,
+    });
 
     return success(
       { sessions, count: sessions.length },
@@ -526,6 +575,204 @@ async function handleListSessions(args: any) {
     );
   } catch (err) {
     return error('Failed to list sessions', err);
+  }
+}
+
+/**
+ * End (complete) the current session
+ */
+async function handleSessionEnd() {
+  try {
+    const sessionId = ensureSession();
+    const session = db.getSession(sessionId);
+
+    if (!session) {
+      throw new SessionError('Current session not found');
+    }
+
+    // Get stats before ending
+    const stats = db.getSessionStats(sessionId);
+    const checkpoints = db.listCheckpoints(sessionId);
+    const duration = Date.now() - session.created_at;
+
+    // End the session
+    db.endSession(sessionId);
+
+    // Clear current session
+    currentSessionId = null;
+
+    return success(
+      {
+        session_id: sessionId,
+        session_name: session.name,
+        duration_ms: duration,
+        item_count: stats?.total_items || 0,
+        checkpoint_count: checkpoints.length,
+        total_size: stats?.total_size || 0,
+      },
+      `Session '${session.name}' completed (duration: ${Math.round(duration / 1000 / 60)}min, ${stats?.total_items || 0} items)`
+    );
+  } catch (err) {
+    return error('Failed to end session', err);
+  }
+}
+
+/**
+ * Pause the current session
+ */
+async function handleSessionPause() {
+  try {
+    const sessionId = ensureSession();
+    const session = db.getSession(sessionId);
+
+    if (!session) {
+      throw new SessionError('Current session not found');
+    }
+
+    // Pause the session
+    db.pauseSession(sessionId);
+
+    // Clear current session
+    currentSessionId = null;
+
+    return success(
+      {
+        session_id: sessionId,
+        session_name: session.name,
+        resume_instructions: `To resume: use context_session_resume with session_id: ${sessionId}`,
+      },
+      `Session '${session.name}' paused. Resume anytime with context_session_resume.`
+    );
+  } catch (err) {
+    return error('Failed to pause session', err);
+  }
+}
+
+/**
+ * Resume a paused session
+ */
+async function handleSessionResume(args: any) {
+  try {
+    const { session_id } = args;
+
+    if (!session_id || typeof session_id !== 'string') {
+      throw new ValidationError('session_id is required');
+    }
+
+    const session = db.getSession(session_id);
+    if (!session) {
+      throw new SessionError(`Session '${session_id}' not found`);
+    }
+
+    if (session.status === 'completed') {
+      throw new SessionError('Cannot resume completed session. Create a new session instead.');
+    }
+
+    // Resume the session
+    db.resumeSession(session_id);
+
+    // Set as current session
+    currentSessionId = session_id;
+
+    const stats = db.getSessionStats(session_id);
+
+    return success(
+      {
+        session_id: session.id,
+        session_name: session.name,
+        channel: session.channel,
+        project_path: session.project_path,
+        item_count: stats?.total_items || 0,
+        created_at: session.created_at,
+      },
+      `Resumed session '${session.name}' (${stats?.total_items || 0} items)`
+    );
+  } catch (err) {
+    return error('Failed to resume session', err);
+  }
+}
+
+/**
+ * Switch between sessions (pause current, resume another)
+ */
+async function handleSessionSwitch(args: any) {
+  try {
+    const { session_id } = args;
+
+    if (!session_id || typeof session_id !== 'string') {
+      throw new ValidationError('session_id is required');
+    }
+
+    const targetSession = db.getSession(session_id);
+    if (!targetSession) {
+      throw new SessionError(`Session '${session_id}' not found`);
+    }
+
+    if (targetSession.status === 'completed') {
+      throw new SessionError('Cannot switch to completed session. Create a new session instead.');
+    }
+
+    // Pause current session if exists
+    let pausedSession = null;
+    if (currentSessionId) {
+      const current = db.getSession(currentSessionId);
+      if (current) {
+        db.pauseSession(currentSessionId);
+        pausedSession = current.name;
+      }
+    }
+
+    // Resume target session
+    db.resumeSession(session_id);
+    currentSessionId = session_id;
+
+    const stats = db.getSessionStats(session_id);
+
+    return success(
+      {
+        previous_session: pausedSession,
+        current_session: targetSession.name,
+        session_id: session_id,
+        item_count: stats?.total_items || 0,
+      },
+      pausedSession
+        ? `Switched from '${pausedSession}' to '${targetSession.name}'`
+        : `Switched to session '${targetSession.name}'`
+    );
+  } catch (err) {
+    return error('Failed to switch sessions', err);
+  }
+}
+
+/**
+ * Delete a session
+ */
+async function handleSessionDelete(args: any) {
+  try {
+    const { session_id } = args;
+
+    if (!session_id || typeof session_id !== 'string') {
+      throw new ValidationError('session_id is required');
+    }
+
+    const session = db.getSession(session_id);
+    if (!session) {
+      throw new SessionError(`Session '${session_id}' not found`);
+    }
+
+    // Delete will throw if session is active
+    const deleted = db.deleteSession(session_id);
+
+    if (deleted) {
+      return success(
+        { session_id, session_name: session.name },
+        `Session '${session.name}' deleted successfully`
+      );
+    } else {
+      throw new SessionError('Failed to delete session');
+    }
+  } catch (err) {
+    return error('Failed to delete session', err);
   }
 }
 
@@ -701,7 +948,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_list_sessions',
-        description: 'List recent sessions with summary. Use at conversation start to find previous work or when user asks to continue from earlier session.',
+        description: 'List recent sessions with summary. Filters by current project path by default. Use at conversation start to find previous work or when user asks to continue from earlier session.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -709,7 +956,78 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'number',
               description: 'Maximum sessions to return (default: 10)',
             },
+            project_path: {
+              type: 'string',
+              description: 'Filter by project path (defaults to current working directory)',
+            },
+            status: {
+              type: 'string',
+              enum: ['active', 'paused', 'completed', 'all'],
+              description: 'Filter by session status',
+            },
+            include_completed: {
+              type: 'boolean',
+              description: 'Include completed sessions (default: false)',
+            },
           },
+        },
+      },
+      {
+        name: 'context_session_end',
+        description: 'End (complete) the current session. Marks session as completed with timestamp. Returns session summary including duration, items saved, and checkpoints created. Use when work is finished.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
+        name: 'context_session_pause',
+        description: 'Pause the current session to resume later. Preserves all session state and can be resumed with context_session_resume. Use when switching contexts or taking a break.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
+      {
+        name: 'context_session_resume',
+        description: 'Resume a previously paused session. Restores session state and sets it as the active session. Cannot resume completed sessions.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            session_id: {
+              type: 'string',
+              description: 'ID of the session to resume',
+            },
+          },
+          required: ['session_id'],
+        },
+      },
+      {
+        name: 'context_session_switch',
+        description: 'Switch between sessions atomically. Pauses current session (if any) and resumes the specified session. Use when working on multiple projects.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            session_id: {
+              type: 'string',
+              description: 'ID of the session to switch to',
+            },
+          },
+          required: ['session_id'],
+        },
+      },
+      {
+        name: 'context_session_delete',
+        description: 'Delete a session permanently. Cannot delete active sessions (must pause or end first). Cascade deletes all context items and checkpoints. Use to clean up accidentally created sessions.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            session_id: {
+              type: 'string',
+              description: 'ID of the session to delete',
+            },
+          },
+          required: ['session_id'],
         },
       },
     ],
@@ -741,6 +1059,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: JSON.stringify(await handleSessionRename(args), null, 2) }] };
       case 'context_list_sessions':
         return { content: [{ type: 'text', text: JSON.stringify(await handleListSessions(args), null, 2) }] };
+      case 'context_session_end':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleSessionEnd(), null, 2) }] };
+      case 'context_session_pause':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleSessionPause(), null, 2) }] };
+      case 'context_session_resume':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleSessionResume(args), null, 2) }] };
+      case 'context_session_switch':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleSessionSwitch(args), null, 2) }] };
+      case 'context_session_delete':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleSessionDelete(args), null, 2) }] };
       default:
         return {
           content: [{ type: 'text', text: JSON.stringify(error(`Unknown tool: ${name}`)) }],
