@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   description TEXT,
   branch TEXT,                          -- Git branch if available
   channel TEXT DEFAULT 'general',       -- Derived from branch or name
+  project_path TEXT,                    -- Absolute path to project/repo
+  status TEXT DEFAULT 'active',         -- 'active', 'paused', 'completed'
+  ended_at INTEGER,                     -- Timestamp when paused/completed
   created_at INTEGER NOT NULL,          -- Unix timestamp (ms)
   updated_at INTEGER NOT NULL,
 
@@ -117,6 +120,14 @@ CREATE INDEX IF NOT EXISTS idx_file_cache_session
   ON file_cache(session_id);
 CREATE INDEX IF NOT EXISTS idx_file_cache_path
   ON file_cache(file_path);
+
+-- Session lifecycle indexes
+CREATE INDEX IF NOT EXISTS idx_sessions_project_path
+  ON sessions(project_path);
+CREATE INDEX IF NOT EXISTS idx_sessions_status
+  ON sessions(status);
+CREATE INDEX IF NOT EXISTS idx_sessions_project_status
+  ON sessions(project_path, status);
 
 -- Cloud sync indexes (for future)
 CREATE INDEX IF NOT EXISTS idx_sessions_user

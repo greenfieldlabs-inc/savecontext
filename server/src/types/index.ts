@@ -5,13 +5,18 @@
 // Session Types
 // ====================
 
+export type SessionStatus_Type = 'active' | 'paused' | 'completed';
+
 export interface Session {
   id: string;
   name: string;
   description?: string;
   branch?: string;
   channel: string;
-  created_at: number;    // Unix timestamp (ms)
+  project_path?: string;        // Absolute path to project/repo
+  status?: SessionStatus_Type;  // Session lifecycle state
+  ended_at?: number;            // Timestamp when paused/completed
+  created_at: number;           // Unix timestamp (ms)
   updated_at: number;
 
   // Cloud sync fields (optional for MVP)
@@ -25,6 +30,7 @@ export interface CreateSessionArgs {
   description?: string;
   branch?: string;
   channel?: string;
+  project_path?: string;
 }
 
 // ====================
@@ -146,6 +152,9 @@ export interface RecentSession {
   description?: string;
   branch?: string;
   channel: string;
+  project_path?: string;
+  status?: SessionStatus_Type;
+  ended_at?: number;
   created_at: number;
   updated_at: number;
   item_count: number;
@@ -189,6 +198,8 @@ export interface SessionResponse {
   id: string;
   name: string;
   channel: string;
+  project_path?: string;
+  status?: SessionStatus_Type;
   created_at: number;
 }
 
@@ -200,10 +211,13 @@ export interface SessionStatus {
   current_session_id: string | null;
   session_name: string;
   channel: string;
+  project_path?: string;
+  status?: SessionStatus_Type;
   item_count: number;
   total_size: number;
   checkpoint_count: number;
   last_updated: number;
+  session_duration_ms?: number;  // Time from created_at to ended_at or now
   should_compact?: boolean;
   compaction_reason?: string | null;
 }

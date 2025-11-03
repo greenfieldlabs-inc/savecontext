@@ -107,16 +107,27 @@ export class DatabaseManager {
   createSession(session: Omit<Session, 'id' | 'created_at' | 'updated_at'>): Session {
     const now = Date.now();
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, name, description, branch, channel, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, name, description, branch, channel, project_path, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const id = this.generateId();
-    stmt.run(id, session.name, session.description || null, session.branch || null, session.channel, now, now);
+    stmt.run(
+      id,
+      session.name,
+      session.description || null,
+      session.branch || null,
+      session.channel,
+      session.project_path || null,
+      session.status || 'active',
+      now,
+      now
+    );
 
     return {
       id,
       ...session,
+      status: session.status || 'active',
       created_at: now,
       updated_at: now,
     } as Session;
@@ -127,18 +138,123 @@ export class DatabaseManager {
     return stmt.get(sessionId) as Session | null;
   }
 
-  listSessions(limit: number = 10): Session[] {
-    const stmt = this.db.prepare(`
-      SELECT * FROM sessions
-      ORDER BY updated_at DESC
-      LIMIT ?
-    `);
-    return stmt.all(limit) as Session[];
+  listSessions(limit: number = 10, filters?: {
+    project_path?: string;
+    status?: string;
+    include_completed?: boolean;
+  }): Session[] {
+    let query = 'SELECT * FROM sessions WHERE 1=1';
+    const params: any[] = [];
+
+    // Filter by project_path if provided
+    if (filters?.project_path) {
+      query += ' AND project_path = ?';
+      params.push(filters.project_path);
+    }
+
+    // Filter by status if provided
+    if (filters?.status && filters.status !== 'all') {
+      query += ' AND status = ?';
+      params.push(filters.status);
+    }
+
+    // Exclude completed sessions unless explicitly included
+    if (!filters?.include_completed && filters?.status !== 'completed' && filters?.status !== 'all') {
+      query += ' AND status != ?';
+      params.push('completed');
+    }
+
+    query += ' ORDER BY updated_at DESC LIMIT ?';
+    params.push(limit);
+
+    const stmt = this.db.prepare(query);
+    return stmt.all(...params) as Session[];
   }
 
   updateSessionTimestamp(sessionId: string): void {
     const stmt = this.db.prepare('UPDATE sessions SET updated_at = ? WHERE id = ?');
     stmt.run(Date.now(), sessionId);
+  }
+
+  /**
+   * Get the active session for a specific project path
+   * Returns null if no active session found
+   */
+  getActiveSession(projectPath: string): Session | null {
+    const stmt = this.db.prepare(`
+      SELECT * FROM sessions
+      WHERE project_path = ? AND status = 'active'
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `);
+    return stmt.get(projectPath) as Session | null;
+  }
+
+  /**
+   * End (complete) a session
+   * Sets status to 'completed' and records ended_at timestamp
+   */
+  endSession(sessionId: string): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      UPDATE sessions
+      SET status = 'completed', ended_at = ?, updated_at = ?
+      WHERE id = ?
+    `);
+    stmt.run(now, now, sessionId);
+  }
+
+  /**
+   * Pause a session
+   * Sets status to 'paused' and records ended_at timestamp
+   * Can be resumed later
+   */
+  pauseSession(sessionId: string): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      UPDATE sessions
+      SET status = 'paused', ended_at = ?, updated_at = ?
+      WHERE id = ?
+    `);
+    stmt.run(now, now, sessionId);
+  }
+
+  /**
+   * Resume a paused or active session
+   * Sets status to 'active' and clears ended_at
+   */
+  resumeSession(sessionId: string): void {
+    const now = Date.now();
+    const stmt = this.db.prepare(`
+      UPDATE sessions
+      SET status = 'active', ended_at = NULL, updated_at = ?
+      WHERE id = ?
+    `);
+    stmt.run(now, sessionId);
+  }
+
+  /**
+   * Delete a session and all related data
+   * Only allows deletion if session is not active
+   * CASCADE handles deletion of context_items, checkpoints, etc.
+   */
+  deleteSession(sessionId: string): boolean {
+    const session = this.getSession(sessionId);
+    if (!session) {
+      return false;
+    }
+
+    // Prevent deletion of active sessions
+    if (session.status === 'active') {
+      throw new DatabaseError('Cannot delete active session. Pause or end it first.', {
+        sessionId,
+        status: session.status,
+      });
+    }
+
+    const stmt = this.db.prepare('DELETE FROM sessions WHERE id = ?');
+    const result = stmt.run(sessionId);
+    return result.changes > 0;
   }
 
   // ========================
