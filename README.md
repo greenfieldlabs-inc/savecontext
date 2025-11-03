@@ -8,6 +8,9 @@ SaveContext is a Model Context Protocol (MCP) server that provides stateful sess
 
 ## Features
 
+- **Session Lifecycle Management**: Full session state management with pause, resume, end, switch, and delete operations
+- **Project Isolation**: Automatically filters sessions by project path - only see sessions from your current repository
+- **Auto-Resume**: If an active session exists for your project, automatically resume it instead of creating duplicates
 - **Session Management**: Organize work by sessions with automatic channel detection from git branches
 - **Checkpoints**: Create named snapshots of session state with optional git status capture
 - **Smart Compaction**: Analyze priority items and generate restoration summaries when approaching context limits
@@ -45,7 +48,7 @@ The server communicates via stdio using the MCP protocol.
 
 ### Server Implementation
 
-The MCP server is built on `@modelcontextprotocol/sdk` and provides 10 tools for context management. The server maintains a single active session per connection and stores all data in a local SQLite database.
+The MCP server is built on `@modelcontextprotocol/sdk` and provides 15 tools for context management. The server maintains a single active session per connection and stores all data in a local SQLite database.
 
 ```
 server/
@@ -73,6 +76,9 @@ The server uses SQLite with the following schema:
 - `description` (TEXT) - Optional description
 - `channel` (TEXT) - Derived from git branch or session name
 - `branch` (TEXT) - Git branch name if available
+- `project_path` (TEXT) - Absolute path to project/repository
+- `status` (TEXT) - Session state: 'active', 'paused', or 'completed'
+- `ended_at` (INTEGER) - Timestamp when paused or completed
 - `created_at` (INTEGER) - Timestamp
 - `updated_at` (INTEGER) - Timestamp
 
@@ -134,10 +140,11 @@ Git information is optional and only captured when `include_git: true` is specif
 {
   name: string,           // Required: session name
   description?: string,   // Optional: session description
-  channel?: string        // Optional: override auto-derived channel
+  channel?: string,       // Optional: override auto-derived channel
+  project_path?: string   // Optional: override auto-detected project path
 }
 ```
-Creates a new session and sets it as active. Auto-derives channel from git branch if available.
+Creates a new session and sets it as active. Auto-derives channel from git branch and detects project path from current working directory. If an active session already exists for the current project, automatically resumes it instead of creating a duplicate.
 
 **context_save**
 ```javascript
@@ -166,7 +173,7 @@ Retrieves context items with optional filtering.
 
 **context_status**
 
-Returns session statistics including item count, size, checkpoint count, and compaction recommendations.
+Returns session statistics including item count, size, checkpoint count, status, and compaction recommendations.
 
 Returns:
 ```javascript
@@ -174,10 +181,13 @@ Returns:
   current_session_id: "sess_...",
   session_name: "Implementing Auth",
   channel: "feature-auth",
+  project_path: "/Users/you/project",
+  status: "active",
   item_count: 47,
   total_size: 12456,
   checkpoint_count: 3,
   last_updated: 1730577600000,  // Unix timestamp in milliseconds
+  session_duration_ms: 3600000,  // Time from created_at to ended_at or now
   should_compact: true,
   compaction_reason: "High item count (47 items, recommended: prepare at 40+ items)"
 }
@@ -194,10 +204,96 @@ Renames the current active session.
 **context_list_sessions**
 ```javascript
 {
-  limit?: number  // Default: 10
+  limit?: number,              // Default: 10
+  project_path?: string,       // Optional: filter by project path (defaults to current directory)
+  status?: string,             // Optional: 'active', 'paused', 'completed', or 'all'
+  include_completed?: boolean  // Default: false
 }
 ```
-Lists recent sessions ordered by most recently updated.
+Lists recent sessions ordered by most recently updated. By default, filters to show only sessions from the current project path and excludes completed sessions.
+
+**context_session_end**
+
+Ends (completes) the current session. Marks the session as completed with a timestamp and clears it as the active session.
+
+Returns:
+```javascript
+{
+  session_id: "sess_...",
+  session_name: "Implementing Auth",
+  duration_ms: 3600000,
+  item_count: 47,
+  checkpoint_count: 3,
+  total_size: 12456
+}
+```
+
+**context_session_pause**
+
+Pauses the current session to resume later. Preserves all session state and can be resumed with `context_session_resume`. Use when switching contexts or taking a break.
+
+Returns:
+```javascript
+{
+  session_id: "sess_...",
+  session_name: "Implementing Auth",
+  resume_instructions: "To resume: use context_session_resume with session_id: sess_..."
+}
+```
+
+**context_session_resume**
+```javascript
+{
+  session_id: string  // Required: ID of the session to resume
+}
+```
+Resumes a previously paused session. Restores session state and sets it as the active session. Cannot resume completed sessions.
+
+Returns:
+```javascript
+{
+  session_id: "sess_...",
+  session_name: "Implementing Auth",
+  channel: "feature-auth",
+  project_path: "/Users/you/project",
+  item_count: 47,
+  created_at: 1730577600000
+}
+```
+
+**context_session_switch**
+```javascript
+{
+  session_id: string  // Required: ID of the session to switch to
+}
+```
+Switches between sessions atomically. Pauses the current session (if any) and resumes the specified session. Use when working on multiple projects.
+
+Returns:
+```javascript
+{
+  previous_session: "Old Session Name",
+  current_session: "New Session Name",
+  session_id: "sess_...",
+  item_count: 23
+}
+```
+
+**context_session_delete**
+```javascript
+{
+  session_id: string  // Required: ID of the session to delete
+}
+```
+Deletes a session permanently. Cannot delete active sessions (must pause or end first). Cascade deletes all context items and checkpoints. Use to clean up accidentally created sessions.
+
+Returns:
+```javascript
+{
+  session_id: "sess_...",
+  session_name: "Old Session"
+}
+```
 
 ### Checkpoint Management
 
