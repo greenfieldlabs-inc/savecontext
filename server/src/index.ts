@@ -460,19 +460,148 @@ async function handleRestoreCheckpoint(args: any) {
 }
 
 /**
- * List all checkpoints for current session
+ * List checkpoints with lightweight search and filtering
+ * Returns minimal data to avoid context bloat
+ * Use context_get_checkpoint to get full details for a specific checkpoint
  */
-async function handleListCheckpoints() {
+async function handleListCheckpoints(args?: any) {
   try {
-    const sessionId = ensureSession();
-    const checkpoints = db.listCheckpoints(sessionId);
+    const search = args?.search;
+    const sessionId = args?.session_id;
+    const includeAllProjects = args?.include_all_projects || false;
+    const projectPath = args?.project_path || (includeAllProjects ? null : normalizeProjectPath(getCurrentProjectPath()));
+    const limit = args?.limit || 20;
+    const offset = args?.offset || 0;
+
+    // Build query with filters
+    let query = `
+      SELECT
+        c.id,
+        c.name,
+        c.session_id,
+        c.item_count,
+        c.created_at,
+        s.name as session_name,
+        s.project_path
+      FROM checkpoints c
+      JOIN sessions s ON c.session_id = s.id
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+
+    // Filter by session
+    if (sessionId) {
+      query += ' AND c.session_id = ?';
+      params.push(sessionId);
+    }
+
+    // Filter by project path
+    if (projectPath) {
+      query += ' AND s.project_path = ?';
+      params.push(projectPath);
+    }
+
+    // Keyword search across name, description, and session name
+    if (search) {
+      query += ' AND (c.name LIKE ? OR c.description LIKE ? OR s.name LIKE ?)';
+      const searchPattern = `%${search}%`;
+      params.push(searchPattern, searchPattern, searchPattern);
+    }
+
+    // Count total matches before pagination
+    const countQuery = query.replace(/SELECT[\s\S]*?FROM/, 'SELECT COUNT(*) as total FROM');
+    const countResult = db.getDatabase().prepare(countQuery).get(...params) as { total: number };
+    const totalMatches = countResult.total;
+
+    // Add ordering and pagination
+    query += ' ORDER BY c.created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    const checkpoints = db.getDatabase().prepare(query).all(...params);
+
+    // Determine scope
+    let scope: 'session' | 'project' | 'all';
+    if (sessionId) {
+      scope = 'session';
+    } else if (projectPath) {
+      scope = 'project';
+    } else {
+      scope = 'all';
+    }
 
     return success(
-      { checkpoints, count: checkpoints.length },
-      `Found ${checkpoints.length} checkpoints`
+      {
+        checkpoints,
+        count: checkpoints.length,
+        total_matches: totalMatches,
+        scope,
+        has_more: offset + checkpoints.length < totalMatches
+      },
+      `Found ${totalMatches} checkpoints${search ? ` matching "${search}"` : ''}`
     );
   } catch (err) {
     return error('Failed to list checkpoints', err);
+  }
+}
+
+/**
+ * Get full details for a specific checkpoint
+ * Returns complete checkpoint data including description, git info, and item preview
+ */
+async function handleGetCheckpoint(args: any) {
+  try {
+    const { checkpoint_id } = args;
+
+    if (!checkpoint_id || typeof checkpoint_id !== 'string') {
+      throw new ValidationError('checkpoint_id is required');
+    }
+
+    // Get checkpoint
+    const checkpoint = db.getCheckpoint(checkpoint_id);
+    if (!checkpoint) {
+      throw new SaveContextError(`Checkpoint '${checkpoint_id}' not found`, 'NOT_FOUND');
+    }
+
+    // Get session info
+    const session = db.getSession(checkpoint.session_id);
+
+    // Get preview of high-priority items from this checkpoint
+    const itemsPreview = db.getDatabase()
+      .prepare(`
+        SELECT ci.key, ci.value, ci.category, ci.priority, ci.created_at
+        FROM checkpoint_items chk_items
+        JOIN context_items ci ON chk_items.context_item_id = ci.id
+        WHERE chk_items.checkpoint_id = ?
+        ORDER BY
+          CASE ci.priority
+            WHEN 'high' THEN 1
+            WHEN 'normal' THEN 2
+            WHEN 'low' THEN 3
+          END,
+          ci.created_at DESC
+        LIMIT 5
+      `)
+      .all(checkpoint_id);
+
+    return success(
+      {
+        id: checkpoint.id,
+        name: checkpoint.name,
+        description: checkpoint.description,
+        session_id: checkpoint.session_id,
+        session_name: session?.name,
+        project_path: session?.project_path,
+        item_count: checkpoint.item_count,
+        total_size: checkpoint.total_size,
+        git_status: checkpoint.git_status,
+        git_branch: checkpoint.git_branch,
+        created_at: checkpoint.created_at,
+        items_preview: itemsPreview
+      },
+      `Checkpoint '${checkpoint.name}' has ${checkpoint.item_count} items`
+    );
+  } catch (err) {
+    return error('Failed to get checkpoint', err);
   }
 }
 
@@ -910,10 +1039,49 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_list_checkpoints',
-        description: 'List all checkpoints for current session with metadata. Use to find restoration points or review session history.',
+        description: 'Lightweight checkpoint search with keyword filtering. Returns minimal data (id, name, session_name, created_at, item_count) to avoid context bloat. Defaults to current project. Use context_get_checkpoint to get full details for a specific checkpoint.',
         inputSchema: {
           type: 'object',
-          properties: {},
+          properties: {
+            search: {
+              type: 'string',
+              description: 'Keyword search across checkpoint name, description, and session name',
+            },
+            session_id: {
+              type: 'string',
+              description: 'Filter to specific session',
+            },
+            project_path: {
+              type: 'string',
+              description: 'Filter to specific project (default: current project)',
+            },
+            include_all_projects: {
+              type: 'boolean',
+              description: 'Show checkpoints from all projects (default: false)',
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum results to return (default: 20)',
+            },
+            offset: {
+              type: 'number',
+              description: 'Pagination offset (default: 0)',
+            },
+          },
+        },
+      },
+      {
+        name: 'context_get_checkpoint',
+        description: 'Get full details for a specific checkpoint. Returns complete data including description, git status/branch, and preview of top 5 high-priority items. Use after context_list_checkpoints to drill down into relevant checkpoints.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            checkpoint_id: {
+              type: 'string',
+              description: 'ID of the checkpoint to retrieve',
+            },
+          },
+          required: ['checkpoint_id'],
         },
       },
       {
@@ -1052,7 +1220,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'context_restore':
         return { content: [{ type: 'text', text: JSON.stringify(await handleRestoreCheckpoint(args), null, 2) }] };
       case 'context_list_checkpoints':
-        return { content: [{ type: 'text', text: JSON.stringify(await handleListCheckpoints(), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(await handleListCheckpoints(args), null, 2) }] };
+      case 'context_get_checkpoint':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleGetCheckpoint(args), null, 2) }] };
       case 'context_status':
         return { content: [{ type: 'text', text: JSON.stringify(await handleSessionStatus(), null, 2) }] };
       case 'context_session_rename':

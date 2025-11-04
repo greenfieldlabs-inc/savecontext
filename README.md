@@ -13,6 +13,7 @@ SaveContext is a Model Context Protocol (MCP) server that provides stateful sess
 - **Auto-Resume**: If an active session exists for your project, automatically resume it instead of creating duplicates
 - **Session Management**: Organize work by sessions with automatic channel detection from git branches
 - **Checkpoints**: Create named snapshots of session state with optional git status capture
+- **Checkpoint Search**: Lightweight keyword search across all checkpoints with project/session filtering to find historical decisions
 - **Smart Compaction**: Analyze priority items and generate restoration summaries when approaching context limits
 - **Channel System**: Automatically derive channels from git branches (e.g., `feature/auth` → `feature-auth`)
 - **Local Storage**: SQLite database with WAL mode for fast, reliable persistence
@@ -48,7 +49,7 @@ The server communicates via stdio using the MCP protocol.
 
 ### Server Implementation
 
-The MCP server is built on `@modelcontextprotocol/sdk` and provides 15 tools for context management. The server maintains a single active session per connection and stores all data in a local SQLite database.
+The MCP server is built on `@modelcontextprotocol/sdk` and provides 16 tools for context management. The server maintains a single active session per connection and stores all data in a local SQLite database.
 
 ```
 server/
@@ -316,8 +317,17 @@ Creates a named checkpoint of the current session state. If `include_git` is tru
 Restores all context items from a checkpoint into the current session.
 
 **context_list_checkpoints**
-
-Lists all checkpoints for the current session with metadata.
+```javascript
+{
+  search?: string,              // Keyword search: name, description, session name
+  session_id?: string,          // Filter to specific session
+  project_path?: string,        // Filter to specific project (default: current)
+  include_all_projects?: boolean,  // Show all projects (default: false)
+  limit?: number,               // Max results (default: 20)
+  offset?: number               // Pagination (default: 0)
+}
+```
+Lightweight checkpoint search with keyword filtering. Returns minimal data to avoid context bloat. Defaults to current project. Use `context_get_checkpoint` to get full details for specific checkpoints.
 
 Returns:
 ```javascript
@@ -325,14 +335,46 @@ Returns:
   checkpoints: [
     {
       id: "ckpt_...",
-      name: "before-refactor",
+      name: "before-auth-refactor",
       session_id: "sess_...",
+      session_name: "OAuth2 Implementation",
+      project_path: "/path/to/project",
       item_count: 23,
-      total_size: 4567,
-      created_at: 1730577600000  // Unix timestamp in milliseconds
+      created_at: 1730577600000
     }
   ],
-  count: 1
+  count: 3,
+  total_matches: 15,
+  scope: "project",  // "session" | "project" | "all"
+  has_more: true
+}
+```
+
+**context_get_checkpoint**
+```javascript
+{
+  checkpoint_id: string  // Required: checkpoint ID
+}
+```
+Get full details for a specific checkpoint. Returns complete data including description, git status/branch, and preview of top 5 high-priority items. Use after `context_list_checkpoints` to drill down.
+
+Returns:
+```javascript
+{
+  id: "ckpt_...",
+  name: "before-auth-refactor",
+  description: "Before switching from sessions to JWT",
+  session_id: "sess_...",
+  session_name: "OAuth2 Implementation",
+  project_path: "/path/to/project",
+  item_count: 23,
+  total_size: 5678,
+  git_status: "M auth.ts\nA jwt.ts",
+  git_branch: "feature/auth",
+  created_at: 1730577600000,
+  items_preview: [
+    { key: "auth_decision", value: "Use JWT instead of sessions", category: "decision", priority: "high" }
+  ]
 }
 ```
 
