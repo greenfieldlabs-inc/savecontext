@@ -8,6 +8,8 @@ SaveContext is a Model Context Protocol (MCP) server that provides stateful sess
 
 ## Features
 
+- **Multi-Agent Support**: Run multiple CLI/IDE instances simultaneously with agent-scoped session tracking
+- **Automatic Provider Detection**: Detects MCP client via protocol handshake (Claude Code, Cursor, Cline, Factory.ai, Codex CLI, etc.)
 - **Session Lifecycle Management**: Full session state management with pause, resume, end, switch, and delete operations
 - **Multi-Path Sessions**: Sessions can span multiple related directories (monorepos, frontend/backend, etc.)
 - **Project Isolation**: Automatically filters sessions by project path - only see sessions from your current repository
