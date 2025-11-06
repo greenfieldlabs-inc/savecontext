@@ -390,6 +390,83 @@ export class DatabaseManager {
     return stmt.all(...params) as Session[];
   }
 
+  // ==============================================
+  // Agent Session Tracking (Multi-Agent Support)
+  // ==============================================
+
+  /**
+   * Set or update the current session for an agent
+   * Creates new entry or updates existing one
+   */
+  setCurrentSessionForAgent(
+    agentId: string,
+    sessionId: string,
+    projectPath: string,
+    gitBranch: string,
+    provider: string
+  ): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO agent_sessions (agent_id, session_id, project_path, git_branch, provider, last_active_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(agent_id) DO UPDATE SET
+        session_id = excluded.session_id,
+        project_path = excluded.project_path,
+        git_branch = excluded.git_branch,
+        provider = excluded.provider,
+        last_active_at = excluded.last_active_at
+    `);
+    stmt.run(agentId, sessionId, projectPath, gitBranch, provider, Date.now());
+  }
+
+  /**
+   * Get the current session for an agent
+   * Returns null if agent has no current session
+   */
+  getCurrentSessionForAgent(agentId: string): Session | null {
+    const stmt = this.db.prepare(`
+      SELECT s.* FROM sessions s
+      JOIN agent_sessions ag ON s.id = ag.session_id
+      WHERE ag.agent_id = ?
+    `);
+    return stmt.get(agentId) as Session | null;
+  }
+
+  /**
+   * Clear the current session for an agent
+   * Removes the agent_sessions entry
+   */
+  clearCurrentSessionForAgent(agentId: string): void {
+    const stmt = this.db.prepare(`
+      DELETE FROM agent_sessions
+      WHERE agent_id = ?
+    `);
+    stmt.run(agentId);
+  }
+
+  /**
+   * Get all agents currently working on a session
+   * Returns array of agent info
+   */
+  getAgentsForSession(sessionId: string): Array<{
+    agent_id: string;
+    provider: string;
+    git_branch: string;
+    last_active_at: number;
+  }> {
+    const stmt = this.db.prepare(`
+      SELECT agent_id, provider, git_branch, last_active_at
+      FROM agent_sessions
+      WHERE session_id = ?
+      ORDER BY last_active_at DESC
+    `);
+    return stmt.all(sessionId) as Array<{
+      agent_id: string;
+      provider: string;
+      git_branch: string;
+      last_active_at: number;
+    }>;
+  }
+
   // ========================
   // Context Item Operations
   // ========================
