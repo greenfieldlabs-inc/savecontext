@@ -24,6 +24,20 @@ SaveContext is a Model Context Protocol (MCP) server that provides stateful sess
 
 ## Installation
 
+### Using npm (Recommended)
+
+```bash
+npm install -g @savecontext/mcp
+```
+
+### Using npx (No installation)
+
+```bash
+npx -y @savecontext/mcp
+```
+
+### From source (Development)
+
 ```bash
 git clone https://github.com/greenfieldlabs-inc/savecontext.git
 cd savecontext/server
@@ -35,12 +49,43 @@ pnpm build
 
 Add to your MCP client configuration file:
 
+**Claude Desktop**
+
+Edit your config file at:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
 ```json
 {
   "mcpServers": {
     "savecontext": {
-      "command": "node",
-      "args": ["/absolute/path/to/savecontext/server/dist/index.js"]
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"]
+    }
+  }
+}
+```
+
+**Other MCP Clients** (Cursor, Cline, Continue, etc.)
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"]
+    }
+  }
+}
+```
+
+**If installed globally:**
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "savecontext"
     }
   }
 }
