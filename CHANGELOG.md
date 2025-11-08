@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
-## [0.1.3] - 2025-11-06
+## [0.1.3] - 2025-11-08
 
 ### Added
 - Project memory system for storing commands, configs, and notes that persist across sessions
