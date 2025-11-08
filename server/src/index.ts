@@ -480,6 +480,251 @@ async function handleUpdateContext(args: any) {
 }
 
 /**
+ * Save project memory (command, config, or note)
+ */
+async function handleMemorySave(args: any) {
+  try {
+    const projectPath = normalizeProjectPath(getCurrentProjectPath());
+
+    if (!args?.key) {
+      throw new ValidationError('key is required');
+    }
+
+    if (!args?.value) {
+      throw new ValidationError('value is required');
+    }
+
+    const category = args.category || 'command';
+    if (!['command', 'config', 'note'].includes(category)) {
+      throw new ValidationError('category must be command, config, or note');
+    }
+
+    const result = db.saveMemory(projectPath, args.key, args.value, category);
+
+    return success(
+      {
+        key: result.key,
+        value: args.value,
+        category,
+        project_path: projectPath,
+      },
+      `Saved memory '${args.key}' to project`
+    );
+  } catch (err) {
+    return error('Failed to save memory', err);
+  }
+}
+
+/**
+ * Get project memory by key
+ */
+async function handleMemoryGet(args: any) {
+  try {
+    const projectPath = normalizeProjectPath(getCurrentProjectPath());
+
+    if (!args?.key) {
+      throw new ValidationError('key is required');
+    }
+
+    const memory = db.getMemory(projectPath, args.key);
+
+    if (!memory) {
+      return success(
+        { found: false, key: args.key },
+        `No memory found with key '${args.key}'`
+      );
+    }
+
+    return success(
+      {
+        found: true,
+        key: memory.key,
+        value: memory.value,
+        category: memory.category,
+      },
+      `Retrieved memory '${args.key}'`
+    );
+  } catch (err) {
+    return error('Failed to get memory', err);
+  }
+}
+
+/**
+ * List all project memory
+ */
+async function handleMemoryList(args: any) {
+  try {
+    const projectPath = normalizeProjectPath(getCurrentProjectPath());
+    const category = args?.category;
+
+    const memories = db.listMemory(projectPath, category);
+
+    return success(
+      {
+        items: memories,
+        count: memories.length,
+        project_path: projectPath,
+      },
+      `Found ${memories.length} memory items`
+    );
+  } catch (err) {
+    return error('Failed to list memory', err);
+  }
+}
+
+/**
+ * Delete project memory by key
+ */
+async function handleMemoryDelete(args: any) {
+  try {
+    const projectPath = normalizeProjectPath(getCurrentProjectPath());
+
+    if (!args?.key) {
+      throw new ValidationError('key is required');
+    }
+
+    const deleted = db.deleteMemory(projectPath, args.key);
+
+    if (!deleted) {
+      return success(
+        { deleted: false, key: args.key },
+        `No memory found with key '${args.key}'`
+      );
+    }
+
+    return success(
+      { deleted: true, key: args.key },
+      `Deleted memory '${args.key}'`
+    );
+  } catch (err) {
+    return error('Failed to delete memory', err);
+  }
+}
+
+/**
+ * Create a new task
+ */
+async function handleTaskCreate(args: any) {
+  try {
+    const projectPath = normalizeProjectPath(getCurrentProjectPath());
+
+    if (!args?.title) {
+      throw new ValidationError('title is required');
+    }
+
+    const result = db.createTask(projectPath, args.title, args.description);
+
+    return success(
+      {
+        id: result.id,
+        title: result.title,
+        description: args.description || null,
+        status: 'todo',
+        project_path: projectPath,
+      },
+      `Created task '${args.title}'`
+    );
+  } catch (err) {
+    return error('Failed to create task', err);
+  }
+}
+
+/**
+ * Update an existing task
+ */
+async function handleTaskUpdate(args: any) {
+  try {
+    if (!args?.id) {
+      throw new ValidationError('id is required');
+    }
+
+    const updates: any = {};
+    if (args.title !== undefined) updates.title = args.title;
+    if (args.description !== undefined) updates.description = args.description;
+    if (args.status !== undefined) {
+      if (!['todo', 'done'].includes(args.status)) {
+        throw new ValidationError('status must be todo or done');
+      }
+      updates.status = args.status;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      throw new ValidationError('At least one field to update is required (title, description, or status)');
+    }
+
+    const updated = db.updateTask(args.id, updates);
+
+    if (!updated) {
+      return success(
+        { updated: false, id: args.id },
+        `No task found with id '${args.id}'`
+      );
+    }
+
+    return success(
+      { updated: true, id: args.id, ...updates },
+      `Updated task '${args.id}'`
+    );
+  } catch (err) {
+    return error('Failed to update task', err);
+  }
+}
+
+/**
+ * List tasks for current project
+ */
+async function handleTaskList(args: any) {
+  try {
+    const projectPath = normalizeProjectPath(getCurrentProjectPath());
+    const status = args?.status;
+
+    if (status && !['todo', 'done'].includes(status)) {
+      throw new ValidationError('status must be todo or done');
+    }
+
+    const tasks = db.listTasks(projectPath, status);
+
+    return success(
+      {
+        tasks,
+        count: tasks.length,
+        project_path: projectPath,
+      },
+      `Found ${tasks.length} tasks`
+    );
+  } catch (err) {
+    return error('Failed to list tasks', err);
+  }
+}
+
+/**
+ * Mark a task as complete
+ */
+async function handleTaskComplete(args: any) {
+  try {
+    if (!args?.id) {
+      throw new ValidationError('id is required');
+    }
+
+    const completed = db.completeTask(args.id);
+
+    if (!completed) {
+      return success(
+        { completed: false, id: args.id },
+        `No task found with id '${args.id}'`
+      );
+    }
+
+    return success(
+      { completed: true, id: args.id, status: 'done' },
+      `Marked task '${args.id}' as done`
+    );
+  } catch (err) {
+    return error('Failed to complete task', err);
+  }
+}
+
+/**
  * Create checkpoint of current session state
  */
 async function handleCreateCheckpoint(args: any) {
@@ -1396,6 +1641,144 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'context_memory_save',
+        description: 'Save project memory (command, config, or note) for current project. Memory persists across sessions and is accessible by all agents working on this project.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            key: {
+              type: 'string',
+              description: 'Unique key for this memory item (e.g., "run_tests", "api_endpoint")',
+            },
+            value: {
+              type: 'string',
+              description: 'The value to remember (command, URL, note, etc.)',
+            },
+            category: {
+              type: 'string',
+              enum: ['command', 'config', 'note'],
+              description: 'Type of memory (default: command)',
+            },
+          },
+          required: ['key', 'value'],
+        },
+      },
+      {
+        name: 'context_memory_get',
+        description: 'Retrieve project memory by key.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            key: {
+              type: 'string',
+              description: 'Memory key to retrieve',
+            },
+          },
+          required: ['key'],
+        },
+      },
+      {
+        name: 'context_memory_list',
+        description: 'List all memory items for current project. Optionally filter by category.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            category: {
+              type: 'string',
+              enum: ['command', 'config', 'note'],
+              description: 'Optional: filter by category',
+            },
+          },
+        },
+      },
+      {
+        name: 'context_memory_delete',
+        description: 'Delete a memory item by key.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            key: {
+              type: 'string',
+              description: 'Memory key to delete',
+            },
+          },
+          required: ['key'],
+        },
+      },
+      {
+        name: 'context_task_create',
+        description: 'Create a new task for the current project. Tasks persist across sessions.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            title: {
+              type: 'string',
+              description: 'Task title',
+            },
+            description: {
+              type: 'string',
+              description: 'Optional task description',
+            },
+          },
+          required: ['title'],
+        },
+      },
+      {
+        name: 'context_task_update',
+        description: 'Update an existing task (title, description, or status).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              description: 'Task ID to update',
+            },
+            title: {
+              type: 'string',
+              description: 'New task title',
+            },
+            description: {
+              type: 'string',
+              description: 'New task description',
+            },
+            status: {
+              type: 'string',
+              enum: ['todo', 'done'],
+              description: 'New task status',
+            },
+          },
+          required: ['id'],
+        },
+      },
+      {
+        name: 'context_task_list',
+        description: 'List all tasks for current project. Optionally filter by status.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            status: {
+              type: 'string',
+              enum: ['todo', 'done'],
+              description: 'Optional: filter by status',
+            },
+          },
+        },
+      },
+      {
+        name: 'context_task_complete',
+        description: 'Mark a task as complete (done).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              description: 'Task ID to mark as done',
+            },
+          },
+          required: ['id'],
+        },
+      },
+      {
         name: 'context_checkpoint',
         description: 'Create named checkpoint snapshot for manual saves. Use before major refactors, git branch switches, or experimental changes. For auto-save before context fills up, use context_prepare_compaction instead.',
         inputSchema: {
@@ -1624,6 +2007,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: JSON.stringify(await handleDeleteContext(args), null, 2) }] };
       case 'context_update':
         return { content: [{ type: 'text', text: JSON.stringify(await handleUpdateContext(args), null, 2) }] };
+      case 'context_memory_save':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleMemorySave(args), null, 2) }] };
+      case 'context_memory_get':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleMemoryGet(args), null, 2) }] };
+      case 'context_memory_list':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleMemoryList(args), null, 2) }] };
+      case 'context_memory_delete':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleMemoryDelete(args), null, 2) }] };
+      case 'context_task_create':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskCreate(args), null, 2) }] };
+      case 'context_task_update':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskUpdate(args), null, 2) }] };
+      case 'context_task_list':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskList(args), null, 2) }] };
+      case 'context_task_complete':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskComplete(args), null, 2) }] };
       case 'context_checkpoint':
         return { content: [{ type: 'text', text: JSON.stringify(await handleCreateCheckpoint(args), null, 2) }] };
       case 'context_prepare_compaction':
