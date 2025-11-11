@@ -48,6 +48,7 @@ export interface ContextItem {
   category: ItemCategory;
   priority: ItemPriority;
   channel: string;
+  tags: string;  // JSON array of tag strings
   size: number;
   created_at: number;
   updated_at: number;
@@ -98,10 +99,40 @@ export interface CreateCheckpointArgs {
   name: string;
   description?: string;
   include_git?: boolean;
+  // Filtering options for selective checkpoints
+  include_tags?: string[];
+  include_keys?: string[];  // Wildcard patterns like "feature_*"
+  include_categories?: ItemCategory[];
+  exclude_tags?: string[];
 }
 
 export interface RestoreCheckpointArgs {
   checkpoint_id: string;
+  // Filtering options for selective restoration
+  restore_tags?: string[];
+  restore_categories?: ItemCategory[];
+}
+
+export interface TagContextItemsArgs {
+  keys?: string[];      // Specific keys to tag
+  key_pattern?: string; // Wildcard pattern like "feature_*"
+  tags: string[];
+  action: 'add' | 'remove';
+}
+
+export interface CheckpointItemManagementArgs {
+  checkpoint_id: string;
+  item_keys: string[];
+}
+
+export interface CheckpointSplitArgs {
+  source_checkpoint_id: string;
+  splits: Array<{
+    name: string;
+    description?: string;
+    include_tags?: string[];
+    include_categories?: ItemCategory[];
+  }>;
 }
 
 // ====================
