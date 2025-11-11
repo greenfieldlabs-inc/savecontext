@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS context_items (
   category TEXT DEFAULT 'note',         -- task, decision, progress, note
   priority TEXT DEFAULT 'normal',       -- high, normal, low
   channel TEXT DEFAULT 'general',       -- Topic/branch-based organization
+  tags TEXT DEFAULT '[]',               -- JSON array of tag strings
   size INTEGER DEFAULT 0,               -- Size in bytes for cleanup
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
@@ -71,6 +72,8 @@ CREATE TABLE IF NOT EXISTS checkpoint_items (
   id TEXT PRIMARY KEY,
   checkpoint_id TEXT NOT NULL,
   context_item_id TEXT NOT NULL,
+  group_name TEXT,                      -- Optional group name for organization
+  group_order INTEGER DEFAULT 0,        -- Order within group
 
   FOREIGN KEY (checkpoint_id) REFERENCES checkpoints(id) ON DELETE CASCADE,
   FOREIGN KEY (context_item_id) REFERENCES context_items(id) ON DELETE CASCADE
