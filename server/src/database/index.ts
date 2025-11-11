@@ -478,10 +478,13 @@ export class DatabaseManager {
     // Calculate size
     const size = item.size || (item.key.length + item.value.length);
 
+    // Ensure tags is a valid JSON array
+    const tags = item.tags || '[]';
+
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO context_items
-      (id, session_id, key, value, category, priority, channel, size, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, session_id, key, value, category, priority, channel, tags, size, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -492,6 +495,7 @@ export class DatabaseManager {
       item.category,
       item.priority,
       item.channel,
+      tags,
       size,
       now,
       now
@@ -500,6 +504,7 @@ export class DatabaseManager {
     return {
       id,
       ...item,
+      tags,
       size,
       created_at: now,
       updated_at: now,
@@ -575,6 +580,7 @@ export class DatabaseManager {
       category?: string;
       priority?: string;
       channel?: string;
+      tags?: string;
     }
   ): ContextItem | null {
     // First get the existing item
@@ -610,6 +616,11 @@ export class DatabaseManager {
       params.push(updates.channel);
     }
 
+    if (updates.tags !== undefined) {
+      fields.push('tags = ?');
+      params.push(updates.tags);
+    }
+
     // Always update updated_at
     fields.push('updated_at = ?');
     params.push(Date.now());
@@ -627,6 +638,60 @@ export class DatabaseManager {
 
     // Return updated item
     return this.getContextItem(sessionId, key);
+  }
+
+  /**
+   * Tag context items by keys or pattern
+   * Supports wildcard patterns like "feature_*"
+   */
+  tagContextItems(
+    sessionId: string,
+    options: {
+      keys?: string[];
+      key_pattern?: string;
+      tags: string[];
+      action: 'add' | 'remove';
+    }
+  ): number {
+    let items: ContextItem[] = [];
+
+    if (options.keys) {
+      // Tag specific keys
+      for (const key of options.keys) {
+        const item = this.getContextItem(sessionId, key);
+        if (item) items.push(item);
+      }
+    } else if (options.key_pattern) {
+      // Tag by pattern (e.g., "feature_*")
+      const pattern = options.key_pattern.replace(/\*/g, '%');
+      const stmt = this.db.prepare(`
+        SELECT * FROM context_items
+        WHERE session_id = ? AND key LIKE ?
+      `);
+      items = stmt.all(sessionId, pattern) as ContextItem[];
+    }
+
+    // Update tags for each item
+    let updated = 0;
+    for (const item of items) {
+      const currentTags: string[] = JSON.parse(item.tags || '[]');
+      let newTags: string[];
+
+      if (options.action === 'add') {
+        // Add tags (no duplicates)
+        newTags = [...new Set([...currentTags, ...options.tags])];
+      } else {
+        // Remove tags
+        newTags = currentTags.filter(tag => !options.tags.includes(tag));
+      }
+
+      this.updateContextItem(sessionId, item.key, {
+        tags: JSON.stringify(newTags)
+      });
+      updated++;
+    }
+
+    return updated;
   }
 
   // ==========================
@@ -803,14 +868,55 @@ export class DatabaseManager {
   // ======================
 
   createCheckpoint(
-    checkpoint: Omit<Checkpoint, 'id' | 'created_at' | 'item_count' | 'total_size'>
+    checkpoint: Omit<Checkpoint, 'id' | 'created_at' | 'item_count' | 'total_size'>,
+    filters?: {
+      include_tags?: string[];
+      include_keys?: string[];
+      include_categories?: string[];
+      exclude_tags?: string[];
+    }
   ): Checkpoint {
     return this.transaction(() => {
       const now = Date.now();
       const id = this.generateId();
 
       // Get all context items for this session
-      const items = this.getContextItems(checkpoint.session_id);
+      let items = this.getContextItems(checkpoint.session_id);
+
+      // Apply filters if provided
+      if (filters) {
+        items = items.filter(item => {
+          const itemTags: string[] = JSON.parse(item.tags || '[]');
+
+          // Filter by include_tags
+          if (filters.include_tags && filters.include_tags.length > 0) {
+            const hasIncludedTag = filters.include_tags.some(tag => itemTags.includes(tag));
+            if (!hasIncludedTag) return false;
+          }
+
+          // Filter by include_keys (wildcard patterns)
+          if (filters.include_keys && filters.include_keys.length > 0) {
+            const matchesKey = filters.include_keys.some(pattern => {
+              const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+              return regex.test(item.key);
+            });
+            if (!matchesKey) return false;
+          }
+
+          // Filter by include_categories
+          if (filters.include_categories && filters.include_categories.length > 0) {
+            if (!filters.include_categories.includes(item.category)) return false;
+          }
+
+          // Filter by exclude_tags
+          if (filters.exclude_tags && filters.exclude_tags.length > 0) {
+            const hasExcludedTag = filters.exclude_tags.some(tag => itemTags.includes(tag));
+            if (hasExcludedTag) return false;
+          }
+
+          return true;
+        });
+      }
 
       // Calculate stats
       const item_count = items.length;
@@ -880,10 +986,37 @@ export class DatabaseManager {
     return stmt.all(checkpointId) as ContextItem[];
   }
 
-  restoreCheckpoint(checkpointId: string, targetSessionId: string): number {
+  restoreCheckpoint(
+    checkpointId: string,
+    targetSessionId: string,
+    filters?: {
+      restore_tags?: string[];
+      restore_categories?: string[];
+    }
+  ): number {
     return this.transaction(() => {
       // Get checkpoint items
-      const items = this.getCheckpointItems(checkpointId);
+      let items = this.getCheckpointItems(checkpointId);
+
+      // Apply filters if provided
+      if (filters) {
+        items = items.filter(item => {
+          const itemTags: string[] = JSON.parse(item.tags || '[]');
+
+          // Filter by restore_tags
+          if (filters.restore_tags && filters.restore_tags.length > 0) {
+            const hasTag = filters.restore_tags.some(tag => itemTags.includes(tag));
+            if (!hasTag) return false;
+          }
+
+          // Filter by restore_categories
+          if (filters.restore_categories && filters.restore_categories.length > 0) {
+            if (!filters.restore_categories.includes(item.category)) return false;
+          }
+
+          return true;
+        });
+      }
 
       // Clear current context items in target session
       const clearStmt = this.db.prepare('DELETE FROM context_items WHERE session_id = ?');
@@ -899,12 +1032,204 @@ export class DatabaseManager {
           category: item.category,
           priority: item.priority,
           channel: item.channel,
+          tags: item.tags,
           size: item.size,
         });
         restored++;
       }
 
       return restored;
+    });
+  }
+
+  /**
+   * Add items to an existing checkpoint
+   */
+  addItemsToCheckpoint(checkpointId: string, sessionId: string, itemKeys: string[]): number {
+    return this.transaction(() => {
+      const linkStmt = this.db.prepare(`
+        INSERT INTO checkpoint_items (id, checkpoint_id, context_item_id)
+        VALUES (?, ?, ?)
+      `);
+
+      let added = 0;
+      for (const key of itemKeys) {
+        const item = this.getContextItem(sessionId, key);
+        if (item) {
+          // Check if item is already in checkpoint
+          const existsStmt = this.db.prepare(`
+            SELECT 1 FROM checkpoint_items
+            WHERE checkpoint_id = ? AND context_item_id = ?
+          `);
+          const exists = existsStmt.get(checkpointId, item.id);
+
+          if (!exists) {
+            linkStmt.run(this.generateId(), checkpointId, item.id);
+            added++;
+          }
+        }
+      }
+
+      // Update checkpoint stats
+      if (added > 0) {
+        const items = this.getCheckpointItems(checkpointId);
+        const updateStmt = this.db.prepare(`
+          UPDATE checkpoints
+          SET item_count = ?, total_size = ?
+          WHERE id = ?
+        `);
+        updateStmt.run(
+          items.length,
+          items.reduce((sum, item) => sum + item.size, 0),
+          checkpointId
+        );
+      }
+
+      return added;
+    });
+  }
+
+  /**
+   * Remove items from an existing checkpoint
+   */
+  removeItemsFromCheckpoint(checkpointId: string, sessionId: string, itemKeys: string[]): number {
+    return this.transaction(() => {
+      const deleteStmt = this.db.prepare(`
+        DELETE FROM checkpoint_items
+        WHERE checkpoint_id = ? AND context_item_id = ?
+      `);
+
+      let removed = 0;
+      for (const key of itemKeys) {
+        const item = this.getContextItem(sessionId, key);
+        if (item) {
+          const result = deleteStmt.run(checkpointId, item.id);
+          if (result.changes > 0) removed++;
+        }
+      }
+
+      // Update checkpoint stats
+      if (removed > 0) {
+        const items = this.getCheckpointItems(checkpointId);
+        const updateStmt = this.db.prepare(`
+          UPDATE checkpoints
+          SET item_count = ?, total_size = ?
+          WHERE id = ?
+        `);
+        updateStmt.run(
+          items.length,
+          items.reduce((sum, item) => sum + item.size, 0),
+          checkpointId
+        );
+      }
+
+      return removed;
+    });
+  }
+
+  /**
+   * Split a checkpoint into multiple checkpoints based on filters
+   */
+  splitCheckpoint(
+    sourceCheckpointId: string,
+    splits: Array<{
+      name: string;
+      description?: string;
+      include_tags?: string[];
+      include_categories?: string[];
+    }>
+  ): Checkpoint[] {
+    return this.transaction(() => {
+      const sourceCheckpoint = this.getCheckpoint(sourceCheckpointId);
+      if (!sourceCheckpoint) {
+        throw new DatabaseError('Source checkpoint not found', { sourceCheckpointId });
+      }
+
+      const allItems = this.getCheckpointItems(sourceCheckpointId);
+      const newCheckpoints: Checkpoint[] = [];
+
+      for (const split of splits) {
+        // Filter items for this split
+        let items = allItems.filter(item => {
+          const itemTags: string[] = JSON.parse(item.tags || '[]');
+
+          // Filter by include_tags
+          if (split.include_tags && split.include_tags.length > 0) {
+            const hasTag = split.include_tags.some(tag => itemTags.includes(tag));
+            if (!hasTag) return false;
+          }
+
+          // Filter by include_categories
+          if (split.include_categories && split.include_categories.length > 0) {
+            if (!split.include_categories.includes(item.category)) return false;
+          }
+
+          return true;
+        });
+
+        // Create new checkpoint with filtered items
+        const now = Date.now();
+        const id = this.generateId();
+        const item_count = items.length;
+        const total_size = items.reduce((sum, item) => sum + item.size, 0);
+
+        const stmt = this.db.prepare(`
+          INSERT INTO checkpoints
+          (id, session_id, name, description, git_status, git_branch, item_count, total_size, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        stmt.run(
+          id,
+          sourceCheckpoint.session_id,
+          split.name,
+          split.description || null,
+          sourceCheckpoint.git_status,
+          sourceCheckpoint.git_branch,
+          item_count,
+          total_size,
+          now
+        );
+
+        // Link items to new checkpoint
+        const linkStmt = this.db.prepare(`
+          INSERT INTO checkpoint_items (id, checkpoint_id, context_item_id)
+          VALUES (?, ?, ?)
+        `);
+
+        for (const item of items) {
+          linkStmt.run(this.generateId(), id, item.id);
+        }
+
+        newCheckpoints.push({
+          id,
+          session_id: sourceCheckpoint.session_id,
+          name: split.name,
+          description: split.description,
+          git_status: sourceCheckpoint.git_status,
+          git_branch: sourceCheckpoint.git_branch,
+          item_count,
+          total_size,
+          created_at: now,
+        } as Checkpoint);
+      }
+
+      return newCheckpoints;
+    });
+  }
+
+  deleteCheckpoint(checkpointId: string): boolean {
+    return this.transaction(() => {
+      const checkpoint = this.getCheckpoint(checkpointId);
+      if (!checkpoint) {
+        return false;
+      }
+
+      // Delete checkpoint (CASCADE will delete checkpoint_items)
+      const stmt = this.db.prepare('DELETE FROM checkpoints WHERE id = ?');
+      const result = stmt.run(checkpointId);
+
+      return result.changes > 0;
     });
   }
 
