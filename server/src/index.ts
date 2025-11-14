@@ -13,6 +13,11 @@ import {
   ListToolsRequestSchema,
   InitializeRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json');
+const VERSION = packageJson.version;
 
 import { DatabaseManager } from './database/index.js';
 import { deriveDefaultChannel, normalizeChannel } from './utils/channels.js';
@@ -42,8 +47,38 @@ import {
   SessionStatus,
 } from './types/index.js';
 
+// Compaction configuration
+interface CompactionConfig {
+  threshold: number;
+  mode: 'auto' | 'remind' | 'manual';
+}
+
 // Initialize database
 const db = new DatabaseManager();
+
+// Load compaction configuration from environment
+function loadCompactionConfig(): CompactionConfig {
+  const threshold = parseInt(process.env.SAVECONTEXT_COMPACTION_THRESHOLD || '70', 10);
+  const rawMode = process.env.SAVECONTEXT_COMPACTION_MODE || 'remind';
+
+  // Validate threshold
+  const validThreshold = (threshold >= 50 && threshold <= 90) ? threshold : 70;
+  if (validThreshold !== threshold) {
+    console.error(`[SaveContext] Invalid SAVECONTEXT_COMPACTION_THRESHOLD: ${threshold}. Using default: 70`);
+  }
+
+  // Validate mode
+  const validModes: CompactionConfig['mode'][] = ['auto', 'remind', 'manual'];
+  const mode = validModes.includes(rawMode as any) ? (rawMode as CompactionConfig['mode']) : 'remind';
+  if (mode !== rawMode) {
+    console.error(`[SaveContext] Invalid SAVECONTEXT_COMPACTION_MODE: ${rawMode}. Using default: remind`);
+  }
+
+  console.error(`[SaveContext] Compaction config loaded: threshold=${validThreshold}%, mode=${mode}`);
+  return { threshold: validThreshold, mode };
+}
+
+const compactionConfig = loadCompactionConfig();
 
 // Track current session
 let currentSessionId: string | null = null;
@@ -72,7 +107,7 @@ let currentConnectionId: string | null = null;
 const server = new Server(
   {
     name: 'savecontext',
-    version: '0.1.0',
+    version: VERSION,
   },
   {
     capabilities: {
@@ -643,6 +678,24 @@ async function handleTaskUpdate(args: any) {
       throw new ValidationError('id is required');
     }
 
+    if (!args?.task_title) {
+      throw new ValidationError('task_title is required');
+    }
+
+    // Fetch task to get title before updating
+    const task = db.getTask(args.id);
+    if (!task) {
+      return success(
+        { updated: false, id: args.id },
+        `No task found with id '${args.id}'`
+      );
+    }
+
+    // Validate title matches
+    if (task.title !== args.task_title) {
+      throw new ValidationError(`Task title mismatch: expected '${task.title}' but got '${args.task_title}'`);
+    }
+
     const updates: any = {};
     if (args.title !== undefined) updates.title = args.title;
     if (args.description !== undefined) updates.description = args.description;
@@ -659,16 +712,14 @@ async function handleTaskUpdate(args: any) {
 
     const updated = db.updateTask(args.id, updates);
 
-    if (!updated) {
-      return success(
-        { updated: false, id: args.id },
-        `No task found with id '${args.id}'`
-      );
-    }
-
     return success(
-      { updated: true, id: args.id, ...updates },
-      `Updated task '${args.id}'`
+      {
+        updated: true,
+        id: args.id,
+        title: updates.title || task.title,
+        ...updates
+      },
+      `Updated task "${updates.title || task.title}"`
     );
   } catch (err) {
     return error('Failed to update task', err);
@@ -711,18 +762,34 @@ async function handleTaskComplete(args: any) {
       throw new ValidationError('id is required');
     }
 
-    const completed = db.completeTask(args.id);
+    if (!args?.task_title) {
+      throw new ValidationError('task_title is required');
+    }
 
-    if (!completed) {
+    // Fetch task to get title before completing
+    const task = db.getTask(args.id);
+    if (!task) {
       return success(
         { completed: false, id: args.id },
         `No task found with id '${args.id}'`
       );
     }
 
+    // Validate title matches
+    if (task.title !== args.task_title) {
+      throw new ValidationError(`Task title mismatch: expected '${task.title}' but got '${args.task_title}'`);
+    }
+
+    const completed = db.completeTask(args.id);
+
     return success(
-      { completed: true, id: args.id, status: 'done' },
-      `Marked task '${args.id}' as done`
+      {
+        completed: true,
+        id: args.id,
+        title: task.title,
+        status: 'done'
+      },
+      `Marked task "${task.title}" as done`
     );
   } catch (err) {
     return error('Failed to complete task', err);
@@ -859,6 +926,21 @@ async function handlePrepareCompaction() {
         decisions_made: decisions.length,
         total_size_bytes: checkpoint.total_size,
       },
+      git_context: status
+        ? {
+            branch: status.branch,
+            staged_changes: status.staged_diff ? 'Captured' : 'None',
+            modified_files: status.modified.length,
+            added_files: status.added.length,
+            deleted_files: status.deleted.length,
+            untracked_files: status.untracked.length,
+            files: [
+              ...status.modified.map((f) => `M ${f}`),
+              ...status.added.map((f) => `A ${f}`),
+              ...status.deleted.map((f) => `D ${f}`),
+            ].slice(0, 10),
+          }
+        : null,
       critical_context: {
         high_priority_items: highPriorityItems.slice(0, 5).map((i) => ({
           key: i.key,
@@ -930,6 +1012,11 @@ async function handleRestoreCheckpoint(args: any) {
       );
     }
 
+    // Validate name matches
+    if (checkpoint.name !== args.checkpoint_name) {
+      throw new ValidationError(`Checkpoint name mismatch: expected '${checkpoint.name}' but got '${args.checkpoint_name}'`);
+    }
+
     // Restore items with optional filters
     const restored = db.restoreCheckpoint(validated.checkpoint_id, sessionId, {
       restore_tags: validated.restore_tags,
@@ -998,6 +1085,11 @@ async function handleAddItemsToCheckpoint(args: any) {
       );
     }
 
+    // Validate name matches
+    if (checkpoint.name !== args.checkpoint_name) {
+      throw new ValidationError(`Checkpoint name mismatch: expected '${checkpoint.name}' but got '${args.checkpoint_name}'`);
+    }
+
     const added = db.addItemsToCheckpoint(
       validated.checkpoint_id,
       sessionId,
@@ -1033,6 +1125,11 @@ async function handleRemoveItemsFromCheckpoint(args: any) {
       );
     }
 
+    // Validate name matches
+    if (checkpoint.name !== args.checkpoint_name) {
+      throw new ValidationError(`Checkpoint name mismatch: expected '${checkpoint.name}' but got '${args.checkpoint_name}'`);
+    }
+
     const removed = db.removeItemsFromCheckpoint(
       validated.checkpoint_id,
       sessionId,
@@ -1066,6 +1163,11 @@ async function handleSplitCheckpoint(args: any) {
         `Source checkpoint '${validated.source_checkpoint_id}' not found`,
         'NOT_FOUND'
       );
+    }
+
+    // Validate name matches
+    if (sourceCheckpoint.name !== args.source_checkpoint_name) {
+      throw new ValidationError(`Checkpoint name mismatch: expected '${sourceCheckpoint.name}' but got '${args.source_checkpoint_name}'`);
     }
 
     // Warn if no filters provided
@@ -1128,6 +1230,11 @@ async function handleDeleteCheckpoint(args: any) {
         `Checkpoint '${validated.checkpoint_id}' not found`,
         'NOT_FOUND'
       );
+    }
+
+    // Validate name matches
+    if (checkpoint.name !== args.checkpoint_name) {
+      throw new ValidationError(`Checkpoint name mismatch: expected '${checkpoint.name}' but got '${args.checkpoint_name}'`);
     }
 
     const deleted = db.deleteCheckpoint(validated.checkpoint_id);
@@ -1490,15 +1597,24 @@ async function handleSessionPause() {
  */
 async function handleSessionResume(args: any) {
   try {
-    const { session_id } = args;
+    const { session_id, session_name } = args;
 
     if (!session_id || typeof session_id !== 'string') {
       throw new ValidationError('session_id is required');
     }
 
+    if (!session_name || typeof session_name !== 'string') {
+      throw new ValidationError('session_name is required');
+    }
+
     const session = db.getSession(session_id);
     if (!session) {
       throw new SessionError(`Session '${session_id}' not found`);
+    }
+
+    // Validate name matches
+    if (session.name !== session_name) {
+      throw new ValidationError(`Session name mismatch: expected '${session.name}' but got '${session_name}'`);
     }
 
     // Resume the session (works for paused or completed sessions)
@@ -1533,15 +1649,24 @@ async function handleSessionResume(args: any) {
  */
 async function handleSessionSwitch(args: any) {
   try {
-    const { session_id } = args;
+    const { session_id, session_name } = args;
 
     if (!session_id || typeof session_id !== 'string') {
       throw new ValidationError('session_id is required');
     }
 
+    if (!session_name || typeof session_name !== 'string') {
+      throw new ValidationError('session_name is required');
+    }
+
     const targetSession = db.getSession(session_id);
     if (!targetSession) {
       throw new SessionError(`Session '${session_id}' not found`);
+    }
+
+    // Validate name matches
+    if (targetSession.name !== session_name) {
+      throw new ValidationError(`Session name mismatch: expected '${targetSession.name}' but got '${session_name}'`);
     }
 
     if (targetSession.status === 'completed') {
@@ -1585,15 +1710,24 @@ async function handleSessionSwitch(args: any) {
  */
 async function handleSessionDelete(args: any) {
   try {
-    const { session_id } = args;
+    const { session_id, session_name } = args;
 
     if (!session_id || typeof session_id !== 'string') {
       throw new ValidationError('session_id is required');
     }
 
+    if (!session_name || typeof session_name !== 'string') {
+      throw new ValidationError('session_name is required');
+    }
+
     const session = db.getSession(session_id);
     if (!session) {
       throw new SessionError(`Session '${session_id}' not found`);
+    }
+
+    // Validate name matches
+    if (session.name !== session_name) {
+      throw new ValidationError(`Session name mismatch: expected '${session.name}' but got '${session_name}'`);
     }
 
     // Delete will throw if session is active
@@ -1672,6 +1806,32 @@ async function handleSessionAddPath(args: any) {
 // ====================
 
 /**
+ * Generate server instructions based on user configuration
+ * These instructions are injected into the AI's system prompt by the MCP client
+ */
+function generateServerInstructions(): string {
+  const { threshold, mode } = compactionConfig;
+
+  const baseInstructions = `SaveContext provides persistent context management across sessions.`;
+
+  const compactionInstructions: Record<CompactionConfig['mode'], string> = {
+    auto: `CRITICAL INSTRUCTION: When your conversation context usage reaches ${threshold}% of your context window, ` +
+      `you MUST immediately call the 'context_prepare_compaction' tool. ` +
+      `This preserves critical context (high-priority items, decisions, active tasks, git status, next steps) automatically. ` +
+      `After calling it, simply inform the user "Context preserved at ${threshold}%" and continue working normally.`,
+
+    remind: `When conversation context usage reaches ${threshold}% of your context window, ` +
+      `suggest using the 'context_prepare_compaction' tool to preserve important context. ` +
+      `Explain briefly what will be preserved: high-priority items, recent decisions, active tasks, git status, and next steps.`,
+
+    manual: `Only use 'context_prepare_compaction' when explicitly requested by the user. ` +
+      `Do not proactively monitor or suggest compaction based on context usage.`,
+  };
+
+  return `${baseInstructions} ${compactionInstructions[mode]}`;
+}
+
+/**
  * Handle MCP initialization - capture client info
  * This is called when an MCP client first connects
  *
@@ -1707,6 +1867,10 @@ server.setRequestHandler(InitializeRequestSchema, async (request) => {
   // Log for debugging (to stderr, not stdout)
   console.error(`MCP Client connected: ${provider} (${rawClientName} v${rawClientVersion})`);
 
+  const instructions = generateServerInstructions();
+  console.error(`[SaveContext] Sending instructions to client (${instructions.length} chars)`);
+  console.error(`[SaveContext] Instructions content: ${instructions}`);
+
   return {
     protocolVersion: request.params.protocolVersion,
     capabilities: {
@@ -1714,8 +1878,9 @@ server.setRequestHandler(InitializeRequestSchema, async (request) => {
     },
     serverInfo: {
       name: 'savecontext',
-      version: '0.1.2',
+      version: VERSION,
     },
+    instructions,
   };
 });
 
@@ -1950,6 +2115,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: 'Task ID to update',
             },
+            task_title: {
+              type: 'string',
+              description: 'Current task title (for verification and display)',
+            },
             title: {
               type: 'string',
               description: 'New task title',
@@ -1964,7 +2133,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: 'New task status',
             },
           },
-          required: ['id'],
+          required: ['id', 'task_title'],
         },
       },
       {
@@ -1991,8 +2160,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: 'Task ID to mark as done',
             },
+            task_title: {
+              type: 'string',
+              description: 'Task title (for verification and display)',
+            },
           },
-          required: ['id'],
+          required: ['id', 'task_title'],
         },
       },
       {
@@ -2050,6 +2223,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: 'ID of checkpoint to restore',
             },
+            checkpoint_name: {
+              type: 'string',
+              description: 'Checkpoint name (for verification and display)',
+            },
             restore_tags: {
               type: 'array',
               items: { type: 'string' },
@@ -2064,7 +2241,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: 'Only restore items in these categories',
             },
           },
-          required: ['checkpoint_id'],
+          required: ['checkpoint_id', 'checkpoint_name'],
         },
       },
       {
@@ -2106,13 +2283,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: 'ID of the checkpoint to modify',
             },
+            checkpoint_name: {
+              type: 'string',
+              description: 'Checkpoint name (for verification and display)',
+            },
             item_keys: {
               type: 'array',
               items: { type: 'string' },
               description: 'Keys of items to add to the checkpoint',
             },
           },
-          required: ['checkpoint_id', 'item_keys'],
+          required: ['checkpoint_id', 'checkpoint_name', 'item_keys'],
         },
       },
       {
@@ -2125,13 +2306,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: 'ID of the checkpoint to modify',
             },
+            checkpoint_name: {
+              type: 'string',
+              description: 'Checkpoint name (for verification and display)',
+            },
             item_keys: {
               type: 'array',
               items: { type: 'string' },
               description: 'Keys of items to remove from the checkpoint',
             },
           },
-          required: ['checkpoint_id', 'item_keys'],
+          required: ['checkpoint_id', 'checkpoint_name', 'item_keys'],
         },
       },
       {
@@ -2143,6 +2328,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             source_checkpoint_id: {
               type: 'string',
               description: 'ID of the checkpoint to split',
+            },
+            source_checkpoint_name: {
+              type: 'string',
+              description: 'Source checkpoint name (for verification and display)',
             },
             splits: {
               type: 'array',
@@ -2176,7 +2365,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: 'Array of split configurations',
             },
           },
-          required: ['source_checkpoint_id', 'splits'],
+          required: ['source_checkpoint_id', 'source_checkpoint_name', 'splits'],
         },
       },
       {
@@ -2189,8 +2378,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: 'ID of the checkpoint to delete',
             },
+            checkpoint_name: {
+              type: 'string',
+              description: 'Checkpoint name (for verification and display)',
+            },
           },
-          required: ['checkpoint_id'],
+          required: ['checkpoint_id', 'checkpoint_name'],
         },
       },
       {
@@ -2322,8 +2515,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: 'ID of the session to resume',
             },
+            session_name: {
+              type: 'string',
+              description: 'Name of the session (for verification and display)',
+            },
           },
-          required: ['session_id'],
+          required: ['session_id', 'session_name'],
         },
       },
       {
@@ -2336,8 +2533,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: 'ID of the session to switch to',
             },
+            session_name: {
+              type: 'string',
+              description: 'Name of the session (for verification and display)',
+            },
           },
-          required: ['session_id'],
+          required: ['session_id', 'session_name'],
         },
       },
       {
@@ -2350,8 +2551,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: 'ID of the session to delete',
             },
+            session_name: {
+              type: 'string',
+              description: 'Name of the session (for verification and display)',
+            },
           },
-          required: ['session_id'],
+          required: ['session_id', 'session_name'],
         },
       },
       {
@@ -2463,7 +2668,7 @@ async function main() {
   await server.connect(transport);
 
   // Log to stderr (stdout is used for MCP protocol)
-  console.error('SaveContext MCP Server v0.1.0 (Clean)');
+  console.error(`SaveContext MCP Server v${VERSION} (Clean)`);
   console.error('Ready for connections...');
 }
 

@@ -846,6 +846,23 @@ export class DatabaseManager {
     }>;
   }
 
+  getTask(taskId: string): {
+    id: string;
+    title: string;
+    description: string | null;
+    status: string;
+    created_at: number;
+    updated_at: number;
+    completed_at: number | null;
+  } | null {
+    const stmt = this.db.prepare(`
+      SELECT id, title, description, status, created_at, updated_at, completed_at
+      FROM tasks
+      WHERE id = ?
+    `);
+    return stmt.get(taskId) as any;
+  }
+
   completeTask(taskId: string): boolean {
     const now = Date.now();
     const stmt = this.db.prepare(`
