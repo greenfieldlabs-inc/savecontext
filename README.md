@@ -97,10 +97,10 @@ pnpm build
 }
 ```
 
-**Config File Location:**
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-- Linux: `~/.config/Claude/claude_desktop_config.json`
+**Config File Locations:**
+- User config (all projects): `~/.claude.json`
+- Project config (shared): `.mcp.json` in project root
+- Local config (private): `~/.claude.json` (with project scope)
 
 </details>
 
