@@ -2,7 +2,7 @@
 
 /**
  * SaveContext MCP Server
- * Cloud-first context management with AI processing
+ * Dual-mode context management: Local (SQLite) or Cloud (API)
  * Built clean from scratch, learned from Memory Keeper
  */
 
@@ -14,12 +14,42 @@ import {
   InitializeRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { createRequire } from 'module';
+import { Command } from 'commander';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
 const VERSION = packageJson.version;
 
+// ====================
+// CLI Argument Parsing
+// ====================
+
+const program = new Command();
+program
+  .name('savecontext')
+  .version(VERSION)
+  .description('SaveContext MCP Server - Local or Cloud mode')
+  .option('--api-key <key>', 'API key for cloud mode')
+  .parse(process.argv);
+
+const options = program.opts();
+
+// ====================
+// Mode Detection
+// ====================
+
+// Check for API key from CLI flag or environment variable
+const apiKey = options.apiKey || process.env.SAVECONTEXT_API_KEY;
+const mode = apiKey ? 'cloud' : 'local';
+const baseUrl = process.env.SAVECONTEXT_BASE_URL || 'https://savecontext.dev';
+
+console.error(`[SaveContext] Mode: ${mode}`);
+if (mode === 'cloud') {
+  console.error(`[SaveContext] Cloud API: ${baseUrl}`);
+}
+
 import { DatabaseManager } from './database/index.js';
+import { CloudClient } from './cloud-client.js';
 import { deriveDefaultChannel, normalizeChannel } from './utils/channels.js';
 import { getCurrentBranch, getGitStatus, formatGitStatus } from './utils/git.js';
 import { getCurrentProjectPath, normalizeProjectPath } from './utils/project.js';
@@ -45,16 +75,30 @@ import {
   CheckpointResponse,
   SessionResponse,
   SessionStatus,
+  CompactionConfig,
+  ClientInfo,
+  ConnectionState,
+  ContextItemUpdate,
+  TaskUpdate,
 } from './types/index.js';
 
-// Compaction configuration
-interface CompactionConfig {
-  threshold: number;
-  mode: 'auto' | 'remind' | 'manual';
+// Initialize backend (local or cloud)
+let db: DatabaseManager | null = null;
+let cloud: CloudClient | null = null;
+
+if (mode === 'local') {
+  db = new DatabaseManager();
+} else {
+  cloud = new CloudClient(apiKey!, baseUrl);
 }
 
-// Initialize database
-const db = new DatabaseManager();
+// Helper to get db in local mode (TypeScript guard)
+function getDb(): DatabaseManager {
+  if (!db) {
+    throw new Error('Database not initialized - should only be called in local mode');
+  }
+  return db;
+}
 
 // Load compaction configuration from environment
 function loadCompactionConfig(): CompactionConfig {
@@ -82,20 +126,6 @@ const compactionConfig = loadCompactionConfig();
 
 // Track current session
 let currentSessionId: string | null = null;
-
-// Track MCP client information (from initialization handshake)
-// Future-proof: Supports per-connection tracking for SSE/HTTP transports
-interface ClientInfo {
-  name: string;
-  version: string;
-  provider: string;  // Normalized provider name
-  connectedAt: number;
-}
-
-interface ConnectionState {
-  clientInfo: ClientInfo;
-  sessionId: string | null;
-}
 
 // Connection tracking
 // STDIO: One connection per process (currentConnectionId is always the same)
@@ -192,7 +222,7 @@ async function updateAgentActivity() {
   }
 
   try {
-    const session = db.getSession(currentSessionId);
+    const session = getDb().getSession(currentSessionId);
     if (!session) return;
 
     const branch = await getCurrentBranch();
@@ -201,7 +231,7 @@ async function updateAgentActivity() {
     const agentId = getAgentId(projectPath, branch || 'main', provider);
 
     // Update agent's last_active_at timestamp
-    db.setCurrentSessionForAgent(agentId, currentSessionId, projectPath, branch || 'main', provider);
+    getDb().setCurrentSessionForAgent(agentId, currentSessionId, projectPath, branch || 'main', provider);
   } catch (err) {
     // Silently fail - don't break operations if activity update fails
     console.error('Failed to update agent activity:', err);
@@ -261,33 +291,40 @@ async function handleSessionStart(args: any) {
     const provider = getCurrentProvider();
     const agentId = getAgentId(projectPath, branch || 'main', provider);
 
+    // Cloud mode: set agent metadata and proxy to API
+    if (mode === 'cloud') {
+      cloud!.setAgentMetadata(agentId, projectPath, branch || 'main', provider);
+      return await cloud!.startSession(args);
+    }
+
+    // Local mode: use SQLite
     // Check if THIS agent already has a current session
-    const agentSession = db.getCurrentSessionForAgent(agentId);
+    const agentSession = getDb().getCurrentSessionForAgent(agentId);
 
     if (agentSession) {
       // Agent already has a current session - resume it
       // Check if current path is already in the session
-      const sessionPaths = db.getSessionPaths(agentSession.id);
+      const sessionPaths = getDb().getSessionPaths(agentSession.id);
       const pathAlreadyExists = sessionPaths.includes(projectPath);
 
       // If current path not in session, add it (multi-path support)
       if (!pathAlreadyExists) {
-        db.addProjectPath(agentSession.id, projectPath);
+        getDb().addProjectPath(agentSession.id, projectPath);
       }
 
       // Update agent's last active time and provider
-      db.setCurrentSessionForAgent(agentId, agentSession.id, projectPath, branch || 'main', provider);
+      getDb().setCurrentSessionForAgent(agentId, agentSession.id, projectPath, branch || 'main', provider);
 
       // Set as current session in memory
       currentSessionId = agentSession.id;
-      const stats = db.getSessionStats(agentSession.id);
+      const stats = getDb().getSessionStats(agentSession.id);
 
       return success(
         {
           id: agentSession.id,
           name: agentSession.name,
           channel: agentSession.channel,
-          project_paths: db.getSessionPaths(agentSession.id),
+          project_paths: getDb().getSessionPaths(agentSession.id),
           status: agentSession.status,
           item_count: stats?.total_items || 0,
           created_at: agentSession.created_at,
@@ -309,7 +346,7 @@ async function handleSessionStart(args: any) {
     );
 
     // Create new session
-    const session = db.createSession({
+    const session = getDb().createSession({
       name: validated.name,
       description: validated.description,
       branch: branch || undefined,
@@ -319,7 +356,7 @@ async function handleSessionStart(args: any) {
     });
 
     // Register session for this agent
-    db.setCurrentSessionForAgent(agentId, session.id, projectPath, branch || 'main', provider);
+    getDb().setCurrentSessionForAgent(agentId, session.id, projectPath, branch || 'main', provider);
 
     // Set as current session in memory
     currentSessionId = session.id;
@@ -349,11 +386,17 @@ async function handleSessionStart(args: any) {
  */
 async function handleSaveContext(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.saveContext(args);
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateSaveContext(args);
 
     // Get session to use its default channel if not specified
-    const session = db.getSession(sessionId);
+    const session = getDb().getSession(sessionId);
     if (!session) {
       throw new SessionError('Current session not found');
     }
@@ -361,7 +404,7 @@ async function handleSaveContext(args: any) {
     const channel = validated.channel || session.channel;
 
     // Save context item
-    const item = db.saveContextItem({
+    const item = getDb().saveContextItem({
       session_id: sessionId,
       key: validated.key,
       value: validated.value,
@@ -393,12 +436,18 @@ async function handleSaveContext(args: any) {
  */
 async function handleGetContext(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.getContext(args);
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateGetContext(args);
 
     // If key is provided, get single item
     if (validated.key) {
-      const item = db.getContextItem(sessionId, validated.key);
+      const item = getDb().getContextItem(sessionId, validated.key);
       if (!item) {
         return success(
           { items: [], total: 0, session_id: sessionId },
@@ -416,7 +465,7 @@ async function handleGetContext(args: any) {
     }
 
     // Otherwise, get filtered items
-    const items = db.getContextItems(sessionId, {
+    const items = getDb().getContextItems(sessionId, {
       category: validated.category,
       priority: validated.priority,
       channel: validated.channel,
@@ -441,13 +490,19 @@ async function handleGetContext(args: any) {
  */
 async function handleDeleteContext(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.deleteContext(args);
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
 
     if (!args?.key) {
       throw new ValidationError('key is required');
     }
 
-    const deleted = db.deleteContextItem(sessionId, args.key);
+    const deleted = getDb().deleteContextItem(sessionId, args.key);
 
     if (!deleted) {
       return success(
@@ -473,6 +528,12 @@ async function handleDeleteContext(args: any) {
  */
 async function handleUpdateContext(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.updateContext(args);
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
 
     if (!args?.key) {
@@ -480,7 +541,7 @@ async function handleUpdateContext(args: any) {
     }
 
     // Build updates object
-    const updates: any = {};
+    const updates: ContextItemUpdate = {};
     if (args.value !== undefined) updates.value = args.value;
     if (args.category !== undefined) updates.category = args.category;
     if (args.priority !== undefined) updates.priority = args.priority;
@@ -490,7 +551,7 @@ async function handleUpdateContext(args: any) {
       throw new ValidationError('At least one field to update is required (value, category, priority, or channel)');
     }
 
-    const updated = db.updateContextItem(sessionId, args.key, updates);
+    const updated = getDb().updateContextItem(sessionId, args.key, updates);
 
     if (!updated) {
       return success(
@@ -524,6 +585,12 @@ async function handleUpdateContext(args: any) {
  */
 async function handleMemorySave(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.saveMemory(args);
+    }
+
+    // Local mode: use SQLite
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
 
     if (!args?.key) {
@@ -539,7 +606,7 @@ async function handleMemorySave(args: any) {
       throw new ValidationError('category must be command, config, or note');
     }
 
-    const result = db.saveMemory(projectPath, args.key, args.value, category);
+    const result = getDb().saveMemory(projectPath, args.key, args.value, category);
 
     return success(
       {
@@ -560,13 +627,19 @@ async function handleMemorySave(args: any) {
  */
 async function handleMemoryGet(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.getMemory(args);
+    }
+
+    // Local mode: use SQLite
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
 
     if (!args?.key) {
       throw new ValidationError('key is required');
     }
 
-    const memory = db.getMemory(projectPath, args.key);
+    const memory = getDb().getMemory(projectPath, args.key);
 
     if (!memory) {
       return success(
@@ -594,10 +667,16 @@ async function handleMemoryGet(args: any) {
  */
 async function handleMemoryList(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.listMemory(args);
+    }
+
+    // Local mode: use SQLite
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
     const category = args?.category;
 
-    const memories = db.listMemory(projectPath, category);
+    const memories = getDb().listMemory(projectPath, category);
 
     return success(
       {
@@ -617,13 +696,19 @@ async function handleMemoryList(args: any) {
  */
 async function handleMemoryDelete(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.deleteMemory(args);
+    }
+
+    // Local mode: use SQLite
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
 
     if (!args?.key) {
       throw new ValidationError('key is required');
     }
 
-    const deleted = db.deleteMemory(projectPath, args.key);
+    const deleted = getDb().deleteMemory(projectPath, args.key);
 
     if (!deleted) {
       return success(
@@ -646,13 +731,19 @@ async function handleMemoryDelete(args: any) {
  */
 async function handleTaskCreate(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.createTask(args);
+    }
+
+    // Local mode: use SQLite
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
 
     if (!args?.title) {
       throw new ValidationError('title is required');
     }
 
-    const result = db.createTask(projectPath, args.title, args.description);
+    const result = getDb().createTask(projectPath, args.title, args.description);
 
     return success(
       {
@@ -674,6 +765,12 @@ async function handleTaskCreate(args: any) {
  */
 async function handleTaskUpdate(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.updateTask(args);
+    }
+
+    // Local mode: use SQLite
     if (!args?.id) {
       throw new ValidationError('id is required');
     }
@@ -683,7 +780,7 @@ async function handleTaskUpdate(args: any) {
     }
 
     // Fetch task to get title before updating
-    const task = db.getTask(args.id);
+    const task = db!.getTask(args.id);
     if (!task) {
       return success(
         { updated: false, id: args.id },
@@ -696,7 +793,7 @@ async function handleTaskUpdate(args: any) {
       throw new ValidationError(`Task title mismatch: expected '${task.title}' but got '${args.task_title}'`);
     }
 
-    const updates: any = {};
+    const updates: TaskUpdate = {};
     if (args.title !== undefined) updates.title = args.title;
     if (args.description !== undefined) updates.description = args.description;
     if (args.status !== undefined) {
@@ -710,7 +807,7 @@ async function handleTaskUpdate(args: any) {
       throw new ValidationError('At least one field to update is required (title, description, or status)');
     }
 
-    const updated = db.updateTask(args.id, updates);
+    const updated = getDb().updateTask(args.id, updates);
 
     return success(
       {
@@ -731,6 +828,12 @@ async function handleTaskUpdate(args: any) {
  */
 async function handleTaskList(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.listTasks(args);
+    }
+
+    // Local mode: use SQLite
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
     const status = args?.status;
 
@@ -738,7 +841,7 @@ async function handleTaskList(args: any) {
       throw new ValidationError('status must be todo or done');
     }
 
-    const tasks = db.listTasks(projectPath, status);
+    const tasks = getDb().listTasks(projectPath, status);
 
     return success(
       {
@@ -758,6 +861,12 @@ async function handleTaskList(args: any) {
  */
 async function handleTaskComplete(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.completeTask(args);
+    }
+
+    // Local mode: use SQLite
     if (!args?.id) {
       throw new ValidationError('id is required');
     }
@@ -767,7 +876,7 @@ async function handleTaskComplete(args: any) {
     }
 
     // Fetch task to get title before completing
-    const task = db.getTask(args.id);
+    const task = db!.getTask(args.id);
     if (!task) {
       return success(
         { completed: false, id: args.id },
@@ -780,7 +889,7 @@ async function handleTaskComplete(args: any) {
       throw new ValidationError(`Task title mismatch: expected '${task.title}' but got '${args.task_title}'`);
     }
 
-    const completed = db.completeTask(args.id);
+    const completed = getDb().completeTask(args.id);
 
     return success(
       {
@@ -801,6 +910,12 @@ async function handleTaskComplete(args: any) {
  */
 async function handleCreateCheckpoint(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.createCheckpoint(args);
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateCreateCheckpoint(args);
 
@@ -817,7 +932,7 @@ async function handleCreateCheckpoint(args: any) {
     }
 
     // Create checkpoint with optional filters
-    const checkpoint = db.createCheckpoint({
+    const checkpoint = getDb().createCheckpoint({
       session_id: sessionId,
       name: validated.name,
       description: validated.description,
@@ -857,6 +972,12 @@ async function handleCreateCheckpoint(args: any) {
  */
 async function handlePrepareCompaction() {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.prepareCompaction();
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
 
     // Generate auto-checkpoint name
@@ -874,7 +995,7 @@ async function handlePrepareCompaction() {
     }
 
     // Create checkpoint
-    const checkpoint = db.createCheckpoint({
+    const checkpoint = getDb().createCheckpoint({
       session_id: sessionId,
       name: checkpointName,
       description: 'Automatic checkpoint before context compaction',
@@ -883,22 +1004,22 @@ async function handlePrepareCompaction() {
     });
 
     // Analyze critical context
-    const highPriorityItems = db.getContextItems(sessionId, {
+    const highPriorityItems = getDb().getContextItems(sessionId, {
       priority: 'high',
       limit: 50,
     });
 
-    const tasks = db.getContextItems(sessionId, {
+    const tasks = getDb().getContextItems(sessionId, {
       category: 'task',
       limit: 20,
     });
 
-    const decisions = db.getContextItems(sessionId, {
+    const decisions = getDb().getContextItems(sessionId, {
       category: 'decision',
       limit: 20,
     });
 
-    const progress = db.getContextItems(sessionId, {
+    const progress = getDb().getContextItems(sessionId, {
       category: 'progress',
       limit: 10,
     });
@@ -975,7 +1096,7 @@ async function handlePrepareCompaction() {
 
     // Save summary as special context item for AI to read in next session
     const summaryValue = JSON.stringify(summary);
-    db.saveContextItem({
+    getDb().saveContextItem({
       session_id: sessionId,
       key: `compaction_summary_${checkpoint.id}`,
       value: summaryValue,
@@ -1000,11 +1121,17 @@ async function handlePrepareCompaction() {
  */
 async function handleRestoreCheckpoint(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.restoreCheckpoint(args);
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateRestoreCheckpoint(args);
 
     // Verify checkpoint exists
-    const checkpoint = db.getCheckpoint(validated.checkpoint_id);
+    const checkpoint = getDb().getCheckpoint(validated.checkpoint_id);
     if (!checkpoint) {
       throw new SaveContextError(
         `Checkpoint '${validated.checkpoint_id}' not found`,
@@ -1018,7 +1145,7 @@ async function handleRestoreCheckpoint(args: any) {
     }
 
     // Restore items with optional filters
-    const restored = db.restoreCheckpoint(validated.checkpoint_id, sessionId, {
+    const restored = getDb().restoreCheckpoint(validated.checkpoint_id, sessionId, {
       restore_tags: validated.restore_tags,
       restore_categories: validated.restore_categories,
     });
@@ -1041,10 +1168,16 @@ async function handleRestoreCheckpoint(args: any) {
  */
 async function handleTagContextItems(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.tagContextItems(args);
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateTagContextItems(args);
 
-    const updated = db.tagContextItems(sessionId, {
+    const updated = getDb().tagContextItems(sessionId, {
       keys: validated.keys,
       key_pattern: validated.key_pattern,
       tags: validated.tags,
@@ -1073,11 +1206,17 @@ async function handleTagContextItems(args: any) {
  */
 async function handleAddItemsToCheckpoint(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.addItemsToCheckpoint(args);
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateCheckpointItemManagement(args);
 
     // Verify checkpoint exists
-    const checkpoint = db.getCheckpoint(validated.checkpoint_id);
+    const checkpoint = getDb().getCheckpoint(validated.checkpoint_id);
     if (!checkpoint) {
       throw new SaveContextError(
         `Checkpoint '${validated.checkpoint_id}' not found`,
@@ -1090,7 +1229,7 @@ async function handleAddItemsToCheckpoint(args: any) {
       throw new ValidationError(`Checkpoint name mismatch: expected '${checkpoint.name}' but got '${args.checkpoint_name}'`);
     }
 
-    const added = db.addItemsToCheckpoint(
+    const added = getDb().addItemsToCheckpoint(
       validated.checkpoint_id,
       sessionId,
       validated.item_keys
@@ -1113,11 +1252,17 @@ async function handleAddItemsToCheckpoint(args: any) {
  */
 async function handleRemoveItemsFromCheckpoint(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.removeItemsFromCheckpoint(args);
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateCheckpointItemManagement(args);
 
     // Verify checkpoint exists
-    const checkpoint = db.getCheckpoint(validated.checkpoint_id);
+    const checkpoint = getDb().getCheckpoint(validated.checkpoint_id);
     if (!checkpoint) {
       throw new SaveContextError(
         `Checkpoint '${validated.checkpoint_id}' not found`,
@@ -1130,7 +1275,7 @@ async function handleRemoveItemsFromCheckpoint(args: any) {
       throw new ValidationError(`Checkpoint name mismatch: expected '${checkpoint.name}' but got '${args.checkpoint_name}'`);
     }
 
-    const removed = db.removeItemsFromCheckpoint(
+    const removed = getDb().removeItemsFromCheckpoint(
       validated.checkpoint_id,
       sessionId,
       validated.item_keys
@@ -1153,11 +1298,17 @@ async function handleRemoveItemsFromCheckpoint(args: any) {
  */
 async function handleSplitCheckpoint(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.splitCheckpoint(args);
+    }
+
+    // Local mode: use SQLite
     ensureSession();
     const validated = validateCheckpointSplit(args);
 
     // Verify source checkpoint exists
-    const sourceCheckpoint = db.getCheckpoint(validated.source_checkpoint_id);
+    const sourceCheckpoint = getDb().getCheckpoint(validated.source_checkpoint_id);
     if (!sourceCheckpoint) {
       throw new SaveContextError(
         `Source checkpoint '${validated.source_checkpoint_id}' not found`,
@@ -1183,7 +1334,7 @@ async function handleSplitCheckpoint(args: any) {
       );
     }
 
-    const newCheckpoints = db.splitCheckpoint(
+    const newCheckpoints = getDb().splitCheckpoint(
       validated.source_checkpoint_id,
       validated.splits
     );
@@ -1220,11 +1371,17 @@ async function handleSplitCheckpoint(args: any) {
 
 async function handleDeleteCheckpoint(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.deleteCheckpoint(args);
+    }
+
+    // Local mode: use SQLite
     ensureSession();
     const validated = validateDeleteCheckpoint(args);
 
     // Verify checkpoint exists
-    const checkpoint = db.getCheckpoint(validated.checkpoint_id);
+    const checkpoint = getDb().getCheckpoint(validated.checkpoint_id);
     if (!checkpoint) {
       throw new SaveContextError(
         `Checkpoint '${validated.checkpoint_id}' not found`,
@@ -1237,7 +1394,7 @@ async function handleDeleteCheckpoint(args: any) {
       throw new ValidationError(`Checkpoint name mismatch: expected '${checkpoint.name}' but got '${args.checkpoint_name}'`);
     }
 
-    const deleted = db.deleteCheckpoint(validated.checkpoint_id);
+    const deleted = getDb().deleteCheckpoint(validated.checkpoint_id);
 
     if (!deleted) {
       throw new SaveContextError('Failed to delete checkpoint', 'DELETE_FAILED');
@@ -1262,6 +1419,12 @@ async function handleDeleteCheckpoint(args: any) {
  */
 async function handleListCheckpoints(args?: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.listCheckpoints(args || {});
+    }
+
+    // Local mode: use SQLite
     const search = args?.search;
     const sessionId = args?.session_id;
     const includeAllProjects = args?.include_all_projects || false;
@@ -1306,14 +1469,14 @@ async function handleListCheckpoints(args?: any) {
 
     // Count total matches before pagination
     const countQuery = query.replace(/SELECT[\s\S]*?FROM/, 'SELECT COUNT(*) as total FROM');
-    const countResult = db.getDatabase().prepare(countQuery).get(...params) as { total: number };
+    const countResult = getDb().getDatabase().prepare(countQuery).get(...params) as { total: number };
     const totalMatches = countResult.total;
 
     // Add ordering and pagination
     query += ' ORDER BY c.created_at DESC LIMIT ? OFFSET ?';
     params.push(limit, offset);
 
-    const checkpoints = db.getDatabase().prepare(query).all(...params);
+    const checkpoints = getDb().getDatabase().prepare(query).all(...params);
 
     // Determine scope
     let scope: 'session' | 'project' | 'all';
@@ -1346,6 +1509,12 @@ async function handleListCheckpoints(args?: any) {
  */
 async function handleGetCheckpoint(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.getCheckpoint(args);
+    }
+
+    // Local mode: use SQLite
     const { checkpoint_id } = args;
 
     if (!checkpoint_id || typeof checkpoint_id !== 'string') {
@@ -1353,16 +1522,16 @@ async function handleGetCheckpoint(args: any) {
     }
 
     // Get checkpoint
-    const checkpoint = db.getCheckpoint(checkpoint_id);
+    const checkpoint = db!.getCheckpoint(checkpoint_id);
     if (!checkpoint) {
       throw new SaveContextError(`Checkpoint '${checkpoint_id}' not found`, 'NOT_FOUND');
     }
 
     // Get session info
-    const session = db.getSession(checkpoint.session_id);
+    const session = getDb().getSession(checkpoint.session_id);
 
     // Get preview of high-priority items from this checkpoint
-    const itemsPreview = db.getDatabase()
+    const itemsPreview = getDb().getDatabase()
       .prepare(`
         SELECT ci.key, ci.value, ci.category, ci.priority, ci.created_at
         FROM checkpoint_items chk_items
@@ -1406,17 +1575,23 @@ async function handleGetCheckpoint(args: any) {
  */
 async function handleSessionStatus() {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.getSessionStatus();
+    }
+
+    // Local mode: use SQLite
     if (!currentSessionId) {
       return success({ current_session_id: null }, 'No active session');
     }
 
-    const session = db.getSession(currentSessionId);
+    const session = db!.getSession(currentSessionId);
     if (!session) {
       throw new SessionError('Current session not found');
     }
 
-    const stats = db.getSessionStats(currentSessionId);
-    const checkpoints = db.listCheckpoints(currentSessionId);
+    const stats = getDb().getSessionStats(currentSessionId);
+    const checkpoints = getDb().listCheckpoints(currentSessionId);
 
     // Calculate session duration
     const endTime = session.ended_at || Date.now();
@@ -1455,6 +1630,12 @@ async function handleSessionStatus() {
  */
 async function handleSessionRename(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.renameSession(args);
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
     const { new_name } = args;
 
@@ -1465,7 +1646,7 @@ async function handleSessionRename(args: any) {
     const trimmedName = new_name.trim();
 
     // Update session name
-    db.getDatabase()
+    db!.getDatabase()
       .prepare('UPDATE sessions SET name = ?, updated_at = ? WHERE id = ?')
       .run(trimmedName, Date.now(), sessionId);
 
@@ -1483,6 +1664,12 @@ async function handleSessionRename(args: any) {
  */
 async function handleListSessions(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.listSessions(args);
+    }
+
+    // Local mode: use SQLite
     const limit = args?.limit || 10;
     const projectPath = args?.project_path || getCurrentProjectPath();
     const status = args?.status;
@@ -1490,7 +1677,7 @@ async function handleListSessions(args: any) {
 
     // Use listSessionsByPaths to properly check session_projects junction table
     // This ensures multi-path sessions appear in all their associated projects
-    const sessions = db.listSessionsByPaths(
+    const sessions = db!.listSessionsByPaths(
       projectPath ? [normalizeProjectPath(projectPath)] : [],
       limit,
       {
@@ -1513,20 +1700,26 @@ async function handleListSessions(args: any) {
  */
 async function handleSessionEnd() {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.endSession();
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
-    const session = db.getSession(sessionId);
+    const session = db!.getSession(sessionId);
 
     if (!session) {
       throw new SessionError('Current session not found');
     }
 
     // Get stats before ending
-    const stats = db.getSessionStats(sessionId);
-    const checkpoints = db.listCheckpoints(sessionId);
+    const stats = getDb().getSessionStats(sessionId);
+    const checkpoints = getDb().listCheckpoints(sessionId);
     const duration = Date.now() - session.created_at;
 
     // End the session
-    db.endSession(sessionId);
+    getDb().endSession(sessionId);
 
     // Clear current session
     currentSessionId = null;
@@ -1536,7 +1729,7 @@ async function handleSessionEnd() {
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
     const provider = getCurrentProvider();
     const agentId = getAgentId(projectPath, branch || 'main', provider);
-    db.clearCurrentSessionForAgent(agentId);
+    getDb().clearCurrentSessionForAgent(agentId);
 
     return success(
       {
@@ -1559,15 +1752,21 @@ async function handleSessionEnd() {
  */
 async function handleSessionPause() {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.pauseSession();
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
-    const session = db.getSession(sessionId);
+    const session = db!.getSession(sessionId);
 
     if (!session) {
       throw new SessionError('Current session not found');
     }
 
     // Pause the session
-    db.pauseSession(sessionId);
+    getDb().pauseSession(sessionId);
 
     // Clear current session
     currentSessionId = null;
@@ -1577,7 +1776,7 @@ async function handleSessionPause() {
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
     const provider = getCurrentProvider();
     const agentId = getAgentId(projectPath, branch || 'main', provider);
-    db.clearCurrentSessionForAgent(agentId);
+    getDb().clearCurrentSessionForAgent(agentId);
 
     return success(
       {
@@ -1597,6 +1796,12 @@ async function handleSessionPause() {
  */
 async function handleSessionResume(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.resumeSession(args);
+    }
+
+    // Local mode: use SQLite
     const { session_id, session_name } = args;
 
     if (!session_id || typeof session_id !== 'string') {
@@ -1607,7 +1812,7 @@ async function handleSessionResume(args: any) {
       throw new ValidationError('session_name is required');
     }
 
-    const session = db.getSession(session_id);
+    const session = db!.getSession(session_id);
     if (!session) {
       throw new SessionError(`Session '${session_id}' not found`);
     }
@@ -1618,7 +1823,7 @@ async function handleSessionResume(args: any) {
     }
 
     // Resume the session (works for paused or completed sessions)
-    db.resumeSession(session_id);
+    getDb().resumeSession(session_id);
 
     // Set as current session
     currentSessionId = session_id;
@@ -1626,7 +1831,7 @@ async function handleSessionResume(args: any) {
     // Update agent activity timestamp
     await updateAgentActivity();
 
-    const stats = db.getSessionStats(session_id);
+    const stats = getDb().getSessionStats(session_id);
 
     return success(
       {
@@ -1649,6 +1854,12 @@ async function handleSessionResume(args: any) {
  */
 async function handleSessionSwitch(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.switchSession(args);
+    }
+
+    // Local mode: use SQLite
     const { session_id, session_name } = args;
 
     if (!session_id || typeof session_id !== 'string') {
@@ -1659,7 +1870,7 @@ async function handleSessionSwitch(args: any) {
       throw new ValidationError('session_name is required');
     }
 
-    const targetSession = db.getSession(session_id);
+    const targetSession = db!.getSession(session_id);
     if (!targetSession) {
       throw new SessionError(`Session '${session_id}' not found`);
     }
@@ -1676,18 +1887,18 @@ async function handleSessionSwitch(args: any) {
     // Pause current session if exists
     let pausedSession = null;
     if (currentSessionId) {
-      const current = db.getSession(currentSessionId);
+      const current = getDb().getSession(currentSessionId);
       if (current) {
-        db.pauseSession(currentSessionId);
+        getDb().pauseSession(currentSessionId);
         pausedSession = current.name;
       }
     }
 
     // Resume target session
-    db.resumeSession(session_id);
+    getDb().resumeSession(session_id);
     currentSessionId = session_id;
 
-    const stats = db.getSessionStats(session_id);
+    const stats = getDb().getSessionStats(session_id);
 
     return success(
       {
@@ -1710,6 +1921,12 @@ async function handleSessionSwitch(args: any) {
  */
 async function handleSessionDelete(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.deleteSession(args);
+    }
+
+    // Local mode: use SQLite
     const { session_id, session_name } = args;
 
     if (!session_id || typeof session_id !== 'string') {
@@ -1720,7 +1937,7 @@ async function handleSessionDelete(args: any) {
       throw new ValidationError('session_name is required');
     }
 
-    const session = db.getSession(session_id);
+    const session = db!.getSession(session_id);
     if (!session) {
       throw new SessionError(`Session '${session_id}' not found`);
     }
@@ -1731,7 +1948,7 @@ async function handleSessionDelete(args: any) {
     }
 
     // Delete will throw if session is active
-    const deleted = db.deleteSession(session_id);
+    const deleted = getDb().deleteSession(session_id);
 
     if (deleted) {
       return success(
@@ -1752,6 +1969,12 @@ async function handleSessionDelete(args: any) {
  */
 async function handleSessionAddPath(args: any) {
   try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.addSessionPath(args);
+    }
+
+    // Local mode: use SQLite
     const sessionId = ensureSession();
 
     // Get project path (default to current directory if not provided)
@@ -1759,13 +1982,13 @@ async function handleSessionAddPath(args: any) {
       ? normalizeProjectPath(args.project_path)
       : normalizeProjectPath(getCurrentProjectPath());
 
-    const session = db.getSession(sessionId);
+    const session = db!.getSession(sessionId);
     if (!session) {
       throw new SessionError('Current session not found');
     }
 
     // Check if path already exists
-    const existingPaths = db.getSessionPaths(sessionId);
+    const existingPaths = getDb().getSessionPaths(sessionId);
     if (existingPaths.includes(projectPath)) {
       return success(
         {
@@ -1780,9 +2003,9 @@ async function handleSessionAddPath(args: any) {
     }
 
     // Add the new path
-    const added = db.addProjectPath(sessionId, projectPath);
+    const added = getDb().addProjectPath(sessionId, projectPath);
     if (added) {
-      const updatedPaths = db.getSessionPaths(sessionId);
+      const updatedPaths = getDb().getSessionPaths(sessionId);
       return success(
         {
           session_id: sessionId,
@@ -1868,8 +2091,6 @@ server.setRequestHandler(InitializeRequestSchema, async (request) => {
   console.error(`MCP Client connected: ${provider} (${rawClientName} v${rawClientVersion})`);
 
   const instructions = generateServerInstructions();
-  console.error(`[SaveContext] Sending instructions to client (${instructions.length} chars)`);
-  console.error(`[SaveContext] Instructions content: ${instructions}`);
 
   return {
     protocolVersion: request.params.protocolVersion,
@@ -2215,7 +2436,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_restore',
-        description: 'Restore session state from checkpoint. Supports selective restoration via filters. Use to continue previous work, recover from mistakes, or restore after context compaction.',
+        description: 'Restore session state from checkpoint. Supports selective restoration via filters. Use to continue previous work, recover from mistakes, or restore after context compaction. Requires checkpoint_id and checkpoint_name.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2275,7 +2496,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_checkpoint_add_items',
-        description: 'Add items to an existing checkpoint. Use to incrementally build up checkpoints or add items you forgot to include.',
+        description: 'Add items to an existing checkpoint. Use to incrementally build up checkpoints or add items you forgot to include. Requires checkpoint_id, checkpoint_name, and item_keys.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2298,7 +2519,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_checkpoint_remove_items',
-        description: 'Remove items from an existing checkpoint. Use to fix checkpoints that contain unwanted items or to clean up mixed work streams.',
+        description: 'Remove items from an existing checkpoint. Use to fix checkpoints that contain unwanted items or to clean up mixed work streams. Requires checkpoint_id, checkpoint_name, and item_keys.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2321,7 +2542,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_checkpoint_split',
-        description: 'Split a checkpoint into multiple checkpoints based on tags or categories. REQUIRED WORKFLOW: (1) Use context_get_checkpoint to see all items, (2) Use context_tag to tag items by work stream (e.g., "auth", "ui"), (3) Then split using include_tags for each work stream. Each split MUST have include_tags or include_categories - the tool will ERROR if no filters provided. Verify results show expected item counts.',
+        description: 'Split a checkpoint into multiple checkpoints based on tags or categories. REQUIRED WORKFLOW: (1) Use context_get_checkpoint to see all items, (2) Use context_tag to tag items by work stream (e.g., "auth", "ui"), (3) Then split using include_tags for each work stream. Each split MUST have include_tags or include_categories - the tool will ERROR if no filters provided. Verify results show expected item counts. Requires source_checkpoint_id, source_checkpoint_name, and splits array.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2370,7 +2591,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_checkpoint_delete',
-        description: 'Delete a checkpoint permanently. Use to clean up failed, duplicate, or unwanted checkpoints. Cannot be undone.',
+        description: 'Delete a checkpoint permanently. Use to clean up failed, duplicate, or unwanted checkpoints. Cannot be undone. Requires checkpoint_id and checkpoint_name.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2507,7 +2728,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_session_resume',
-        description: 'Resume a previously paused session. Restores session state and sets it as the active session. Cannot resume completed sessions.',
+        description: 'Resume a previously paused session. Restores session state and sets it as the active session. Cannot resume completed sessions. Requires session_id and session_name.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2525,7 +2746,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_session_switch',
-        description: 'Switch between sessions atomically. Pauses current session (if any) and resumes the specified session. Use when working on multiple projects.',
+        description: 'Switch between sessions atomically. Pauses current session (if any) and resumes the specified session. Use when working on multiple projects. Requires session_id and session_name.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2543,7 +2764,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_session_delete',
-        description: 'Delete a session permanently. Cannot delete active sessions (must pause or end first). Cascade deletes all context items and checkpoints. Use to clean up accidentally created sessions.',
+        description: 'Delete a session permanently. Cannot delete active sessions (must pause or end first). Cascade deletes all context items and checkpoints. Use to clean up accidentally created sessions. Requires session_id and session_name.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2579,6 +2800,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     const { name, arguments: args } = request.params;
+
+    // Update agent metadata for cloud mode on every request
+    if (mode === 'cloud') {
+      try {
+        const branch = await getCurrentBranch();
+        const projectPath = normalizeProjectPath(getCurrentProjectPath());
+        const provider = getCurrentProvider();
+        const agentId = getAgentId(projectPath, branch || 'main', provider);
+        console.error('[MCP Server] Setting agent metadata:', { agentId, projectPath, branch, provider });
+        cloud!.setAgentMetadata(agentId, projectPath, branch || 'main', provider);
+      } catch (err) {
+        // Don't fail requests if agent metadata update fails
+        console.error('Failed to update agent metadata:', err);
+      }
+    }
 
     switch (name) {
       case 'context_session_start':
