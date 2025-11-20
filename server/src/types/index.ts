@@ -33,6 +33,36 @@ export interface CreateSessionArgs {
   project_path?: string;
 }
 
+export interface ResumeSessionArgs {
+  session_id: string;
+  session_name: string;
+}
+
+export interface SwitchSessionArgs {
+  session_id: string;
+  session_name: string;
+}
+
+export interface DeleteSessionArgs {
+  session_id: string;
+  session_name: string;
+}
+
+export interface RenameSessionArgs {
+  new_name: string;
+}
+
+export interface ListSessionsArgs {
+  limit?: number;
+  project_path?: string;
+  status?: 'active' | 'paused' | 'completed' | 'all';
+  include_completed?: boolean;
+}
+
+export interface AddSessionPathArgs {
+  project_path?: string;
+}
+
 // ====================
 // Context Item Types
 // ====================
@@ -75,6 +105,68 @@ export interface GetContextArgs {
   offset?: number;
 }
 
+export interface UpdateContextArgs {
+  key: string;
+  value?: string;
+  category?: ItemCategory;
+  priority?: ItemPriority;
+  channel?: string;
+}
+
+export interface DeleteContextArgs {
+  key: string;
+}
+
+// ====================
+// Memory Types
+// ====================
+
+export type MemoryCategory = 'command' | 'config' | 'note';
+
+export interface SaveMemoryArgs {
+  key: string;
+  value: string;
+  category?: MemoryCategory;
+}
+
+export interface GetMemoryArgs {
+  key: string;
+}
+
+export interface ListMemoryArgs {
+  category?: MemoryCategory;
+}
+
+export interface DeleteMemoryArgs {
+  key: string;
+}
+
+// ====================
+// Task Types
+// ====================
+
+export interface CreateTaskArgs {
+  title: string;
+  description?: string;
+}
+
+export interface UpdateTaskArgs {
+  id: string;
+  task_title: string;
+  title?: string;
+  description?: string;
+  status?: 'todo' | 'done';
+}
+
+export interface ListTasksArgs {
+  status?: 'todo' | 'done';
+}
+
+export interface CompleteTaskArgs {
+  id: string;
+  task_title: string;
+}
+
 // ====================
 // Checkpoint Types
 // ====================
@@ -108,6 +200,7 @@ export interface CreateCheckpointArgs {
 
 export interface RestoreCheckpointArgs {
   checkpoint_id: string;
+  checkpoint_name: string;
   // Filtering options for selective restoration
   restore_tags?: string[];
   restore_categories?: ItemCategory[];
@@ -122,17 +215,37 @@ export interface TagContextItemsArgs {
 
 export interface CheckpointItemManagementArgs {
   checkpoint_id: string;
+  checkpoint_name: string;
   item_keys: string[];
 }
 
 export interface CheckpointSplitArgs {
   source_checkpoint_id: string;
+  source_checkpoint_name: string;
   splits: Array<{
     name: string;
     description?: string;
     include_tags?: string[];
     include_categories?: ItemCategory[];
   }>;
+}
+
+export interface DeleteCheckpointArgs {
+  checkpoint_id: string;
+  checkpoint_name: string;
+}
+
+export interface ListCheckpointsArgs {
+  search?: string;
+  session_id?: string;
+  project_path?: string;
+  include_all_projects?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
+export interface GetCheckpointArgs {
+  checkpoint_id: string;
 }
 
 // ====================
@@ -297,4 +410,121 @@ export class SessionError extends SaveContextError {
     super(message, 'SESSION_ERROR', details);
     this.name = 'SessionError';
   }
+}
+
+// ====================
+// Cloud Client Types
+// ====================
+
+export interface CloudConfig {
+  apiKey: string;
+  baseUrl: string;
+}
+
+export interface AgentMetadata {
+  agentId: string;
+  projectPath: string;
+  gitBranch: string | null;
+  provider: string;
+}
+
+export interface ErrorResponse {
+  error?: string;
+}
+
+// ====================
+// Server Config Types
+// ====================
+
+export interface CompactionConfig {
+  threshold: number;
+  mode: 'auto' | 'remind' | 'manual';
+}
+
+export interface ClientInfo {
+  name: string;
+  version: string;
+  provider: string;  // Normalized provider name
+  connectedAt: number;
+}
+
+export interface ConnectionState {
+  clientInfo: ClientInfo;
+  sessionId: string | null;
+}
+
+// ====================
+// Update Types
+// ====================
+
+export interface ContextItemUpdate {
+  value?: string;
+  category?: ItemCategory;
+  priority?: ItemPriority;
+  channel?: string;
+}
+
+export interface TaskUpdate {
+  title?: string;
+  description?: string;
+  status?: 'todo' | 'done';
+}
+
+// ====================
+// SQLite Row Types
+// ====================
+
+export interface CheckpointItemRow {
+  checkpoint_id: string;
+  context_item_id: string;
+  group_name: string | null;
+  group_order: number | null;
+}
+
+export interface CheckpointRow {
+  id: string;
+  session_id: string;
+  name: string;
+  description: string | null;
+  git_status: string | null;
+  git_branch: string | null;
+  item_count: number;
+  total_size: number;
+  created_at: number;
+}
+
+// ====================
+// Migration Types
+// ====================
+
+export interface MigrationStats {
+  sessions: number;
+  contextItems: number;
+  checkpoints: number;
+  checkpointItems: number;
+  projectMemory: number;
+  tasks: number;
+  sessionProjects: number;
+  agentSessions: number;
+}
+
+export interface MigrationStatusResponse {
+  canMigrate: boolean;
+  stats?: {
+    sessions: number;
+    projectMemory: number;
+    tasks: number;
+  };
+}
+
+export interface MigrationResult {
+  error?: string;
+  message?: string;
+  migrated?: {
+    sessions: number;
+    contextItems: number;
+    checkpoints: number;
+    projectMemory: number;
+    tasks: number;
+  };
 }
