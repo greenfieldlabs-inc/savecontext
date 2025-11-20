@@ -47,18 +47,17 @@ pnpm build
 
 ## Configuration
 
-Add to your MCP client configuration file:
+Add to your MCP client configuration file (Claude Code, Cursor, Cline, etc.):
 
-**Claude Desktop**
+**Local Mode (Default - Free)**
 
-Edit your config file at:
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+Uses local SQLite database at `~/.savecontext/data/savecontext.db`:
 
 ```json
 {
   "mcpServers": {
     "savecontext": {
+      "type": "stdio",
       "command": "npx",
       "args": ["-y", "@savecontext/mcp"]
     }
@@ -66,37 +65,54 @@ Edit your config file at:
 }
 ```
 
-**Other MCP Clients** (Cursor, Cline, Continue, etc.)
+> **Note**: Compaction settings are experimental. See [Compaction Settings](#compaction-settings) for configuration options.
+
+**Cloud Mode (SaveContext Cloud)**
+
+Uses cloud API with your account at [savecontext.dev](https://savecontext.dev):
 
 ```json
 {
   "mcpServers": {
     "savecontext": {
+      "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here"
+      }
     }
   }
 }
 ```
 
-**If installed globally:**
+**From Source (Development)**
+
+If running from a local clone with a local cloud API:
 
 ```json
 {
   "mcpServers": {
     "savecontext": {
-      "command": "savecontext"
+      "type": "stdio",
+      "command": "node",
+      "args": ["/path/to/savecontext/server/dist/index.js"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "http://localhost:3001"
+      }
     }
   }
 }
 ```
+
+For local-only development (no cloud API), omit both `SAVECONTEXT_API_KEY` and `SAVECONTEXT_BASE_URL`.
 
 The server communicates via stdio using the MCP protocol.
 
 ### Advanced Configuration
 
 SaveContext can be configured via environment variables in your MCP server settings to control compaction behavior.
-
 #### Compaction Settings
 
 > ⚠️ **EXPERIMENTAL FEATURE**: Compaction configuration only validated with Claude Code - requires CLI restart when env vars change. Other MCP clients may not support the instructions field.
@@ -133,22 +149,124 @@ Control when and how SaveContext preserves context before your conversation wind
 - Pair programming: `threshold=80, mode=remind`
 - Short tasks: `threshold=90, mode=manual`
 
+#### Cloud Mode (SaveContext Cloud)
+
+SaveContext supports two modes of operation:
+
+**Local Mode (Default - Free)**
+- Uses local SQLite database (`~/.savecontext/data/savecontext.db`)
+- All data stored on your machine
+- No rate limits or usage restrictions
+- No account required
+- Open source and self-hosted
+
+**Cloud Mode (SaveContext Cloud - Paid Plans)**
+- Uses PostgreSQL-backed cloud API at [savecontext.dev](https://savecontext.dev)
+- Session data synced to cloud storage
+- Access sessions from multiple devices
+- Automatic backups and disaster recovery
+- Advanced analytics dashboard (coming soon)
+- Team collaboration features (coming soon)
+- Requires API key from SaveContext Cloud account
+
+**Configuring Cloud Mode:**
+
+After signing up at [savecontext.dev](https://savecontext.dev) and obtaining your API key:
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev",
+        "SAVECONTEXT_COMPACTION_THRESHOLD": "85",
+        "SAVECONTEXT_COMPACTION_MODE": "remind"
+      }
+    }
+  }
+}
+```
+
+**Environment Variables:**
+
+- `SAVECONTEXT_API_KEY` - Your API key from SaveContext Cloud (format: `sk_*`)
+  - If present: enables cloud mode
+  - If absent: uses local SQLite mode
+- `SAVECONTEXT_BASE_URL` - Cloud API endpoint (default: `https://mcp.savecontext.dev`)
+  - For development: `http://localhost:3001`
+  - For production: `https://mcp.savecontext.dev`
+
+**How Cloud Mode Works:**
+
+When an API key is provided, the MCP server acts as a lightweight proxy:
+
+```
+MCP Client (Claude Desktop, etc.)
+    ↓ stdio
+Local MCP Server Process
+    ↓ HTTPS (if API key present)
+SaveContext Cloud API (PostgreSQL)
+```
+
+The server detects the mode at startup and routes all operations accordingly. All tool calls work identically in both modes - the only difference is where data is stored.
+
+**Migrating Local Data to Cloud:**
+
+If you have existing local data and want to migrate it to SaveContext Cloud, use the migration CLI:
+
+```bash
+# Using npx (recommended)
+npx -y @savecontext/mcp migrate <api-key>
+
+# Or with environment variable
+SAVECONTEXT_API_KEY=sk_your_key npx -y @savecontext/mcp migrate
+
+# If installed globally
+savecontext-migrate <api-key>
+```
+
+The migration tool will:
+1. Check if your cloud account is empty (migration only works for new accounts)
+2. Read your local SQLite database
+3. Upload all sessions, context items, checkpoints, project memory, and tasks
+4. Validate against your tier limits before migrating
+
+**Important Notes:**
+- Migration is one-time only - it requires an empty cloud account
+- Your local data is preserved after migration
+- Tier limits are enforced server-side (Free: 150 items/5 projects, Pro: 10k items/10 projects)
+
+**New Files Added for Cloud Support:**
+
+- `src/cloud-client.ts` - HTTP client for cloud API communication with Bearer token authentication
+- `src/cli/migrate.ts` - Migration CLI for local to cloud data transfer
+- `src/types/index.ts` - Complete type definitions shared between local and cloud modes
+
+All validation, type safety, and MCP protocol handling remains consistent across both modes.
+
 ## Architecture
 
 ### Server Implementation
 
-The MCP server is built on `@modelcontextprotocol/sdk` and provides 27 tools for context management, including session lifecycle, memory storage, task management, and checkpoints. The server maintains a single active session per connection and stores all data in a local SQLite database.
+The MCP server is built on `@modelcontextprotocol/sdk` and provides 32 tools for context management, including session lifecycle, memory storage, task management, and checkpoints. The server maintains a single active session per connection and stores data either in a local SQLite database (local mode) or via cloud API (cloud mode).
 
 ```
 server/
 ├── src/
 │   ├── index.ts              # MCP server with tool handlers
+│   ├── cloud-client.ts       # HTTP client for cloud API
+│   ├── cli/
+│   │   └── migrate.ts        # Migration CLI for local to cloud
 │   ├── database/
 │   │   ├── index.ts          # DatabaseManager class
 │   │   └── schema.sql        # SQLite schema
 │   ├── utils/
 │   │   ├── channels.ts       # Channel derivation and normalization
 │   │   ├── git.ts            # Git branch and status integration
+│   │   ├── project.ts        # Project path utilities
 │   │   └── validation.ts     # Input validation
 │   └── types/
 │       └── index.ts          # TypeScript type definitions

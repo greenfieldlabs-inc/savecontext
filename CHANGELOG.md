@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.6] - 2025-11-20
+
+### Added
+- **SaveContext Cloud support** - Dual-mode operation (local SQLite or cloud API)
+  - Cloud mode enabled via `SAVECONTEXT_API_KEY` environment variable
+  - Local mode (default) - free, SQLite-backed, no account required
+  - Cloud mode - PostgreSQL-backed API at https://mcp.savecontext.dev
+  - CloudClient class with Bearer token authentication and agent metadata headers
+  - All 32 MCP tools work identically in both modes via automatic routing
+  - Mode detection via environment variable or CLI flag `--api-key`
+  - Cloud API base URL configurable via `SAVECONTEXT_BASE_URL`
+- **Migration CLI** - `savecontext-migrate` binary for local to cloud data migration
+  - One-time migration for new cloud accounts only (prevents data conflicts)
+  - Pre-migration validation against tier limits
+  - Migrates sessions, context items, checkpoints, project memory, tasks, and agent sessions
+  - Migration API endpoint: https://mcp.savecontext.dev/migrate
+- **Type system improvements**
+  - Moved CompactionConfig, ClientInfo, ConnectionState interfaces to types/index.ts
+  - Added ContextItemUpdate and TaskUpdate interfaces for typed partial updates
+  - Added CheckpointItemRow and CheckpointRow types for SQLite migration queries
+- **Tool description enhancements** - 8 tools now explicitly document required parameters
+  - context_restore: "Requires checkpoint_id and checkpoint_name"
+  - context_checkpoint_add_items: "Requires checkpoint_id, checkpoint_name, and item_keys"
+  - context_checkpoint_remove_items: "Requires checkpoint_id, checkpoint_name, and item_keys"
+  - context_checkpoint_split: "Requires source_checkpoint_id, source_checkpoint_name, and splits array"
+  - context_checkpoint_delete: "Requires checkpoint_id and checkpoint_name"
+  - context_session_resume: "Requires session_id and session_name"
+  - context_session_switch: "Requires session_id and session_name"
+  - context_session_delete: "Requires session_id and session_name"
+- Commander.js dependency (v14.0.2) for CLI argument parsing
+- npm publish workflow with prepublishOnly/postpublish scripts for README
+
+### Changed
+- Server startup now detects mode based on API key presence and logs mode to stderr
+- DatabaseManager and CloudClient are mutually exclusive - only one initialized per mode
+- All tool handlers check mode and proxy to cloud API or use local database accordingly
+- Validation functions now validate checkpoint_name and source_checkpoint_name for verification
+- README reorganized with cloud mode configuration, migration instructions, and mode comparison
+- package.json version bumped to 0.1.6
+- package.json bin now includes savecontext-migrate entry point
+
+### Fixed
+- Replaced `const updates: any = {}` with typed ContextItemUpdate and TaskUpdate interfaces
+- Replaced `(item as any)` type casts in migrate.ts with proper CheckpointItemRow typing
+- Build warnings from untyped objects eliminated
+
 ## [0.1.5] - 2025-11-14
 
 ### Added (EXPERIMENTAL)
