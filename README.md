@@ -1,6 +1,20 @@
+![SaveContext](https://pub-4304173ae3f74a77852a77192ab0b3e3.r2.dev/cover.png)
+
+<div align="center">
+
 # SaveContext
 
-MCP server for persistent context management across AI coding sessions.
+**Persistent context management for AI coding sessions**
+
+[![npm version](https://img.shields.io/npm/v/@savecontext/mcp?color=brightgreen)](https://www.npmjs.com/package/@savecontext/mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![MCP](https://img.shields.io/badge/MCP-Compatible-orange)](https://modelcontextprotocol.io)
+
+[Website](https://savecontext.dev) • [NPM](https://www.npmjs.com/package/@savecontext/mcp) • [GitHub](https://github.com/greenfieldlabs-inc/savecontext)
+
+</div>
+
+---
 
 ## Overview
 
@@ -47,12 +61,12 @@ pnpm build
 
 ## Configuration
 
-Add to your MCP client configuration file (Claude Code, Cursor, Cline, etc.):
+<details>
+<summary>▶ <b>Install in Claude Code</b></summary>
 
-**Local Mode (Default - Free)**
+<br>
 
-Uses local SQLite database at `~/.savecontext/data/savecontext.db`:
-
+**Local Mode (Free)**
 ```json
 {
   "mcpServers": {
@@ -65,12 +79,7 @@ Uses local SQLite database at `~/.savecontext/data/savecontext.db`:
 }
 ```
 
-> **Note**: Compaction settings are experimental. See [Compaction Settings](#compaction-settings) for configuration options.
-
-**Cloud Mode (SaveContext Cloud)**
-
-Uses cloud API with your account at [savecontext.dev](https://savecontext.dev):
-
+**Cloud Mode (Paid)**
 ```json
 {
   "mcpServers": {
@@ -79,6 +88,192 @@ Uses cloud API with your account at [savecontext.dev](https://savecontext.dev):
       "command": "npx",
       "args": ["-y", "@savecontext/mcp"],
       "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev",
+        "SAVECONTEXT_COMPACTION_THRESHOLD": "85",
+        "SAVECONTEXT_COMPACTION_MODE": "remind"
+      }
+    }
+  }
+}
+```
+
+**Config File Location:**
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Cursor</b></summary>
+
+<br>
+
+**Local Mode (Free)**
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"]
+    }
+  }
+}
+```
+
+**Cloud Mode (Paid)**
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+**Config File Location:**
+- macOS: `~/Library/Application Support/Cursor/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json`
+- Windows: `%APPDATA%\Cursor\User\globalStorage\rooveterinaryinc.roo-cline\settings\cline_mcp_settings.json`
+- Linux: `~/.config/Cursor/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json`
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Cline</b></summary>
+
+<br>
+
+**Local Mode (Free)**
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"]
+    }
+  }
+}
+```
+
+**Cloud Mode (Paid)**
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in VS Code</b></summary>
+
+<br>
+
+**Local Mode (Free)**
+```json
+{
+  "mcp": {
+    "servers": {
+      "savecontext": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@savecontext/mcp"]
+      }
+    }
+  }
+}
+```
+
+**Cloud Mode (Paid)**
+```json
+{
+  "mcp": {
+    "servers": {
+      "savecontext": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@savecontext/mcp"],
+        "env": {
+          "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+          "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+        }
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Factory</b></summary>
+
+<br>
+
+Factory's droid supports MCP servers through its CLI.
+
+**Remote Server Connection (HTTP)**
+```bash
+droid mcp add savecontext https://mcp.savecontext.dev --type http --header "SAVECONTEXT_API_KEY: sk_your_api_key_here"
+```
+
+**Local Server Connection (Stdio)**
+```bash
+droid mcp add savecontext "npx -y @savecontext/mcp" --env SAVECONTEXT_API_KEY=sk_your_api_key_here
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in OpenAI Codex</b></summary>
+
+<br>
+
+**Local Server Connection**
+```toml
+[mcp_servers.savecontext]
+args = ["-y", "@savecontext/mcp", "--api-key", "sk_your_api_key_here"]
+command = "npx"
+startup_timeout_ms = 20_000
+```
+
+**Remote Server Connection**
+```toml
+[mcp_servers.savecontext]
+url = "https://mcp.savecontext.dev"
+http_headers = { "SAVECONTEXT_API_KEY" = "sk_your_api_key_here" }
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Google Antigravity</b></summary>
+
+<br>
+
+**Remote Server Connection**
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "serverUrl": "https://mcp.savecontext.dev",
+      "headers": {
         "SAVECONTEXT_API_KEY": "sk_your_api_key_here"
       }
     }
@@ -86,9 +281,497 @@ Uses cloud API with your account at [savecontext.dev](https://savecontext.dev):
 }
 ```
 
-**From Source (Development)**
+**Local Server Connection**
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
 
-If running from a local clone with a local cloud API:
+</details>
+
+<details>
+<summary>▶ <b>Install in Zed</b></summary>
+
+<br>
+
+Add this to your Zed `settings.json`:
+
+```json
+{
+  "context_servers": {
+    "SaveContext": {
+      "source": "custom",
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Claude Desktop</b></summary>
+
+<br>
+
+**Remote Server Connection**
+
+Open Claude Desktop and navigate to Settings > Connectors > Add Custom Connector. Enter the name as `SaveContext` and the remote MCP server URL as `https://mcp.savecontext.dev`.
+
+**Local Server Connection**
+
+Open Claude Desktop developer settings and edit your `claude_desktop_config.json` file:
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+**Config File Location:**
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+
+</details>
+
+<details>
+<summary>▶ <b>Install in JetBrains AI Assistant</b></summary>
+
+<br>
+
+1. In JetBrains IDEs, go to `Settings` → `Tools` → `AI Assistant` → `Model Context Protocol (MCP)`
+2. Click `+ Add`
+3. Click on `Command` in the top-left corner and select `As JSON`
+4. Add this configuration:
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+5. Click `Apply` to save changes
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Roo Code</b></summary>
+
+<br>
+
+Roo Code natively supports MCP servers.
+
+**Local Mode (Free)**
+
+Edit Roo Code's MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"]
+    }
+  }
+}
+```
+
+**Cloud Mode (Paid)**
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Augment Code</b></summary>
+
+<br>
+
+**Remote Server Connection**
+
+In Augment Code settings, add remote MCP server:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "savecontext": {
+        "url": "https://mcp.savecontext.dev",
+        "headers": {
+          "SAVECONTEXT_API_KEY": "sk_your_api_key_here"
+        }
+      }
+    }
+  }
+}
+```
+
+**Local Server Connection**
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "savecontext": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@savecontext/mcp"],
+        "env": {
+          "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+          "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+        }
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Kilo Code</b></summary>
+
+<br>
+
+Add to your Kilo Code MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Gemini CLI</b></summary>
+
+<br>
+
+Add SaveContext to your Gemini CLI configuration:
+
+```bash
+gemini mcp add savecontext \
+  --command "npx" \
+  --args "-y @savecontext/mcp" \
+  --env SAVECONTEXT_API_KEY=sk_your_api_key_here \
+  --env SAVECONTEXT_BASE_URL=https://mcp.savecontext.dev
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Perplexity Desktop</b></summary>
+
+<br>
+
+Navigate to Perplexity Desktop Settings → Integrations → MCP Servers:
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in LM Studio</b></summary>
+
+<br>
+
+In LM Studio, go to Settings → Tools → MCP and add:
+
+```json
+{
+  "servers": {
+    "savecontext": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in GitHub Copilot Coding Agent</b></summary>
+
+<br>
+
+Add to your Copilot Coding Agent configuration:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "savecontext": {
+        "command": "npx",
+        "args": ["-y", "@savecontext/mcp"],
+        "env": {
+          "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+          "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+        }
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Copilot CLI</b></summary>
+
+<br>
+
+Configure via GitHub Copilot CLI settings:
+
+```bash
+gh copilot config set mcp.servers.savecontext.command "npx"
+gh copilot config set mcp.servers.savecontext.args "-y @savecontext/mcp"
+gh copilot config set mcp.servers.savecontext.env.SAVECONTEXT_API_KEY "sk_your_api_key_here"
+gh copilot config set mcp.servers.savecontext.env.SAVECONTEXT_BASE_URL "https://mcp.savecontext.dev"
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Warp AI</b></summary>
+
+<br>
+
+In Warp terminal, navigate to Settings → AI → MCP Servers:
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Qodo Gen</b></summary>
+
+<br>
+
+Add to Qodo Gen MCP configuration file:
+
+```json
+{
+  "servers": {
+    "savecontext": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Replit AI</b></summary>
+
+<br>
+
+In your Replit project, add to `.replit` configuration:
+
+```toml
+[mcp.servers.savecontext]
+command = "npx"
+args = ["-y", "@savecontext/mcp"]
+
+[mcp.servers.savecontext.env]
+SAVECONTEXT_API_KEY = "sk_your_api_key_here"
+SAVECONTEXT_BASE_URL = "https://mcp.savecontext.dev"
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Amazon Q Developer</b></summary>
+
+<br>
+
+Configure in Amazon Q Developer settings:
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Sourcegraph Cody</b></summary>
+
+<br>
+
+Add to Cody's MCP server configuration:
+
+**Local Mode (Free)**
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "savecontext": {
+        "command": "npx",
+        "args": ["-y", "@savecontext/mcp"]
+      }
+    }
+  }
+}
+```
+
+**Cloud Mode (Paid)**
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "savecontext": {
+        "command": "npx",
+        "args": ["-y", "@savecontext/mcp"],
+        "env": {
+          "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+          "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+        }
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>Install in Tabnine</b></summary>
+
+<br>
+
+In Tabnine settings, navigate to Extensions → MCP:
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"],
+      "env": {
+        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
+        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary>▶ <b>From Source (Development)</b></summary>
+
+<br>
+
+For local development (running from source):
 
 ```json
 {
@@ -107,6 +790,10 @@ If running from a local clone with a local cloud API:
 ```
 
 For local-only development (no cloud API), omit both `SAVECONTEXT_API_KEY` and `SAVECONTEXT_BASE_URL`.
+
+</details>
+
+> **Note**: Compaction settings are experimental. See [Compaction Settings](#compaction-settings) for configuration options.
 
 The server communicates via stdio using the MCP protocol.
 
@@ -152,6 +839,18 @@ Control when and how SaveContext preserves context before your conversation wind
 #### Cloud Mode (SaveContext Cloud)
 
 SaveContext supports two modes of operation:
+
+| Feature | Local Mode (Free) | Cloud Mode (Paid) |
+|---------|-------------------|-------------------|
+| **Storage** | SQLite on your machine | PostgreSQL cloud database |
+| **Data Location** | `~/.savecontext/data/savecontext.db` | [savecontext.dev](https://savecontext.dev) |
+| **Rate Limits** | None | Based on plan tier |
+| **Account Required** | No | Yes |
+| **Multi-Device Sync** | No | Yes |
+| **Automatic Backups** | No | Yes |
+| **Team Collaboration** | No | Coming soon |
+| **Analytics Dashboard** | No | Coming soon |
+| **Pricing** | Free forever | Starting at $19/month |
 
 **Local Mode (Default - Free)**
 - Uses local SQLite database (`~/.savecontext/data/savecontext.db`)
@@ -237,7 +936,11 @@ The migration tool will:
 **Important Notes:**
 - Migration is one-time only - it requires an empty cloud account
 - Your local data is preserved after migration
-- Tier limits are enforced server-side (Free: 150 items/5 projects, Pro: 10k items/10 projects)
+- Tier limits are enforced server-side:
+  - **Free**: 300 API calls/month, 100 context items, 3 projects, 5 checkpoints
+  - **Pro**: 3,000 API calls/month, 5,000 context items, 10 projects, unlimited checkpoints
+  - **Max**: 15,000 API calls/month, unlimited context items, unlimited projects, unlimited checkpoints
+  - **Custom limits for teams available** - Contact support@savecontext.dev for details
 
 **New Files Added for Cloud Support:**
 
