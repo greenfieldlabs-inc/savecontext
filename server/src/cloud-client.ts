@@ -264,7 +264,7 @@ export class CloudClient {
   }
 
   async prepareCompaction(): Promise<ToolResponse> {
-    return this.makeRequest('/checkpoint/prepare-compaction', 'POST');
+    return this.makeRequest('/checkpoint/prepare-compaction', 'POST', { session_id: this.currentSessionId });
   }
 
   async restoreCheckpoint(args: RestoreCheckpointArgs): Promise<ToolResponse> {

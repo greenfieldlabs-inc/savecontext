@@ -31,6 +31,7 @@ export interface CreateSessionArgs {
   branch?: string;
   channel?: string;
   project_path?: string;
+  force_new?: boolean;
 }
 
 export interface ResumeSessionArgs {

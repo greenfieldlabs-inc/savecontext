@@ -159,6 +159,8 @@ function normalizeClientName(clientName: string): string {
 
   // Map known MCP clients to provider names
   if (name.includes('claude') && name.includes('code')) return 'claude-code';
+  if (name.includes('claude') && name.includes('desktop')) return 'claude-desktop';
+  if (name.includes('claude')) return 'claude-desktop'; // Fallback for any other Claude app
   if (name.includes('factory')) return 'factory-ai';
   if (name.includes('cursor')) return 'cursor';
   if (name.includes('cline')) return 'cline';
@@ -298,10 +300,19 @@ async function handleSessionStart(args: any) {
     }
 
     // Local mode: use SQLite
-    // Check if THIS agent already has a current session
-    const agentSession = getDb().getCurrentSessionForAgent(agentId);
+    // If force_new, pause any existing active session and clear agent link
+    if (validated.force_new) {
+      const existingAgentSession = getDb().getCurrentSessionForAgent(agentId);
+      if (existingAgentSession && existingAgentSession.status === 'active') {
+        getDb().pauseSession(existingAgentSession.id);
+      }
+      getDb().clearCurrentSessionForAgent(agentId);
+    }
 
-    if (agentSession) {
+    // Check if this agent already has a current session (skip if force_new)
+    const agentSession = validated.force_new ? null : getDb().getCurrentSessionForAgent(agentId);
+
+    if (agentSession && agentSession.status === 'active') {
       // Agent already has a current session - resume it
       // Check if current path is already in the session
       const sessionPaths = getDb().getSessionPaths(agentSession.id);
@@ -1796,8 +1807,13 @@ async function handleSessionPause() {
  */
 async function handleSessionResume(args: any) {
   try {
-    // Cloud mode: proxy to API
+    // Cloud mode: set agent metadata and proxy to API
     if (mode === 'cloud') {
+      const branch = await getCurrentBranch();
+      const projectPath = normalizeProjectPath(getCurrentProjectPath());
+      const provider = getCurrentProvider();
+      const agentId = getAgentId(projectPath, branch || 'main', provider);
+      cloud!.setAgentMetadata(agentId, projectPath, branch || 'main', provider);
       return await cloud!.resumeSession(args);
     }
 
@@ -2110,7 +2126,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: 'context_session_start',
-        description: 'Start a new coding session or resume existing one. Auto-derives channel from git branch. Call at conversation start or when switching contexts.',
+        description: 'Start a new coding session or resume existing one. Auto-derives channel from git branch. Call at conversation start or when switching contexts. Use force_new=true to always create a fresh session instead of resuming an existing one.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2125,6 +2141,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             channel: {
               type: 'string',
               description: 'Optional channel name (auto-derived from git branch if not provided)',
+            },
+            force_new: {
+              type: 'boolean',
+              description: 'Force create a new session instead of resuming existing one. Use when you want to start fresh.',
             },
           },
           required: ['name'],

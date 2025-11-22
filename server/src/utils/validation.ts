@@ -28,7 +28,7 @@ export function validateCreateSession(args: any): CreateSessionArgs {
     throw new ValidationError('Invalid arguments: must be an object');
   }
 
-  const { name, description, branch, channel } = args;
+  const { name, description, branch, channel, force_new } = args;
 
   // Name is required
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -67,6 +67,7 @@ export function validateCreateSession(args: any): CreateSessionArgs {
     description: description?.trim(),
     branch: branch?.trim(),
     channel: channel?.trim(),
+    force_new: force_new === true,
   };
 }
 
