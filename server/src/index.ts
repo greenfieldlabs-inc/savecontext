@@ -1648,10 +1648,30 @@ async function handleSessionRename(args: any) {
 
     // Local mode: use SQLite
     const sessionId = ensureSession();
-    const { new_name } = args;
+    const { current_name, new_name } = args;
+
+    if (!current_name || typeof current_name !== 'string') {
+      throw new ValidationError('current_name is required (get from context_status)');
+    }
 
     if (!new_name || typeof new_name !== 'string' || new_name.trim().length === 0) {
       throw new ValidationError('new_name is required and must be a non-empty string');
+    }
+
+    // Get current session name for verification
+    const session = db!.getDatabase()
+      .prepare('SELECT name FROM sessions WHERE id = ?')
+      .get(sessionId) as { name: string } | undefined;
+
+    if (!session) {
+      throw new ValidationError('Session not found');
+    }
+
+    const old_name = session.name;
+
+    // Verify current_name matches
+    if (current_name !== old_name) {
+      throw new ValidationError(`Current name mismatch: expected '${old_name}', got '${current_name}'`);
     }
 
     const trimmedName = new_name.trim();
@@ -1662,8 +1682,8 @@ async function handleSessionRename(args: any) {
       .run(trimmedName, Date.now(), sessionId);
 
     return success(
-      { session_id: sessionId, new_name: trimmedName },
-      `Session renamed to '${trimmedName}'`
+      { session_id: sessionId, old_name, new_name: trimmedName },
+      `Session renamed from '${old_name}' to '${trimmedName}'`
     );
   } catch (err) {
     return error('Failed to rename session', err);
@@ -2692,16 +2712,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_session_rename',
-        description: 'Rename current session. Use when initial name wasn\'t descriptive enough or context changed direction.',
+        description: 'Rename current session. Use when initial name wasn\'t descriptive enough or context changed direction. Call context_status first to get the current session name.',
         inputSchema: {
           type: 'object',
           properties: {
+            current_name: {
+              type: 'string',
+              description: 'Current session name (for verification - get from context_status)',
+            },
             new_name: {
               type: 'string',
               description: 'New session name',
             },
           },
-          required: ['new_name'],
+          required: ['current_name', 'new_name'],
         },
       },
       {

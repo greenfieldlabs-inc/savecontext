@@ -50,6 +50,7 @@ export interface DeleteSessionArgs {
 }
 
 export interface RenameSessionArgs {
+  current_name: string;
   new_name: string;
 }
 
