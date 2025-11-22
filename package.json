@@ -1,6 +1,6 @@
 {
   "name": "savecontext",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "SaveContext - Never lose context in your AI coding sessions",
   "private": true,
   "workspaces": [
@@ -9,7 +9,10 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "serve": "npm run serve -w server",
-    "start": "npm run start -w server"
+    "start": "npm run start -w server",
+    "version:patch": "npm version patch --no-git-tag-version && npm version patch --no-git-tag-version -w server",
+    "version:minor": "npm version minor --no-git-tag-version && npm version minor --no-git-tag-version -w server",
+    "version:major": "npm version major --no-git-tag-version && npm version major --no-git-tag-version -w server"
   },
   "repository": {
     "type": "git",
