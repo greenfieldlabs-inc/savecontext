@@ -20,6 +20,19 @@ const packageJson = require('../package.json');
 const VERSION = packageJson.version;
 
 // ====================
+// Configuration Constants
+// ====================
+const COMPACTION_THRESHOLD_DEFAULT = 70;
+const COMPACTION_THRESHOLD_MIN = 50;
+const COMPACTION_THRESHOLD_MAX = 90;
+const CONTEXT_ITEMS_DEFAULT_LIMIT = 100;
+const COMPACTION_HIGH_PRIORITY_LIMIT = 50;
+const COMPACTION_DECISION_LIMIT = 20;
+const COMPACTION_TASK_LIMIT = 20;
+const COMPACTION_PROGRESS_LIMIT = 10;
+const COMPACTION_ITEM_COUNT_THRESHOLD = 40;
+
+// ====================
 // CLI Argument Parsing
 // ====================
 
@@ -62,6 +75,7 @@ import {
   validateCheckpointItemManagement,
   validateCheckpointSplit,
   validateDeleteCheckpoint,
+  validateCheckpointName,
 } from './utils/validation.js';
 import {
   SessionError,
@@ -101,13 +115,13 @@ function getDb(): DatabaseManager {
 
 // Load compaction configuration from environment
 function loadCompactionConfig(): CompactionConfig {
-  const threshold = parseInt(process.env.SAVECONTEXT_COMPACTION_THRESHOLD || '70', 10);
+  const threshold = parseInt(process.env.SAVECONTEXT_COMPACTION_THRESHOLD || String(COMPACTION_THRESHOLD_DEFAULT), 10);
   const rawMode = process.env.SAVECONTEXT_COMPACTION_MODE || 'remind';
 
   // Validate threshold
-  const validThreshold = (threshold >= 50 && threshold <= 90) ? threshold : 70;
+  const validThreshold = (threshold >= COMPACTION_THRESHOLD_MIN && threshold <= COMPACTION_THRESHOLD_MAX) ? threshold : COMPACTION_THRESHOLD_DEFAULT;
   if (validThreshold !== threshold) {
-    console.error(`[SaveContext] Invalid SAVECONTEXT_COMPACTION_THRESHOLD: ${threshold}. Using default: 70`);
+    console.error(`[SaveContext] Invalid SAVECONTEXT_COMPACTION_THRESHOLD: ${threshold}. Using default: ${COMPACTION_THRESHOLD_DEFAULT}`);
   }
 
   // Validate mode
@@ -505,7 +519,7 @@ async function handleGetContext(args: any) {
       category: validated.category,
       priority: validated.priority,
       channel: validated.channel,
-      limit: validated.limit || 100,
+      limit: validated.limit || CONTEXT_ITEMS_DEFAULT_LIMIT,
       offset: validated.offset || 0,
     });
 
@@ -1042,22 +1056,22 @@ async function handlePrepareCompaction() {
     // Analyze critical context
     const highPriorityItems = getDb().getContextItems(sessionId, {
       priority: 'high',
-      limit: 50,
+      limit: COMPACTION_HIGH_PRIORITY_LIMIT,
     });
 
     const tasks = getDb().getContextItems(sessionId, {
       category: 'task',
-      limit: 20,
+      limit: COMPACTION_TASK_LIMIT,
     });
 
     const decisions = getDb().getContextItems(sessionId, {
       category: 'decision',
-      limit: 20,
+      limit: COMPACTION_DECISION_LIMIT,
     });
 
     const progress = getDb().getContextItems(sessionId, {
       category: 'progress',
-      limit: 10,
+      limit: COMPACTION_PROGRESS_LIMIT,
     });
 
     // Identify unfinished tasks
@@ -1166,19 +1180,12 @@ async function handleRestoreCheckpoint(args: any) {
     const sessionId = ensureSession();
     const validated = validateRestoreCheckpoint(args);
 
-    // Verify checkpoint exists
-    const checkpoint = getDb().getCheckpoint(validated.checkpoint_id);
-    if (!checkpoint) {
-      throw new SaveContextError(
-        `Checkpoint '${validated.checkpoint_id}' not found`,
-        'NOT_FOUND'
-      );
-    }
-
-    // Validate name matches
-    if (checkpoint.name !== args.checkpoint_name) {
-      throw new ValidationError(`Checkpoint name mismatch: expected '${checkpoint.name}' but got '${args.checkpoint_name}'`);
-    }
+    // Verify checkpoint exists and name matches
+    const checkpoint = validateCheckpointName(
+      getDb().getCheckpoint(validated.checkpoint_id),
+      validated.checkpoint_id,
+      args.checkpoint_name
+    );
 
     // Restore items with optional filters
     const restored = getDb().restoreCheckpoint(validated.checkpoint_id, sessionId, {
@@ -1251,19 +1258,12 @@ async function handleAddItemsToCheckpoint(args: any) {
     const sessionId = ensureSession();
     const validated = validateCheckpointItemManagement(args);
 
-    // Verify checkpoint exists
-    const checkpoint = getDb().getCheckpoint(validated.checkpoint_id);
-    if (!checkpoint) {
-      throw new SaveContextError(
-        `Checkpoint '${validated.checkpoint_id}' not found`,
-        'NOT_FOUND'
-      );
-    }
-
-    // Validate name matches
-    if (checkpoint.name !== args.checkpoint_name) {
-      throw new ValidationError(`Checkpoint name mismatch: expected '${checkpoint.name}' but got '${args.checkpoint_name}'`);
-    }
+    // Verify checkpoint exists and name matches
+    const checkpoint = validateCheckpointName(
+      getDb().getCheckpoint(validated.checkpoint_id),
+      validated.checkpoint_id,
+      args.checkpoint_name
+    );
 
     const added = getDb().addItemsToCheckpoint(
       validated.checkpoint_id,
@@ -1297,19 +1297,12 @@ async function handleRemoveItemsFromCheckpoint(args: any) {
     const sessionId = ensureSession();
     const validated = validateCheckpointItemManagement(args);
 
-    // Verify checkpoint exists
-    const checkpoint = getDb().getCheckpoint(validated.checkpoint_id);
-    if (!checkpoint) {
-      throw new SaveContextError(
-        `Checkpoint '${validated.checkpoint_id}' not found`,
-        'NOT_FOUND'
-      );
-    }
-
-    // Validate name matches
-    if (checkpoint.name !== args.checkpoint_name) {
-      throw new ValidationError(`Checkpoint name mismatch: expected '${checkpoint.name}' but got '${args.checkpoint_name}'`);
-    }
+    // Verify checkpoint exists and name matches
+    const checkpoint = validateCheckpointName(
+      getDb().getCheckpoint(validated.checkpoint_id),
+      validated.checkpoint_id,
+      args.checkpoint_name
+    );
 
     const removed = getDb().removeItemsFromCheckpoint(
       validated.checkpoint_id,
@@ -1416,19 +1409,12 @@ async function handleDeleteCheckpoint(args: any) {
     ensureSession();
     const validated = validateDeleteCheckpoint(args);
 
-    // Verify checkpoint exists
-    const checkpoint = getDb().getCheckpoint(validated.checkpoint_id);
-    if (!checkpoint) {
-      throw new SaveContextError(
-        `Checkpoint '${validated.checkpoint_id}' not found`,
-        'NOT_FOUND'
-      );
-    }
-
-    // Validate name matches
-    if (checkpoint.name !== args.checkpoint_name) {
-      throw new ValidationError(`Checkpoint name mismatch: expected '${checkpoint.name}' but got '${args.checkpoint_name}'`);
-    }
+    // Verify checkpoint exists and name matches
+    validateCheckpointName(
+      getDb().getCheckpoint(validated.checkpoint_id),
+      validated.checkpoint_id,
+      args.checkpoint_name
+    );
 
     const deleted = getDb().deleteCheckpoint(validated.checkpoint_id);
 
@@ -1440,8 +1426,8 @@ async function handleDeleteCheckpoint(args: any) {
     await updateAgentActivity();
 
     return success(
-      { checkpoint_id: validated.checkpoint_id, checkpoint_name: checkpoint.name },
-      `Deleted checkpoint '${checkpoint.name}'`
+      { checkpoint_id: validated.checkpoint_id, checkpoint_name: args.checkpoint_name },
+      `Deleted checkpoint '${args.checkpoint_name}'`
     );
   } catch (err) {
     return error('Failed to delete checkpoint', err);
@@ -1635,9 +1621,9 @@ async function handleSessionStatus() {
 
     // Compaction suggestions
     const itemCount = stats?.total_items || 0;
-    const shouldCompact = itemCount >= 40;
+    const shouldCompact = itemCount >= COMPACTION_ITEM_COUNT_THRESHOLD;
     const compactionReason = shouldCompact
-      ? `High item count (${itemCount} items, recommended: prepare at 40+ items)`
+      ? `High item count (${itemCount} items, recommended: prepare at ${COMPACTION_ITEM_COUNT_THRESHOLD}+ items)`
       : null;
 
     const status: SessionStatus = {

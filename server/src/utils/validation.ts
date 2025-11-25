@@ -461,6 +461,27 @@ export function validateDeleteCheckpoint(args: any): { checkpoint_id: string } {
 }
 
 /**
+ * Validate that a checkpoint exists and its name matches the expected name.
+ * Returns the checkpoint with narrowed type (non-null).
+ * Use this after fetching a checkpoint from the database.
+ */
+export function validateCheckpointName<T extends { name: string }>(
+  checkpoint: T | null | undefined,
+  checkpointId: string,
+  expectedName: string
+): T {
+  if (!checkpoint) {
+    throw new ValidationError(`Checkpoint '${checkpointId}' not found`);
+  }
+  if (checkpoint.name !== expectedName) {
+    throw new ValidationError(
+      `Checkpoint name mismatch: expected '${checkpoint.name}' but got '${expectedName}'`
+    );
+  }
+  return checkpoint;
+}
+
+/**
  * Sanitize string input (prevent injection attacks)
  */
 export function sanitizeString(input: string): string {
