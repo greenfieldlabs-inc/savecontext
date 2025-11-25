@@ -91,7 +91,7 @@ export class CloudClient {
       throw new Error(errorMessage);
     }
 
-    return response.json() as Promise<T>;
+    return response.json().catch(() => ({ success: true })) as Promise<T>;
   }
 
   // ====================
@@ -185,7 +185,8 @@ export class CloudClient {
         this.currentSessionId = status.data.current_session_id;
       }
     } catch (err) {
-      // If no session, currentSessionId stays null and API will return error
+      // Log error but continue - API will return appropriate error if no session
+      console.error('[SaveContext] Failed to ensure session:', err);
     }
   }
 

@@ -27,6 +27,17 @@ export interface DatabaseConfig {
   dataDir?: string;
 }
 
+/**
+ * Safely parse tags JSON string, returning empty array on error
+ */
+function safeParseTagsJson(tagsJson: string | null | undefined): string[] {
+  try {
+    return JSON.parse(tagsJson || '[]');
+  } catch {
+    return [];
+  }
+}
+
 export class DatabaseManager {
   private db: Database.Database;
   private dataDir: string;
@@ -674,7 +685,7 @@ export class DatabaseManager {
     // Update tags for each item
     let updated = 0;
     for (const item of items) {
-      const currentTags: string[] = JSON.parse(item.tags || '[]');
+      const currentTags: string[] = safeParseTagsJson(item.tags);
       let newTags: string[];
 
       if (options.action === 'add') {
@@ -903,7 +914,7 @@ export class DatabaseManager {
       // Apply filters if provided
       if (filters) {
         items = items.filter(item => {
-          const itemTags: string[] = JSON.parse(item.tags || '[]');
+          const itemTags: string[] = safeParseTagsJson(item.tags);
 
           // Filter by include_tags
           if (filters.include_tags && filters.include_tags.length > 0) {
@@ -1018,7 +1029,7 @@ export class DatabaseManager {
       // Apply filters if provided
       if (filters) {
         items = items.filter(item => {
-          const itemTags: string[] = JSON.parse(item.tags || '[]');
+          const itemTags: string[] = safeParseTagsJson(item.tags);
 
           // Filter by restore_tags
           if (filters.restore_tags && filters.restore_tags.length > 0) {
@@ -1168,7 +1179,7 @@ export class DatabaseManager {
       for (const split of splits) {
         // Filter items for this split
         let items = allItems.filter(item => {
-          const itemTags: string[] = JSON.parse(item.tags || '[]');
+          const itemTags: string[] = safeParseTagsJson(item.tags);
 
           // Filter by include_tags
           if (split.include_tags && split.include_tags.length > 0) {
