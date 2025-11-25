@@ -22,7 +22,7 @@ SaveContext is a Model Context Protocol (MCP) server that provides stateful sess
 ## Features
 
 - **Multi-Agent Support**: Run multiple CLI/IDE instances simultaneously with agent-scoped session tracking
-- **Automatic Provider Detection**: Detects MCP client via protocol handshake (Claude Code, Cursor, Cline, Factory.ai, Codex CLI, etc.)
+- **Automatic Provider Detection**: Detects 30 MCP clients including coding tools (Claude Code, Cursor, Cline, VS Code, JetBrains, etc.) and desktop apps (Claude Desktop, Perplexity, ChatGPT, Raycast, etc.)
 - **Session Lifecycle Management**: Full session state management with pause, resume, end, switch, and delete operations
 - **Multi-Path Sessions**: Sessions can span multiple related directories (monorepos, frontend/backend, etc.)
 - **Project Isolation**: Automatically filters sessions by project path - only see sessions from your current repository
@@ -1158,6 +1158,7 @@ server/
 │   │   └── schema.sql        # SQLite schema
 │   ├── utils/
 │   │   ├── channels.ts       # Channel derivation and normalization
+│   │   ├── constants.ts      # Shared configuration constants
 │   │   ├── git.ts            # Git branch and status integration
 │   │   ├── project.ts        # Project path utilities
 │   │   └── validation.ts     # Input validation
@@ -1211,14 +1212,18 @@ The server uses SQLite with the following schema:
 - `item_snapshot` (TEXT) - JSON snapshot of context_item
 
 **agent_sessions** - Tracks which agent is currently working on each session
-- `agent_id` (TEXT PRIMARY KEY) - Format: `{projectName}-{branch}-{provider}` (e.g., `savecontext-main-claude-code`)
+- `agent_id` (TEXT PRIMARY KEY) - Format depends on client type:
+  - Coding tools: `{projectName}-{branch}-{provider}` (e.g., `savecontext-main-claude-code`)
+  - Desktop apps: `global-{provider}` (e.g., `global-claude-desktop`) - no project/branch since they can't detect working directory
 - `session_id` (TEXT) - Foreign key to sessions
-- `project_path` (TEXT) - Full project path
-- `git_branch` (TEXT) - Git branch name
-- `provider` (TEXT) - MCP client provider (claude-code, factory-ai, cursor, cline, etc.)
+- `project_path` (TEXT) - Full project path (or "global" for desktop apps)
+- `git_branch` (TEXT) - Git branch name (null for desktop apps)
+- `provider` (TEXT) - MCP client provider:
+  - Coding tools: claude-code, cursor, windsurf, vscode, jetbrains, cline, copilot, factory-ai, etc.
+  - Desktop apps: claude-desktop, perplexity, chatgpt, lm-studio, bolt-ai, raycast
 - `last_active_at` (INTEGER) - Timestamp of last activity
 
-This enables multi-agent support: multiple tools can work on the same session simultaneously (e.g., Claude Code and Factory.ai), each tracked as a separate agent.
+This enables multi-agent support: multiple tools can work on the same session simultaneously (e.g., Claude Code and Claude Desktop), each tracked as a separate agent.
 
 **project_memory** - Stores project-specific commands, configs, and notes
 - `id` (TEXT PRIMARY KEY)
