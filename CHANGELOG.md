@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.11] - Unreleased
+
+### Added
+- **23 new MCP client mappings** - Extended provider detection for more AI coding tools
+  - IDEs: VS Code, Visual Studio, Zed, JetBrains
+  - AI Assistants: Roo Code, Augment, Kilo Code, Copilot, Cody, Tabnine, Qodo, Amazon Q, Replit, Opencode, Antigravity
+  - CLI Tools: Gemini CLI, Warp, Qwen Coder
+  - Desktop Apps: Perplexity, ChatGPT, LM Studio, BoltAI, Raycast
+
+### Changed
+- **Agent ID format for desktop apps** - Desktop apps without project context now use `global-{provider}` format
+  - Previously: `unknown-main-claude-desktop` (confusing with fake branch)
+  - Now: `global-claude-desktop` (clean, no branch since desktop apps can't detect it)
+  - Coding tools with project context unchanged: `{project}-{branch}-{provider}`
+- **Provider detection reorganized** - Client mappings now organized into two clear sections:
+  - Coding tools (have project path and git branch context)
+  - Desktop apps (no project path or git branch context)
+- **`context_session_start` tool description enhanced** - Improved guidance for AI agents on project path usage
+  - Added `project_path` to tool schema with clear description
+  - Instructions to always pass specific project folder path (not workspace root)
+  - Guidance to ask user when working in monorepo or unsure which project to use
+  - Prevents incorrect project tracking from tools that don't set working directory correctly
+
+### Fixed
+- **Desktop app agent tracking** - Claude Desktop and other desktop apps now properly tracked as active agents
+  - Previously desktop apps weren't tracked because they don't send project path
+  - Cloud API now accepts agents without project path, using "global" as fallback
+- **Cloud client error handling** - `ensureSession()` now logs errors instead of silently swallowing them
+- **Safe JSON parsing** - Database tag parsing now handles corrupted JSON gracefully instead of crashing
+- **Fetch response handling** - Cloud client now handles non-JSON success responses correctly
+
+### Improved
+- **Schema constraints** - Tool schemas now include input validation hints
+  - Session name: 1-200 characters
+  - Context value: max 100KB
+  - Query limit: 1-300 items
+- **Code organization** - Configuration constants moved to shared `utils/constants.ts`
+- **Checkpoint validation** - Extracted `validateCheckpointName` helper to reduce code duplication
+
 ## [0.1.10] - 2025-11-22
 
 ### Added
