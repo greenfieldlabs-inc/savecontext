@@ -5,12 +5,49 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
-## [0.1.11] - Unreleased
+## [0.1.12] - 2025-11-30
+
+### Added
+- **`savecontext-auth` CLI** - Device authorization for SaveContext Cloud
+  - `savecontext-auth login` - Authenticate via browser with OAuth (GitHub, Google)
+  - `savecontext-auth logout` - Log out and clear local credentials
+  - `savecontext-auth status` - Show authentication status and MCP URL
+  - `savecontext-auth whoami` - Display current user info
+  - Auto-opens browser for authentication
+  - MCP config JSON copied to clipboard on successful login
+  - Professional terminal UX with spinners, styled boxes, and colors
+  - CI/automation support: `--quiet`, `--json`, `--no-clipboard`, `--no-save`, `--redact` flags
+  - `--no-save` outputs full API key to stdout without saving to disk (for CI secrets management)
+  - `--redact` hides API key in terminal output while still saving to credentials file
+  - Clipboard security warning when API key is copied
+- **`context_session_remove_path` tool** - Remove project paths from multi-path sessions
+  - Cannot remove the last path (sessions must have at least one project path)
+  - Works in both local SQLite and cloud modes
+  - Tool schema includes `project_path` (required) parameter
+  - Use case: Clean up stale paths or paths added by mistake to sessions
+- **HTTP Streamable Transport** - Direct MCP connections without stdio proxy (Cloud only)
+  - Endpoint: `https://mcp.savecontext.dev/mcp` with Bearer token auth
+  - Supports `initialize`, `tools/list`, `tools/call` methods
+  - Enables remote connections from Claude Desktop, Factory, OpenAI, and other HTTP-capable clients
+  - See README for client-specific configuration examples
+
+### Fixed
+- **Cloud: Resume completed sessions** - Cloud API now allows resuming completed sessions
+  - Local mode already supported this (see v0.1.2 changelog)
+  - Removed artificial restriction in Lambda that blocked `context_session_resume` for completed sessions
+  - Sessions can now be resumed regardless of status (active, paused, or completed)
+- **Cloud: Session operations now respect resumed session** - Fixed bug where session tools would operate on wrong session
+  - After `context_session_resume`, tools like `context_status`, `context_session_add_path`, etc. would fall back to most recently updated session instead of the resumed one
+  - Now explicitly passes `session_id` to all session operations: status, rename, end, pause, add_path, remove_path
+  - Critical fix for multi-project workflows where you need to operate on a specific session
+
+## [0.1.11] - 2025-11-24
 
 ### Added
 - **23 new MCP client mappings** - Extended provider detection for more AI coding tools
-  - IDEs: VS Code, Visual Studio, Zed, JetBrains, Antigravity, Replit
-  - CLI/Extensions: Roo Code, Augment, Kilo Code, Copilot, Cody, Tabnine, Qodo, Amazon Q, Opencode, Gemini CLI, Warp, Qwen Coder
+  - IDEs: VS Code, Visual Studio, Zed, JetBrains
+  - AI Assistants: Roo Code, Augment, Kilo Code, Copilot, Cody, Tabnine, Qodo, Amazon Q, Replit, Opencode, Antigravity
+  - CLI Tools: Gemini CLI, Warp, Qwen Coder
   - Desktop Apps: Perplexity, ChatGPT, LM Studio, BoltAI, Raycast
 
 ### Changed

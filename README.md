@@ -15,6 +15,90 @@
 
 ---
 
+## Quick Start (Cloud)
+
+Get started with SaveContext Cloud in under a minute:
+
+```bash
+# 1. Install the package
+npm install -g @savecontext/mcp
+
+# 2. Authenticate with SaveContext Cloud
+savecontext-auth login
+
+# 3. Copy the MCP config (auto-copied to clipboard) and add to your AI tool
+```
+
+The CLI opens your browser for OAuth (GitHub or Google), then displays your MCP configuration ready to paste.
+
+**Free tier included** - Start with generous limits, upgrade for higher usage. [View plans](https://savecontext.dev)
+
+---
+
+## CLI Authentication
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `savecontext-auth login` | Authenticate via browser OAuth (GitHub/Google) |
+| `savecontext-auth status` | Show authentication status, mode, and MCP URL |
+| `savecontext-auth whoami` | Display current user info (email, provider, key prefix) |
+| `savecontext-auth logout` | Clear local credentials (API key remains valid in cloud) |
+
+### Login Options
+
+```bash
+savecontext-auth login [options]
+
+Options:
+  -q, --quiet       Suppress decorative output (spinners, boxes)
+  --json            Machine-readable JSON output (implies --quiet)
+  --no-clipboard    Don't copy MCP config to clipboard
+  --no-save         Don't save credentials to disk (outputs full API key)
+  --redact          Hide API key in output (still saved to credentials file)
+```
+
+### Security Notes
+
+- **API key shown once**: The full API key is displayed only during login and cannot be retrieved again. Save it immediately.
+- **Clipboard**: By default, the MCP config (including API key) is copied to your clipboard. On shared machines, use `--no-clipboard` or clear your clipboard after pasting.
+- **Terminal history**: Consider clearing terminal scrollback if it's logged, as the API key is visible in output.
+- **Credentials stored**: Auth credentials are saved to `~/.savecontext/credentials.json` with 600 permissions (owner-only).
+
+### CI/Automation
+
+For headless environments or CI pipelines:
+
+```bash
+# JSON output, skip local storage, capture API key for secrets manager
+API_KEY=$(savecontext-auth login --json --no-save | jq -r '.apiKey')
+vault kv put secret/savecontext api_key="$API_KEY"
+
+# Quiet mode with clipboard disabled (still saves to ~/.savecontext/)
+savecontext-auth login --quiet --no-clipboard
+```
+
+The `--json` flag outputs:
+```json
+{
+  "success": true,
+  "email": "user@example.com",
+  "provider": "github",
+  "keyPrefix": "sk_abc",
+  "copied": false,
+  "saved": true
+}
+```
+
+- `saved: true` means credentials were written to `~/.savecontext/credentials.json`
+- `copied: true` means MCP config was copied to clipboard
+- `apiKey` field is only included when `--no-save` is used (otherwise omitted for security since it's saved to disk)
+
+When using `--no-save`, set `SAVECONTEXT_API_KEY` environment variable for subsequent CLI commands.
+
+---
+
 ## Overview
 
 SaveContext is a Model Context Protocol (MCP) server that provides stateful session management for AI coding assistants. It solves the problem of context loss when switching between AI tools or when conversations exceed token limits by maintaining persistent storage of decisions, tasks, and session state with checkpoint/restore capabilities.
@@ -59,6 +143,40 @@ pnpm build
 ```
 
 ## Configuration
+
+### HTTP Streamable Transport (Cloud Only)
+
+For MCP clients that support direct HTTP connections (without spawning a local process), SaveContext Cloud provides an HTTP endpoint:
+
+**Endpoint:** `https://mcp.savecontext.dev/mcp`
+
+**Example (Claude Desktop):**
+
+In Claude Desktop: Settings → Connectors → Add Custom Connector
+- **Name:** SaveContext
+- **URL:** `https://mcp.savecontext.dev/mcp`
+- **Headers:** `Authorization: Bearer sk_your_api_key_here`
+
+Or in `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "type": "http",
+      "url": "https://mcp.savecontext.dev/mcp",
+      "headers": {
+        "Authorization": "Bearer sk_your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+Use this pattern for any HTTP-capable MCP client. Replace `type: "stdio"` configs with `type: "http"` and the URL/headers above.
+
+**Note:** HTTP transport requires SaveContext Cloud (API key required). Local-only mode uses stdio transport.
+
+---
 
 <details>
 <summary><b>Install in Claude Code</b></summary>
@@ -1030,8 +1148,8 @@ Control when and how SaveContext preserves context before your conversation wind
 
 SaveContext supports two modes of operation:
 
-| Feature | Local Mode (Free) | Cloud Mode (Paid) |
-|---------|-------------------|-------------------|
+| Feature | Local Mode | Cloud Mode |
+|---------|------------|------------|
 | **Storage** | SQLite on your machine | PostgreSQL cloud database |
 | **Data Location** | `~/.savecontext/data/savecontext.db` | [savecontext.dev](https://savecontext.dev) |
 | **Rate Limits** | None | Based on plan tier |
@@ -1040,7 +1158,7 @@ SaveContext supports two modes of operation:
 | **Automatic Backups** | No | Yes |
 | **Team Collaboration** | No | Coming soon |
 | **Analytics Dashboard** | No | Coming soon |
-| **Pricing** | Free forever | Starting at $19/month |
+| **Pricing** | Free forever | Free tier included, [plans available](https://savecontext.dev) |
 
 **Local Mode (Default - Free)**
 - Uses local SQLite database (`~/.savecontext/data/savecontext.db`)
@@ -1049,18 +1167,28 @@ SaveContext supports two modes of operation:
 - No account required
 - Open source and self-hosted
 
-**Cloud Mode (SaveContext Cloud - Paid Plans)**
+**Cloud Mode (SaveContext Cloud)**
 - Uses PostgreSQL-backed cloud API at [savecontext.dev](https://savecontext.dev)
 - Session data synced to cloud storage
 - Access sessions from multiple devices
 - Automatic backups and disaster recovery
 - Advanced analytics dashboard (coming soon)
 - Team collaboration features (coming soon)
-- Requires API key from SaveContext Cloud account
+- Free tier included with generous limits
+- [Plans available](https://savecontext.dev) for higher usage
 
 **Configuring Cloud Mode:**
 
-After signing up at [savecontext.dev](https://savecontext.dev) and obtaining your API key:
+The easiest way to get started is with the CLI:
+
+```bash
+npm install -g @savecontext/mcp
+savecontext-auth login
+```
+
+This opens your browser for OAuth authentication and copies the MCP config to your clipboard.
+
+Alternatively, sign up at [savecontext.dev](https://savecontext.dev) and manually configure:
 
 ```json
 {
@@ -1144,7 +1272,7 @@ All validation, type safety, and MCP protocol handling remains consistent across
 
 ### Server Implementation
 
-The MCP server is built on `@modelcontextprotocol/sdk` and provides 32 tools for context management, including session lifecycle, memory storage, task management, and checkpoints. The server maintains a single active session per connection and stores data either in a local SQLite database (local mode) or via cloud API (cloud mode).
+The MCP server is built on `@modelcontextprotocol/sdk` and provides 33 tools for context management, including session lifecycle, memory storage, task management, and checkpoints. The server maintains a single active session per connection and stores data either in a local SQLite database (local mode) or via cloud API (cloud mode).
 
 ```
 server/
@@ -1495,6 +1623,25 @@ Returns:
   all_paths: ["/Users/you/project/frontend", "/Users/you/project/backend"],
   path_count: 2,
   already_existed: false
+}
+```
+
+**context_session_remove_path**
+```javascript
+{
+  project_path: string  // Required: path to remove from session
+}
+```
+Removes a project path from the current session. Cannot remove the last path (sessions must have at least one project path). Use to clean up stale paths or paths added by mistake.
+
+Returns:
+```javascript
+{
+  session_id: "sess_...",
+  session_name: "Implementing Auth",
+  removed_path: "/Users/you/project/old-path",
+  remaining_paths: ["/Users/you/project/frontend"],
+  path_count: 1
 }
 ```
 
