@@ -65,6 +65,10 @@ export interface AddSessionPathArgs {
   project_path?: string;
 }
 
+export interface RemoveSessionPathArgs {
+  project_path: string;  // Required - must specify which path to remove
+}
+
 // ====================
 // Context Item Types
 // ====================
@@ -529,4 +533,63 @@ export interface MigrationResult {
     projectMemory: number;
     tasks: number;
   };
+}
+
+// ====================
+// Config Types
+// ====================
+
+export type ConfigMode = 'local' | 'cloud';
+
+export interface SaveContextLocalConfig {
+  mode: ConfigMode;
+  cloudMcpUrl?: string;
+}
+
+export interface SaveContextCredentials {
+  apiKey: string;
+  email?: string;
+  provider?: string;  // OAuth provider (google, github)
+  createdAt: string;  // ISO 8601 timestamp
+}
+
+// ====================
+// Device Auth Types (RFC 8628)
+// ====================
+
+export interface DeviceCodeResponse {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  expires_in: number;
+  interval: number;
+}
+
+export interface DeviceTokenResponse {
+  access_token?: string;
+  api_key?: string;
+  key_prefix?: string;
+  user_id?: string;
+  email?: string;
+  provider?: string;  // OAuth provider (google, github)
+  error?: 'authorization_pending' | 'slow_down' | 'expired_token' | 'access_denied';
+}
+
+export interface DeviceAuthResult {
+  success: boolean;
+  apiKey?: string;
+  keyPrefix?: string;
+  userId?: string;
+  email?: string;
+  provider?: string;  // OAuth provider (google, github)
+  error?: string;
+}
+
+export interface DeviceFlowOptions {
+  /** Callback when device code is received */
+  onCodeReceived: (userCode: string, verificationUri: string) => void;
+  /** Optional callback during polling */
+  onPolling?: () => void;
+  /** Whether to save credentials to disk (default: true) */
+  saveCredentials?: boolean;
 }

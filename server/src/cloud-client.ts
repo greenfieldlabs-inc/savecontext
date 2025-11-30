@@ -17,6 +17,7 @@ import {
   RenameSessionArgs,
   ListSessionsArgs,
   AddSessionPathArgs,
+  RemoveSessionPathArgs,
   SaveContextArgs,
   GetContextArgs,
   UpdateContextArgs,
@@ -115,11 +116,18 @@ export class CloudClient {
   }
 
   async getSessionStatus(): Promise<ToolResponse<SessionStatus>> {
-    return this.makeRequest('/session/status', 'POST');
+    // Include currentSessionId to get status of the resumed session
+    return this.makeRequest('/session/status', 'POST', {
+      session_id: this.currentSessionId,
+    });
   }
 
   async renameSession(args: RenameSessionArgs): Promise<ToolResponse> {
-    return this.makeRequest('/session/rename', 'POST', args);
+    // Include currentSessionId to rename the correct session
+    return this.makeRequest('/session/rename', 'POST', {
+      ...args,
+      session_id: this.currentSessionId,
+    });
   }
 
   async listSessions(args: ListSessionsArgs): Promise<ToolResponse> {
@@ -127,11 +135,17 @@ export class CloudClient {
   }
 
   async endSession(): Promise<ToolResponse> {
-    return this.makeRequest('/session/end', 'POST');
+    // Include currentSessionId to end the correct session
+    return this.makeRequest('/session/end', 'POST', {
+      session_id: this.currentSessionId,
+    });
   }
 
   async pauseSession(): Promise<ToolResponse> {
-    const response: ToolResponse = await this.makeRequest('/session/pause', 'POST');
+    // Include currentSessionId to pause the correct session
+    const response: ToolResponse = await this.makeRequest('/session/pause', 'POST', {
+      session_id: this.currentSessionId,
+    });
     if (response.success) {
       this.currentSessionId = null; // Clear session ID when paused
     }
@@ -159,7 +173,19 @@ export class CloudClient {
   }
 
   async addSessionPath(args: AddSessionPathArgs): Promise<ToolResponse> {
-    return this.makeRequest('/session/add-path', 'POST', args);
+    // Include currentSessionId to ensure we add path to the resumed session
+    return this.makeRequest('/session/add-path', 'POST', {
+      ...args,
+      session_id: this.currentSessionId,
+    });
+  }
+
+  async removeSessionPath(args: RemoveSessionPathArgs): Promise<ToolResponse> {
+    // Include currentSessionId to ensure we remove path from the resumed session
+    return this.makeRequest('/session/remove-path', 'POST', {
+      ...args,
+      session_id: this.currentSessionId,
+    });
   }
 
   // ====================

@@ -52,10 +52,23 @@ const options = program.opts();
 // Mode Detection
 // ====================
 
-// Check for API key from CLI flag or environment variable
-const apiKey = options.apiKey || process.env.SAVECONTEXT_API_KEY;
+// Load saved configuration and credentials
+const savedConfig = loadConfig();
+const savedCreds = loadCredentials();
+
+// Check for API key from CLI flag, environment variable, or saved credentials
+const apiKey = options.apiKey || process.env.SAVECONTEXT_API_KEY || savedCreds?.apiKey;
+
+// Determine mode: use cloud only if we have valid credentials
+// If user configured cloud mode but has no credentials, fall back to local
 const mode = apiKey ? 'cloud' : 'local';
-const baseUrl = process.env.SAVECONTEXT_BASE_URL || 'https://mcp.savecontext.dev';
+const baseUrl = process.env.SAVECONTEXT_BASE_URL || getCloudMcpUrl();
+
+// Warn if cloud mode was configured but credentials are missing
+if (savedConfig.mode === 'cloud' && !apiKey) {
+  console.error('[SaveContext] Warning: Cloud mode configured but no API key found.');
+  console.error('[SaveContext] Run "savecontext-auth login" to authenticate, falling back to local mode.');
+}
 
 console.error(`[SaveContext] Mode: ${mode}`);
 if (mode === 'cloud') {
@@ -96,6 +109,7 @@ import {
   ContextItemUpdate,
   TaskUpdate,
 } from './types/index.js';
+import { loadConfig, loadCredentials, getCloudMcpUrl } from './utils/config.js';
 
 // Initialize backend (local or cloud)
 let db: DatabaseManager | null = null;
@@ -2073,6 +2087,76 @@ async function handleSessionAddPath(args: any) {
   }
 }
 
+/**
+ * Remove a project path from the current session
+ * Cannot remove the last path - sessions must have at least one path
+ */
+async function handleSessionRemovePath(args: unknown) {
+  try {
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.removeSessionPath(args as { project_path: string });
+    }
+
+    // Local mode: use SQLite
+    const sessionId = ensureSession();
+
+    // Validate project_path is provided
+    const typedArgs = args as { project_path?: string };
+    if (!typedArgs?.project_path) {
+      throw new ValidationError('project_path is required');
+    }
+
+    const projectPath = normalizeProjectPath(typedArgs.project_path);
+
+    const session = db!.getSession(sessionId);
+    if (!session) {
+      throw new SessionError('Current session not found');
+    }
+
+    // Get current paths
+    const existingPaths = getDb().getSessionPaths(sessionId);
+
+    // Check if path exists in session
+    if (!existingPaths.includes(projectPath)) {
+      return success(
+        {
+          session_id: sessionId,
+          session_name: session.name,
+          project_path: projectPath,
+          all_paths: existingPaths,
+          not_found: true,
+        },
+        `Path '${projectPath}' not found in session '${session.name}'`
+      );
+    }
+
+    // removeProjectPath throws if it's the last path
+    const removed = getDb().removeProjectPath(sessionId, projectPath);
+    if (removed) {
+      const updatedPaths = getDb().getSessionPaths(sessionId);
+      return success(
+        {
+          session_id: sessionId,
+          session_name: session.name,
+          removed_path: projectPath,
+          remaining_paths: updatedPaths,
+          path_count: updatedPaths.length,
+        },
+        `Removed path '${projectPath}' from session '${session.name}' (${updatedPaths.length} paths remaining)`
+      );
+    } else {
+      throw new DatabaseError('Failed to remove path from session');
+    }
+  } catch (err) {
+    // Handle the specific error for last path removal
+    if (err instanceof DatabaseError && err.message.includes('last project path')) {
+      return error('Cannot remove the last path from a session. Sessions must have at least one project path.');
+    }
+    return error('Failed to remove path from session', err);
+  }
+}
+
 // ====================
 // MCP Server Handlers
 // ====================
@@ -2850,6 +2934,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
         },
       },
+      {
+        name: 'context_session_remove_path',
+        description: 'Remove a project path from the current session. Cannot remove the last path (sessions must have at least one path). Use to clean up paths that are no longer needed.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            project_path: {
+              type: 'string',
+              description: 'Project path to remove from the session',
+            },
+          },
+          required: ['project_path'],
+        },
+      },
     ],
   };
 });
@@ -2937,6 +3035,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: JSON.stringify(await handleSessionDelete(args), null, 2) }] };
       case 'context_session_add_path':
         return { content: [{ type: 'text', text: JSON.stringify(await handleSessionAddPath(args), null, 2) }] };
+      case 'context_session_remove_path':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleSessionRemovePath(args), null, 2) }] };
       default:
         return {
           content: [{ type: 'text', text: JSON.stringify(error(`Unknown tool: ${name}`)) }],
