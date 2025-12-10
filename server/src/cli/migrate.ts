@@ -17,10 +17,15 @@ import {
   CheckpointItemRow,
   CheckpointRow
 } from '../types/index.js';
+import { loadConfig, saveConfig } from '../utils/config.js';
 
 const API_URL = 'https://mcp.savecontext.dev/migrate';
 
-export async function runMigration(apiKey: string): Promise<void> {
+export interface MigrationOptions {
+  cleanup?: boolean;  // Archive local DB after migration
+}
+
+export async function runMigration(apiKey: string, options: MigrationOptions = {}): Promise<void> {
   console.log('\n=== SaveContext Cloud Migration ===\n');
 
   // Find database
@@ -145,23 +150,68 @@ export async function runMigration(apiKey: string): Promise<void> {
     console.log('  Checkpoints:', result.migrated?.checkpoints || 0);
     console.log('  Project Memory:', result.migrated?.projectMemory || 0);
     console.log('  Tasks:', result.migrated?.tasks || 0);
+
+    // Mark migration complete in config
+    const config = loadConfig();
+    config.migrated = true;
+    config.migratedAt = new Date().toISOString();
+    saveConfig(config);
+
+    // Handle cleanup if requested
+    if (options.cleanup) {
+      db.close();
+      const archivedPath = dbPath + '.migrated';
+      fs.renameSync(dbPath, archivedPath);
+      console.log(`\nLocal database archived to: ${archivedPath}`);
+    }
+
     console.log('\nYour local data has been migrated to SaveContext Cloud!');
-    console.log('You can now use cloud mode by setting SAVECONTEXT_API_KEY.\n');
 
   } finally {
-    db.close();
+    // Only close if not already closed by cleanup
+    if (!options.cleanup) {
+      db.close();
+    }
   }
 }
 
 // Run if called directly
 if (process.argv[1].includes('migrate')) {
-  const apiKey = process.argv[2] || process.env.SAVECONTEXT_API_KEY;
+  const args = process.argv.slice(2);
+  const cleanup = args.includes('--cleanup');
+  const markDone = args.includes('--mark-done');
+
+  // Handle --mark-done flag (for users who already migrated before tracking)
+  if (markDone) {
+    const config = loadConfig();
+    config.migrated = true;
+    config.migratedAt = new Date().toISOString();
+    saveConfig(config);
+
+    // Archive the local DB to mark it as migrated
+    const dbPath = path.join(os.homedir(), '.savecontext', 'data', 'savecontext.db');
+    if (fs.existsSync(dbPath)) {
+      const archivedPath = dbPath + '.migrated';
+      fs.renameSync(dbPath, archivedPath);
+      console.log('\n✔ Migration marked as complete.');
+      console.log(`  Local database archived to: ${archivedPath}\n`);
+    } else {
+      console.log('\n✔ Migration marked as complete. You won\'t see the prompt again.\n');
+    }
+    process.exit(0);
+  }
+
+  const apiKey = args.find(arg => !arg.startsWith('--')) || process.env.SAVECONTEXT_API_KEY;
+
   if (!apiKey) {
-    console.error('Usage: savecontext-migrate <api-key>');
+    console.error('Usage: savecontext-migrate [api-key] [--cleanup] [--mark-done]');
     console.error('Or set SAVECONTEXT_API_KEY environment variable');
+    console.error('\nOptions:');
+    console.error('  --cleanup    Archive local database after successful migration');
+    console.error('  --mark-done  Mark migration as complete without migrating (if already done)');
     process.exit(1);
   }
-  runMigration(apiKey).catch((err) => {
+  runMigration(apiKey, { cleanup }).catch((err) => {
     console.error('Migration error:', err.message);
     process.exit(1);
   });
