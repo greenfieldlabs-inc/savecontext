@@ -18,10 +18,15 @@ import {
   loadCredentials,
   deleteCredentials,
   isAuthenticated,
+  hasApiKey,
   getCloudMcpUrl,
   saveConfig,
   loadConfig,
   formatProvider,
+  saveSession,
+  loadSession,
+  deleteSession,
+  hasLocalData,
 } from '../utils/config.js';
 
 // Read version from package.json (single source of truth)
@@ -49,9 +54,12 @@ program
     const useClipboard = options.clipboard !== false;
     const shouldSave = options.save !== false;
     const redactKey = options.redact === true;
-    if (isAuthenticated()) {
+    // Only block if user has a stored API key (not just a session)
+    // This allows re-running login after --no-save to persist the key
+    if (hasApiKey()) {
       const creds = loadCredentials();
-      const keyPrefix = creds?.apiKey?.slice(0, 10) || 'unknown';
+      const envKey = process.env.SAVECONTEXT_API_KEY;
+      const keyPrefix = envKey?.slice(0, 10) || creds?.apiKey?.slice(0, 10) || 'unknown';
       if (options.json) {
         console.log(JSON.stringify({ error: 'already_authenticated', keyPrefix }));
       } else {
@@ -108,12 +116,20 @@ program
     pollSpinner?.stop();
 
     if (result.success) {
-      // Update config to cloud mode (only if saving credentials)
-      if (shouldSave) {
-        const config = loadConfig();
-        config.mode = 'cloud';
-        saveConfig(config);
-      }
+      // Always save session metadata (identity)
+      saveSession({
+        version: 1,
+        userId: result.userId || '',
+        email: result.email,
+        provider: result.provider,
+        authenticatedAt: new Date().toISOString(),
+        hasStoredKey: shouldSave,
+      });
+
+      // Set cloud mode on successful authentication
+      const config = loadConfig();
+      config.mode = 'cloud';
+      saveConfig(config);
 
       // Display key (redacted if --redact flag)
       const displayKey = redactKey ? '<saved to ~/.savecontext/credentials.json>' : result.apiKey;
@@ -224,6 +240,22 @@ program
         console.log(chalk.green('✔ API key saved to ~/.savecontext/credentials.json'));
       }
       console.log(chalk.dim(`Manage keys → https://savecontext.dev/sign-in\n`));
+
+      // Check for local data and prompt migration (skip if already migrated)
+      if (hasLocalData() && !config.migrated && !quiet) {
+        console.log(boxen(
+          `${chalk.yellow('Local data detected!')}\n\n` +
+          `You have existing sessions in your local database.\n` +
+          `Run ${chalk.cyan('savecontext-migrate')} to move them to the cloud.\n\n` +
+          `${chalk.dim('Already migrated? Run')} ${chalk.cyan('savecontext-migrate --mark-done')} ${chalk.dim('to dismiss.')}`,
+          {
+            padding: 1,
+            margin: { top: 0, bottom: 1, left: 0, right: 0 },
+            borderStyle: 'round',
+            borderColor: 'yellow',
+          }
+        ));
+      }
     } else {
       if (options.json) {
         console.log(JSON.stringify({ success: false, error: result.error }));
@@ -248,29 +280,30 @@ program
 
     const spinner = ora('Logging out...').start();
 
-    // Get creds before deleting for display
+    // Get session/creds before deleting for display
+    const session = loadSession();
     const creds = loadCredentials();
-    const deleted = deleteCredentials();
+    const email = session?.email || creds?.email;
+    const provider = session?.provider || creds?.provider;
 
-    if (deleted) {
-      // Revert to local mode
-      const config = loadConfig();
-      config.mode = 'local';
-      saveConfig(config);
+    // Delete both session and credentials
+    deleteSession();
+    deleteCredentials();
 
-      spinner.succeed(chalk.green('Logged out successfully'));
+    // Revert to local mode
+    const config = loadConfig();
+    config.mode = 'local';
+    saveConfig(config);
 
-      console.log('');
-      if (creds?.email) {
-        console.log(`${chalk.dim('Account:')} ${creds.email} ${chalk.dim(`(${formatProvider(creds.provider)})`)}`);
-      }
-      console.log(`${chalk.dim('Mode:')} local`);
-      console.log('');
-      console.log(chalk.dim('Your API key remains valid. Delete it at → https://savecontext.dev/sign-in\n'));
-    } else {
-      spinner.fail(chalk.red('Failed to log out'));
-      process.exit(1);
+    spinner.succeed(chalk.green('Logged out successfully'));
+
+    console.log('');
+    if (email) {
+      console.log(`${chalk.dim('Account:')} ${email} ${chalk.dim(`(${formatProvider(provider)})`)}`);
     }
+    console.log(`${chalk.dim('Mode:')} local`);
+    console.log('');
+    console.log(chalk.dim('Your API key remains valid. Delete it at → https://savecontext.dev/sign-in\n'));
   });
 
 program
@@ -278,17 +311,42 @@ program
   .description('Show current authentication status')
   .action(() => {
     const config = loadConfig();
+    const session = loadSession();
     const creds = loadCredentials();
+    const envKey = process.env.SAVECONTEXT_API_KEY;
 
     console.log(chalk.bold('\nSaveContext Status\n'));
 
-    if (creds) {
+    // Determine auth state
+    const hasEnvKey = !!envKey;
+    const hasStoredKey = !!creds?.apiKey;
+    const hasSession = !!session;
+    const isAuthed = hasEnvKey || hasStoredKey || hasSession;
+
+    if (isAuthed) {
+      // Get account info from best available source
+      const email = session?.email || creds?.email;
+      const provider = session?.provider || creds?.provider;
+      const since = session?.authenticatedAt || creds?.createdAt;
+
       console.log(`${chalk.green('●')} ${chalk.green.bold('Authenticated')}`);
-      if (creds.email) {
-        console.log(`  ${chalk.dim('Account:')}  ${creds.email} ${chalk.dim(`(${formatProvider(creds.provider)})`)}`);
+      if (email) {
+        console.log(`  ${chalk.dim('Account:')}  ${email} ${chalk.dim(`(${formatProvider(provider)})`)}`);
       }
-      console.log(`  ${chalk.dim('API Key:')}  ${creds.apiKey.slice(0, 10)}...`);
-      console.log(`  ${chalk.dim('Since:')}    ${new Date(creds.createdAt).toLocaleString()}`);
+
+      // Show key status
+      if (hasEnvKey) {
+        console.log(`  ${chalk.dim('API Key:')}  ${envKey.slice(0, 10)}... ${chalk.cyan('(env)')}`);
+      } else if (hasStoredKey) {
+        console.log(`  ${chalk.dim('API Key:')}  ${creds.apiKey.slice(0, 10)}...`);
+      } else {
+        console.log(`  ${chalk.dim('API Key:')}  ${chalk.yellow('not stored')}`);
+        console.log(chalk.dim('             Set SAVECONTEXT_API_KEY or run "savecontext-auth login" to save key.'));
+      }
+
+      if (since) {
+        console.log(`  ${chalk.dim('Since:')}    ${new Date(since).toLocaleString()}`);
+      }
     } else {
       console.log(`${chalk.red('●')} ${chalk.dim('Not authenticated')}`);
       console.log(chalk.dim('  Run "savecontext-auth login" to authenticate.'));
@@ -304,20 +362,34 @@ program
   .command('whoami')
   .description('Show current user info')
   .action(() => {
+    const session = loadSession();
     const creds = loadCredentials();
+    const envKey = process.env.SAVECONTEXT_API_KEY;
 
-    if (!creds) {
+    if (!session && !creds && !envKey) {
       console.log(chalk.red('\nNot logged in.'));
       console.log(chalk.dim('Run "savecontext-auth login" to authenticate.\n'));
       process.exit(1);
     }
 
+    const email = session?.email || creds?.email;
+    const provider = session?.provider || creds?.provider;
+    const since = session?.authenticatedAt || creds?.createdAt;
+
     console.log('');
-    if (creds.email) {
-      console.log(`${chalk.bold(creds.email)} ${chalk.dim(`(${formatProvider(creds.provider)})`)}`);
+    if (email) {
+      console.log(`${chalk.bold(email)} ${chalk.dim(`(${formatProvider(provider)})`)}`);
     }
-    console.log(`${chalk.dim('API Key:')} ${creds.apiKey.slice(0, 10)}...`);
-    console.log(`${chalk.dim('Since:')} ${new Date(creds.createdAt).toLocaleString()}`);
+    if (envKey) {
+      console.log(`${chalk.dim('API Key:')} ${envKey.slice(0, 10)}... ${chalk.cyan('(env)')}`);
+    } else if (creds?.apiKey) {
+      console.log(`${chalk.dim('API Key:')} ${creds.apiKey.slice(0, 10)}...`);
+    } else {
+      console.log(`${chalk.dim('API Key:')} ${chalk.yellow('not stored')}`);
+    }
+    if (since) {
+      console.log(`${chalk.dim('Since:')} ${new Date(since).toLocaleString()}`);
+    }
     console.log('');
   });
 

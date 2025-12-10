@@ -62,10 +62,14 @@ export interface ListSessionsArgs {
 }
 
 export interface AddSessionPathArgs {
+  session_id: string;
+  session_name: string;
   project_path?: string;
 }
 
 export interface RemoveSessionPathArgs {
+  session_id: string;
+  session_name: string;
   project_path: string;  // Required - must specify which path to remove
 }
 
@@ -544,6 +548,8 @@ export type ConfigMode = 'local' | 'cloud';
 export interface SaveContextLocalConfig {
   mode: ConfigMode;
   cloudMcpUrl?: string;
+  migrated?: boolean;  // True after local data migrated to cloud
+  migratedAt?: string;  // ISO 8601 timestamp of migration
 }
 
 export interface SaveContextCredentials {
@@ -551,6 +557,20 @@ export interface SaveContextCredentials {
   email?: string;
   provider?: string;  // OAuth provider (google, github)
   createdAt: string;  // ISO 8601 timestamp
+}
+
+/**
+ * Session metadata - stored separately from API key
+ * Persists authentication identity even when --no-save is used
+ */
+export interface SaveContextSession {
+  version: 1;
+  userId: string;
+  email?: string;
+  provider?: string;  // OAuth provider (google, github)
+  authenticatedAt: string;  // ISO 8601 timestamp
+  expiresAt?: string;  // ISO 8601 timestamp (optional, for future use)
+  hasStoredKey: boolean;  // Whether API key is saved to credentials.json
 }
 
 // ====================
