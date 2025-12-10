@@ -674,6 +674,8 @@ async function handleMemorySave(args: any) {
 
     const result = getDb().saveMemory(projectPath, args.key, args.value, category);
 
+    await updateAgentActivity();
+
     return success(
       {
         key: result.key,
@@ -783,6 +785,8 @@ async function handleMemoryDelete(args: any) {
       );
     }
 
+    await updateAgentActivity();
+
     return success(
       { deleted: true, key: args.key },
       `Deleted memory '${args.key}'`
@@ -810,6 +814,8 @@ async function handleTaskCreate(args: any) {
     }
 
     const result = getDb().createTask(projectPath, args.title, args.description);
+
+    await updateAgentActivity();
 
     return success(
       {
@@ -874,6 +880,8 @@ async function handleTaskUpdate(args: any) {
     }
 
     const updated = getDb().updateTask(args.id, updates);
+
+    await updateAgentActivity();
 
     return success(
       {
@@ -956,6 +964,8 @@ async function handleTaskComplete(args: any) {
     }
 
     const completed = getDb().completeTask(args.id);
+
+    await updateAgentActivity();
 
     return success(
       {
@@ -1172,6 +1182,8 @@ async function handlePrepareCompaction() {
       tags: '[]',
       size: summaryValue.length,
     });
+
+    await updateAgentActivity();
 
     return success(
       summary,
@@ -1708,6 +1720,8 @@ async function handleSessionRename(args: any) {
       .prepare('UPDATE sessions SET name = ?, updated_at = ? WHERE id = ?')
       .run(trimmedName, Date.now(), sessionId);
 
+    await updateAgentActivity();
+
     return success(
       { session_id: sessionId, old_name, new_name: trimmedName },
       `Session renamed from '${old_name}' to '${trimmedName}'`
@@ -1961,6 +1975,9 @@ async function handleSessionSwitch(args: any) {
     getDb().resumeSession(session_id);
     currentSessionId = session_id;
 
+    // Update agent-to-session mapping so this agent now points to the new session
+    await updateAgentActivity();
+
     const stats = getDb().getSessionStats(session_id);
 
     return success(
@@ -2027,27 +2044,42 @@ async function handleSessionDelete(args: any) {
 }
 
 /**
- * Add a project path to the current session
+ * Add a project path to a session
  * Enables sessions to span multiple related directories (e.g., monorepo folders)
  */
 async function handleSessionAddPath(args: any) {
   try {
+    // Validate required fields
+    const typedArgs = args as { session_id?: string; session_name?: string; project_path?: string };
+
+    if (!typedArgs?.session_id) {
+      throw new ValidationError('session_id is required');
+    }
+    if (!typedArgs?.session_name) {
+      throw new ValidationError('session_name is required');
+    }
+
     // Cloud mode: proxy to API
     if (mode === 'cloud') {
       return await cloud!.addSessionPath(args);
     }
 
     // Local mode: use SQLite
-    const sessionId = ensureSession();
+    const sessionId = typedArgs.session_id;
 
     // Get project path (default to current directory if not provided)
-    const projectPath = args?.project_path
-      ? normalizeProjectPath(args.project_path)
+    const projectPath = typedArgs.project_path
+      ? normalizeProjectPath(typedArgs.project_path)
       : normalizeProjectPath(getCurrentProjectPath());
 
     const session = db!.getSession(sessionId);
     if (!session) {
-      throw new SessionError('Current session not found');
+      throw new SessionError(`Session '${sessionId}' not found`);
+    }
+
+    // Verify session name matches
+    if (session.name !== typedArgs.session_name) {
+      throw new ValidationError(`Session name mismatch: expected '${session.name}' but got '${typedArgs.session_name}'`);
     }
 
     // Check if path already exists
@@ -2069,6 +2101,10 @@ async function handleSessionAddPath(args: any) {
     const added = getDb().addProjectPath(sessionId, projectPath);
     if (added) {
       const updatedPaths = getDb().getSessionPaths(sessionId);
+
+      // Update agent activity so the status pill refreshes
+      await updateAgentActivity();
+
       return success(
         {
           session_id: sessionId,
@@ -2088,30 +2124,45 @@ async function handleSessionAddPath(args: any) {
 }
 
 /**
- * Remove a project path from the current session
+ * Remove a project path from a session
  * Cannot remove the last path - sessions must have at least one path
  */
 async function handleSessionRemovePath(args: unknown) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.removeSessionPath(args as { project_path: string });
-    }
+    // Validate required fields
+    const typedArgs = args as { session_id?: string; session_name?: string; project_path?: string };
 
-    // Local mode: use SQLite
-    const sessionId = ensureSession();
-
-    // Validate project_path is provided
-    const typedArgs = args as { project_path?: string };
     if (!typedArgs?.project_path) {
       throw new ValidationError('project_path is required');
     }
+    if (!typedArgs?.session_id) {
+      throw new ValidationError('session_id is required');
+    }
+    if (!typedArgs?.session_name) {
+      throw new ValidationError('session_name is required');
+    }
 
+    // Cloud mode: proxy to API
+    if (mode === 'cloud') {
+      return await cloud!.removeSessionPath({
+        session_id: typedArgs.session_id,
+        session_name: typedArgs.session_name,
+        project_path: typedArgs.project_path,
+      });
+    }
+
+    // Local mode: use SQLite
+    const sessionId = typedArgs.session_id;
     const projectPath = normalizeProjectPath(typedArgs.project_path);
 
     const session = db!.getSession(sessionId);
     if (!session) {
-      throw new SessionError('Current session not found');
+      throw new SessionError(`Session '${sessionId}' not found`);
+    }
+
+    // Verify session name matches
+    if (session.name !== typedArgs.session_name) {
+      throw new ValidationError(`Session name mismatch: expected '${session.name}' but got '${typedArgs.session_name}'`);
     }
 
     // Get current paths
@@ -2135,6 +2186,9 @@ async function handleSessionRemovePath(args: unknown) {
     const removed = getDb().removeProjectPath(sessionId, projectPath);
     if (removed) {
       const updatedPaths = getDb().getSessionPaths(sessionId);
+
+      await updateAgentActivity();
+
       return success(
         {
           session_id: sessionId,
@@ -2246,7 +2300,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             description: {
               type: 'string',
-              description: 'Optional session description',
+              description: 'Session description',
             },
             project_path: {
               type: 'string',
@@ -2261,7 +2315,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: 'Force create a new session instead of resuming existing one. Use when you want to start fresh.',
             },
           },
-          required: ['name'],
+          required: ['name', 'description'],
         },
       },
       {
@@ -2923,7 +2977,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_session_add_path',
-        description: 'Add a project path to the current session. Enables sessions to span multiple related directories (e.g., monorepo folders like /frontend and /backend, or /app and /dashboard). Auto-adds current path if not specified.',
+        description: 'Add a project path to a session. Enables sessions to span multiple related directories (e.g., monorepo folders like /frontend and /backend, or /app and /dashboard). Requires session_id and session_name.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2931,12 +2985,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: 'Project path to add (defaults to current working directory)',
             },
+            session_id: {
+              type: 'string',
+              description: 'ID of the session to add path to',
+            },
+            session_name: {
+              type: 'string',
+              description: 'Name of the session (for verification and display)',
+            },
           },
+          required: ['session_id', 'session_name'],
         },
       },
       {
         name: 'context_session_remove_path',
-        description: 'Remove a project path from the current session. Cannot remove the last path (sessions must have at least one path). Use to clean up paths that are no longer needed.',
+        description: 'Remove a project path from a session. Cannot remove the last path (sessions must have at least one path). Use to clean up paths that are no longer needed. Requires session_id and session_name.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2944,8 +3007,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               description: 'Project path to remove from the session',
             },
+            session_id: {
+              type: 'string',
+              description: 'ID of the session to remove path from',
+            },
+            session_name: {
+              type: 'string',
+              description: 'Name of the session (for verification and display)',
+            },
           },
-          required: ['project_path'],
+          required: ['project_path', 'session_id', 'session_name'],
         },
       },
     ],
