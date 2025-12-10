@@ -44,12 +44,12 @@ export function validateCreateSession(args: any): CreateSessionArgs {
     throw new ValidationError(`name must be ${SESSION_NAME_MAX_LENGTH} characters or less`);
   }
 
-  // Description is optional
-  if (description !== undefined && typeof description !== 'string') {
-    throw new ValidationError('description must be a string');
+  // Description is required
+  if (!description || typeof description !== 'string' || description.trim().length === 0) {
+    throw new ValidationError('description is required and must be a non-empty string');
   }
 
-  if (description && description.length > 1000) {
+  if (description.length > 1000) {
     throw new ValidationError('description must be 1000 characters or less');
   }
 
