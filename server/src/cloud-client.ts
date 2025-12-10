@@ -173,19 +173,13 @@ export class CloudClient {
   }
 
   async addSessionPath(args: AddSessionPathArgs): Promise<ToolResponse> {
-    // Include currentSessionId to ensure we add path to the resumed session
-    return this.makeRequest('/session/add-path', 'POST', {
-      ...args,
-      session_id: this.currentSessionId,
-    });
+    // session_id and session_name are now required in args
+    return this.makeRequest('/session/add-path', 'POST', args);
   }
 
   async removeSessionPath(args: RemoveSessionPathArgs): Promise<ToolResponse> {
-    // Include currentSessionId to ensure we remove path from the resumed session
-    return this.makeRequest('/session/remove-path', 'POST', {
-      ...args,
-      session_id: this.currentSessionId,
-    });
+    // session_id and session_name are now required in args
+    return this.makeRequest('/session/remove-path', 'POST', args);
   }
 
   // ====================
