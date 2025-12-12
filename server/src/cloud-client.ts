@@ -14,6 +14,8 @@ import {
   ResumeSessionArgs,
   SwitchSessionArgs,
   DeleteSessionArgs,
+  EndSessionArgs,
+  PauseSessionArgs,
   RenameSessionArgs,
   ListSessionsArgs,
   AddSessionPathArgs,
@@ -62,6 +64,13 @@ export class CloudClient {
       gitBranch,
       provider,
     };
+  }
+
+  /**
+   * Get the current session ID (for CLI tooling that needs to display it)
+   */
+  getCurrentSessionId(): string | null {
+    return this.currentSessionId;
   }
 
   private async makeRequest<T = unknown>(endpoint: string, method: string = 'GET', body?: unknown): Promise<T> {
@@ -123,10 +132,10 @@ export class CloudClient {
   }
 
   async renameSession(args: RenameSessionArgs): Promise<ToolResponse> {
-    // Include currentSessionId to rename the correct session
+    // Use explicit session_id if provided (for CLI), otherwise fall back to current session
     return this.makeRequest('/session/rename', 'POST', {
       ...args,
-      session_id: this.currentSessionId,
+      session_id: args.session_id || this.currentSessionId,
     });
   }
 
@@ -134,20 +143,25 @@ export class CloudClient {
     return this.makeRequest('/session/list', 'POST', args);
   }
 
-  async endSession(): Promise<ToolResponse> {
-    // Include currentSessionId to end the correct session
+  async endSession(args: EndSessionArgs = {}): Promise<ToolResponse> {
+    // Use explicit session_id if provided (for CLI), otherwise fall back to current session
+    const sessionId = args.session_id || this.currentSessionId;
     return this.makeRequest('/session/end', 'POST', {
-      session_id: this.currentSessionId,
+      ...args,
+      session_id: sessionId,
     });
   }
 
-  async pauseSession(): Promise<ToolResponse> {
-    // Include currentSessionId to pause the correct session
+  async pauseSession(args: PauseSessionArgs = {}): Promise<ToolResponse> {
+    // Use explicit session_id if provided (for CLI), otherwise fall back to current session
+    const sessionId = args.session_id || this.currentSessionId;
     const response: ToolResponse = await this.makeRequest('/session/pause', 'POST', {
-      session_id: this.currentSessionId,
+      ...args,
+      session_id: sessionId,
     });
-    if (response.success) {
-      this.currentSessionId = null; // Clear session ID when paused
+    // Only clear internal state if pausing own session
+    if (response.success && !args.session_id) {
+      this.currentSessionId = null;
     }
     return response;
   }
@@ -318,5 +332,51 @@ export class CloudClient {
 
   async getCheckpoint(args: GetCheckpointArgs): Promise<ToolResponse> {
     return this.makeRequest('/checkpoint/get', 'POST', args);
+  }
+
+  // ====================
+  // Project Methods (User Operations - CLI only)
+  // ====================
+
+  async listProjects(args?: { limit?: number; include_session_count?: boolean }): Promise<ToolResponse> {
+    return this.makeRequest('/project/list', 'POST', args || {});
+  }
+
+  async renameProject(args: {
+    project_id: string;
+    current_name: string;
+    new_name?: string;
+    description?: string;
+  }): Promise<ToolResponse> {
+    return this.makeRequest('/project/rename', 'POST', args);
+  }
+
+  async deleteProject(args: {
+    project_id: string;
+    project_name: string;
+    force?: boolean;
+  }): Promise<ToolResponse> {
+    return this.makeRequest('/project/delete', 'POST', args);
+  }
+
+  async mergeProjects(args: {
+    source_project_id: string;
+    source_project_name: string;
+    target_project_id: string;
+    target_project_name: string;
+    delete_source?: boolean;
+    confirm?: boolean;
+  }): Promise<ToolResponse> {
+    return this.makeRequest('/project/merge', 'POST', args);
+  }
+
+  async moveSession(args: {
+    session_id: string;
+    session_name: string;
+    to_project_id?: string;
+    from_project_id?: string;
+    action?: 'move' | 'add' | 'remove';
+  }): Promise<ToolResponse> {
+    return this.makeRequest('/session/move', 'POST', args);
   }
 }

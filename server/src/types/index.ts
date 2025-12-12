@@ -49,9 +49,20 @@ export interface DeleteSessionArgs {
   session_name: string;
 }
 
+export interface EndSessionArgs {
+  session_id?: string; // Optional override for CLI targeting specific sessions
+  session_name?: string;
+}
+
+export interface PauseSessionArgs {
+  session_id?: string; // Optional override for CLI targeting specific sessions
+  session_name?: string;
+}
+
 export interface RenameSessionArgs {
   current_name: string;
   new_name: string;
+  session_id?: string; // Optional override for CLI targeting specific sessions
 }
 
 export interface ListSessionsArgs {

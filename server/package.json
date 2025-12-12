@@ -1,6 +1,6 @@
 {
   "name": "@savecontext/mcp",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "SaveContext MCP Server - Never lose context in your AI coding sessions",
   "main": "dist/index.js",
   "type": "module",
@@ -8,11 +8,13 @@
     "savecontext": "./dist/index.js",
     "savecontext-auth": "./dist/cli/auth.js",
     "savecontext-migrate": "./dist/cli/migrate.js",
+    "savecontext-sessions": "./dist/cli/sessions.js",
+    "savecontext-projects": "./dist/cli/projects.js",
     "mcp": "./dist/index.js",
     "migrate": "./dist/cli/migrate.js"
   },
   "scripts": {
-    "build": "tsc && cp src/database/schema.sql dist/database/ && chmod +x dist/index.js dist/cli/migrate.js dist/cli/auth.js",
+    "build": "tsc && cp src/database/schema.sql dist/database/ && chmod +x dist/index.js dist/cli/migrate.js dist/cli/auth.js dist/cli/sessions.js dist/cli/projects.js",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "serve": "tsx src/index.ts",
