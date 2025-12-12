@@ -56,7 +56,6 @@ function getClient(): CloudClient {
     console.error(chalk.dim('Run "savecontext-auth login" first.\n'));
     process.exit(1);
   }
-  // Use API URL (not MCP URL) - CloudClient makes direct REST API calls
   return new CloudClient(apiKey, getCloudApiUrl());
 }
 

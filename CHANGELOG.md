@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.13] - 2025-12-12
+
+### Added
+- **`savecontext-sessions` CLI** - User-focused session management
+  - `savecontext-sessions list` - List sessions with search and filtering
+  - `savecontext-sessions show` - Display session details
+  - `savecontext-sessions rename` - Rename sessions with interactive picker
+  - `savecontext-sessions delete` - Delete sessions with confirmation safeguards
+  - `savecontext-sessions archive` - Mark sessions as completed (soft close)
+  - `savecontext-sessions add-path` - Add project paths to sessions
+  - `savecontext-sessions remove-path` - Remove project paths from sessions
+  - Requires cloud authentication (`savecontext-auth login`)
+- **`savecontext-projects` CLI** - User-focused project management
+  - `savecontext-projects list` - List projects with session counts
+  - `savecontext-projects rename` - Rename projects
+  - `savecontext-projects delete` - Delete projects (sessions unlinked, not deleted)
+  - `savecontext-projects merge` - Merge two projects into one
+  - Requires cloud authentication (`savecontext-auth login`)
+- **Session search parameter** - `context_list_sessions` now supports `search` parameter
+  - Case-insensitive text search on session name and description
+  - Faster than listing all sessions when looking for specific work
+- **Semantic search enhancements** (Cloud only)
+  - `search_all_sessions` parameter for cross-session semantic search
+  - Default similarity threshold lowered to 0.5 for better recall
+
+### Changed
+- **MCP tools reduced from 38 to 35** - User operations separated from agent tools
+  - Removed: `context_session_move`, `project_rename`, `project_delete`
+  - These operations are now CLI-only via `savecontext-sessions` and `savecontext-projects`
+  - Rationale: Agents shouldn't reorganize user's project structure without explicit CLI action
+- **CloudClient methods updated** - Session operations now accept explicit `session_id` for CLI use
+  - `endSession`, `pauseSession`, `renameSession` can target specific sessions
+  - Enables CLI to operate on any session, not just the "current" one
+
+### Fixed
+- **Session path operations** - Now require `session_id` and `session_name` for verification
+- **Activity tracking** - Session activity timestamps update correctly across all operations
+
 ## [0.1.12] - 2025-11-30
 
 ### Added
