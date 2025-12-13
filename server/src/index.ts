@@ -75,6 +75,13 @@ if (mode === 'cloud') {
   console.error(`[SaveContext] Cloud API: ${baseUrl}`);
 }
 
+// Show cloud notice for local mode users (once per 24h)
+if (mode === 'local' && shouldShowCloudPrompt()) {
+  console.error('[SaveContext] Unlock cross-device sync, semantic search, and dashboard.');
+  console.error('[SaveContext] Run: savecontext-auth login');
+  markCloudPromptShown();
+}
+
 import { DatabaseManager } from './database/index.js';
 import { CloudClient } from './cloud-client.js';
 import { deriveDefaultChannel, normalizeChannel } from './utils/channels.js';
@@ -109,7 +116,7 @@ import {
   ContextItemUpdate,
   TaskUpdate,
 } from './types/index.js';
-import { loadConfig, loadCredentials, getCloudMcpUrl } from './utils/config.js';
+import { loadConfig, loadCredentials, getCloudMcpUrl, shouldShowCloudPrompt, markCloudPromptShown } from './utils/config.js';
 
 // Initialize backend (local or cloud)
 let db: DatabaseManager | null = null;

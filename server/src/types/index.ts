@@ -585,6 +585,19 @@ export interface SaveContextSession {
   hasStoredKey: boolean;  // Whether API key is saved to credentials.json
 }
 
+/**
+ * Runtime state - notices, prompts, preferences
+ * Stored in ~/.savecontext/state.json
+ */
+export interface SaveContextState {
+  schemaVersion: number;
+  notices: {
+    cloudPrompt?: {
+      lastShownAt: string;  // ISO 8601 timestamp
+    };
+  };
+}
+
 // ====================
 // Device Auth Types (RFC 8628)
 // ====================

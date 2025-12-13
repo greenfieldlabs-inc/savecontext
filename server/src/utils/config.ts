@@ -6,13 +6,14 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import type { SaveContextLocalConfig, SaveContextCredentials, SaveContextSession } from '../types/index.js';
+import type { SaveContextLocalConfig, SaveContextCredentials, SaveContextSession, SaveContextState } from '../types/index.js';
 
 // Configuration directory and file paths
 const CONFIG_DIR = join(homedir(), '.savecontext');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 const CREDENTIALS_FILE = join(CONFIG_DIR, 'credentials.json');
 const SESSION_FILE = join(CONFIG_DIR, 'session.json');
+const STATE_FILE = join(CONFIG_DIR, 'state.json');
 const LOCAL_DB_FILE = join(CONFIG_DIR, 'data', 'savecontext.db');
 
 // Cloud URL settings
@@ -208,4 +209,59 @@ export function formatProvider(provider?: string): string {
  */
 export function hasLocalData(): boolean {
   return existsSync(LOCAL_DB_FILE);
+}
+
+// ====================
+// State Management
+// ====================
+
+const DEFAULT_STATE: SaveContextState = {
+  schemaVersion: 1,
+  notices: {},
+};
+
+/**
+ * Load runtime state
+ */
+export function loadState(): SaveContextState {
+  try {
+    if (existsSync(STATE_FILE)) {
+      const data = readFileSync(STATE_FILE, 'utf-8');
+      return { ...DEFAULT_STATE, ...JSON.parse(data) };
+    }
+  } catch {
+    // Return defaults on error
+  }
+  return { ...DEFAULT_STATE };
+}
+
+/**
+ * Save runtime state
+ */
+export function saveState(state: SaveContextState): void {
+  ensureConfigDir();
+  writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
+}
+
+/**
+ * Check if cloud prompt should be shown (once per 24h for local mode users)
+ */
+export function shouldShowCloudPrompt(): boolean {
+  const state = loadState();
+  const lastShown = state.notices.cloudPrompt?.lastShownAt;
+  if (!lastShown) return true;
+
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  return Date.now() - new Date(lastShown).getTime() > oneDayMs;
+}
+
+/**
+ * Mark cloud prompt as shown (updates timestamp)
+ */
+export function markCloudPromptShown(): void {
+  const state = loadState();
+  state.notices.cloudPrompt = {
+    lastShownAt: new Date().toISOString(),
+  };
+  saveState(state);
 }
