@@ -70,6 +70,7 @@ export interface ListSessionsArgs {
   project_path?: string;
   status?: 'active' | 'paused' | 'completed' | 'all';
   include_completed?: boolean;
+  search?: string;
 }
 
 export interface AddSessionPathArgs {

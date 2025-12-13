@@ -97,6 +97,85 @@ The `--json` flag outputs:
 
 When using `--no-save`, set `SAVECONTEXT_API_KEY` environment variable for subsequent CLI commands.
 
+## CLI Session Management
+
+Manage sessions directly from the command line (requires cloud authentication).
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `savecontext-sessions list` | List sessions with search and filtering |
+| `savecontext-sessions show` | Display session details |
+| `savecontext-sessions rename` | Rename a session (interactive picker) |
+| `savecontext-sessions delete` | Delete a session with confirmation |
+| `savecontext-sessions archive` | Mark session as completed (soft close) |
+| `savecontext-sessions add-path` | Add a project path to a session |
+| `savecontext-sessions remove-path` | Remove a project path from a session |
+
+### Usage
+
+All commands that accept `[session_id]` show an interactive picker if no ID is provided.
+
+```bash
+# List sessions (filters to current directory by default)
+savecontext-sessions list
+savecontext-sessions list --global          # All projects
+savecontext-sessions list --search "auth"   # Search by name/description
+savecontext-sessions list --all             # Include archived sessions
+
+# Show session details (context items, checkpoints, paths)
+savecontext-sessions show [session_id]
+
+# Rename a session
+savecontext-sessions rename [session_id]
+
+# Archive a session (marks as completed, data preserved)
+savecontext-sessions archive [session_id]
+
+# Delete a session permanently
+savecontext-sessions delete [session_id]
+
+# Manage multi-project sessions
+savecontext-sessions add-path [session_id]     # Add current directory
+savecontext-sessions remove-path [session_id]  # Remove a path
+```
+
+## CLI Project Management
+
+Manage projects directly from the command line (requires cloud authentication).
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `savecontext-projects list` | List all projects with session counts |
+| `savecontext-projects rename` | Rename a project (interactive picker) |
+| `savecontext-projects delete` | Delete a project (sessions unlinked, not deleted) |
+| `savecontext-projects merge` | Merge two projects into one |
+
+### Usage
+
+All commands use interactive pickers to select projects.
+
+```bash
+# List all projects
+savecontext-projects list
+savecontext-projects list --counts   # Include session counts (slower)
+savecontext-projects list --json     # JSON output
+
+# Rename a project
+savecontext-projects rename
+
+# Delete a project (sessions unlinked, not deleted)
+savecontext-projects delete
+savecontext-projects delete --force  # Skip confirmation for projects with sessions
+
+# Merge two projects (moves all sessions to target)
+savecontext-projects merge
+savecontext-projects merge --keep-source  # Don't delete source project after merge
+```
+
 ---
 
 ## Overview

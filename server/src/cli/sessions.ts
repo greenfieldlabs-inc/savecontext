@@ -146,8 +146,9 @@ program
   .option('-g, --global', 'Show sessions from all projects (not just current path)')
   .option('-p, --project <path>', 'Filter by specific project path')
   .option('-l, --limit <n>', 'Maximum sessions to show', '50')
+  .option('--search <text>', 'Search sessions by name or description')
   .option('--json', 'Output as JSON')
-  .action(async (options: { all?: boolean; status?: string; global?: boolean; project?: string; limit?: string; json?: boolean }) => {
+  .action(async (options: { all?: boolean; status?: string; global?: boolean; project?: string; limit?: string; search?: string; json?: boolean }) => {
     const client = getClient();
     const spinner = options.json ? null : ora('Fetching sessions...').start();
 
@@ -170,6 +171,7 @@ program
         limit: parseInt(options.limit || '50', 10),
         include_completed: includeCompleted,
         status: statusFilter,
+        search: options.search,
       });
 
       spinner?.stop();
