@@ -669,7 +669,21 @@ export interface ClaudeCodeStatusLine {
 }
 
 /**
- * Claude Code settings.local.json structure
+ * Claude Code hook configuration
+ */
+export interface ClaudeCodeHook {
+  type: 'command';
+  command: string;
+  timeout?: number;
+}
+
+export interface ClaudeCodeHookMatcher {
+  matcher: string;
+  hooks: ClaudeCodeHook[];
+}
+
+/**
+ * Claude Code settings.json structure
  */
 export interface ClaudeCodeSettings {
   permissions?: {
@@ -678,6 +692,10 @@ export interface ClaudeCodeSettings {
     ask?: string[];
   };
   statusLine?: ClaudeCodeStatusLine;
+  hooks?: {
+    PostToolUse?: ClaudeCodeHookMatcher[];
+    PreToolUse?: ClaudeCodeHookMatcher[];
+  };
 }
 
 /**
