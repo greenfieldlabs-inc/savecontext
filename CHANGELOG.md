@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.15] - 2025-12-15
+
+### Added
+- **PostToolUse Hook for Real-time Status Updates**
+  - Status line now updates immediately when SaveContext MCP tools run
+  - Installs `~/.savecontext/hooks/update-status-cache.py` alongside statusline
+  - Hooks into session lifecycle: start, resume, switch, pause, end, rename
+  - TTY-based isolation ensures multiple Claude Code instances don't conflict
+  - Works identically for both local and cloud MCP servers
+
+### Changed
+- **`--setup-statusline` now installs both scripts**
+  - Statusline script: `~/.savecontext/statusline.py`
+  - Hook script: `~/.savecontext/hooks/update-status-cache.py`
+  - Automatically configures `~/.claude/settings.json` with hooks section
+  - Preserves existing settings and hooks during installation
+
 ## [0.1.14] - 2025-12-15
 
 ### Added

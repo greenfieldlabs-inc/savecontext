@@ -106,13 +106,28 @@ Then restart Claude Code. That's it.
 
 ### How It Works
 
-1. **Cache Sync**: Every SaveContext tool call refreshes a local cache file (`~/.savecontext/status-cache/<tty>.json`) with your current session info
+1. **PostToolUse Hook**: A Claude Code hook intercepts SaveContext MCP tool responses and writes session info to a local cache file (`~/.savecontext/status-cache/<tty>.json`)
 2. **Status Script**: Claude Code runs the status line script on each prompt, which reads the cache and parses your transcript for context usage
-3. **TTY Isolation**: Each terminal instance gets its own cache key, so multiple Claude Code windows show their own sessions
+3. **TTY Isolation**: Each terminal instance gets its own cache key based on TTY, so multiple Claude Code windows show their own sessions without overlap
 
-### Script Location
+### What Gets Tracked
 
-The status line script is installed to `~/.savecontext/statusline.py`. Source available at [`server/scripts/statusline.py`](https://github.com/greenfieldlabs-inc/savecontext/blob/main/server/scripts/statusline.py).
+The hook monitors session lifecycle tools and updates the status line when:
+- Sessions start, resume, or switch (`context_session_start`, `context_session_resume`, `context_session_switch`)
+- Sessions are renamed (`context_session_rename`)
+- Sessions pause or end (`context_session_pause`, `context_session_end`) - clears status
+- Status is checked (`context_status`)
+
+Other tools like `context_save`, `context_get`, checkpoints, etc. don't change the status line since the session itself hasn't changed.
+
+### Script Locations
+
+| Script | Location | Purpose |
+|--------|----------|---------|
+| Status line | `~/.savecontext/statusline.py` | Reads cache and displays session info |
+| PostToolUse hook | `~/.savecontext/hooks/update-status-cache.py` | Intercepts MCP responses, updates cache |
+
+Source available at [`server/scripts/`](https://github.com/greenfieldlabs-inc/savecontext/blob/main/server/scripts/).
 
 ### Manual Configuration
 
@@ -123,8 +138,32 @@ If you prefer manual setup, add to `~/.claude/settings.json`:
   "statusLine": {
     "type": "command",
     "command": "python3 ~/.savecontext/statusline.py"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "mcp__savecontext__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.savecontext/hooks/update-status-cache.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }
+```
+
+Then copy the scripts from the package to `~/.savecontext/`:
+```bash
+# Get script paths from installed package
+SCRIPTS=$(npm root -g)/@savecontext/mcp/scripts
+cp "$SCRIPTS/statusline.py" ~/.savecontext/
+mkdir -p ~/.savecontext/hooks
+cp "$SCRIPTS/update-status-cache.py" ~/.savecontext/hooks/
+chmod +x ~/.savecontext/statusline.py ~/.savecontext/hooks/update-status-cache.py
 ```
 
 ---
