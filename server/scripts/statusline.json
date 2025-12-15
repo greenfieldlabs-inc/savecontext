@@ -1,0 +1,7 @@
+{
+  "description": "Display current SaveContext session name and item count. Shows [SC: session-name (items)] when a session is active.",
+  "statusLine": {
+    "type": "command",
+    "command": "bash -c 'cat>/dev/null;D=~/.savecontext/status-cache;K=\"\";[ -n \"$SAVECONTEXT_STATUS_KEY\" ]&&K=$(echo \"$SAVECONTEXT_STATUS_KEY\"|tr \"/\\\\:*?\\\"<>| \" _|cut -c1-100);[ -z \"$K\" ]&&[ -n \"$PPID\" ]&&T=$(ps -o tty= -p $PPID 2>/dev/null|tr -d \" \")&&[ -n \"$T\" ]&&[ \"$T\" != \"?\" ]&&[ \"$T\" != \"??\" ]&&K=\"tty-$T\";[ -z \"$K\" ]&&[ -n \"$TERM_SESSION_ID\" ]&&K=\"term-$TERM_SESSION_ID\";[ -z \"$K\" ]&&[ -n \"$ITERM_SESSION_ID\" ]&&K=\"iterm-$ITERM_SESSION_ID\";[ -z \"$K\" ]&&exit 0;F=\"$D/$K.json\";[ ! -f \"$F\" ]&&exit 0;TS=$(jq -r \".timestamp//0\" \"$F\" 2>/dev/null);N=$(jq -r \".sessionName//\\\"\\\"\" \"$F\" 2>/dev/null);C=$(jq -r \".itemCount//0\" \"$F\" 2>/dev/null);NOW=$(($(date +%s)*1000));[ $((NOW-TS)) -gt 1800000 ]&&rm -f \"$F\" 2>/dev/null&&exit 0;[ -n \"$N\" ]&&echo \"[SC: $N ($C)]\"'"
+  }
+}
