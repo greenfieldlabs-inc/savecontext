@@ -35,6 +35,55 @@ The CLI opens your browser for OAuth (GitHub or Google), then displays your MCP 
 
 ---
 
+## Claude Code Status Line
+
+**Never lose track of your session** - See real-time session info directly in Claude Code's status bar.
+
+![Claude Code Status Line](https://pub-4304173ae3f74a77852a77192ab0b3e3.r2.dev/claude-statusline.png)
+
+### What You See
+
+| Metric | Description |
+|--------|-------------|
+| **Session Name** | Your current SaveContext session |
+| **Context** | Token count + visual progress bar + percentage |
+| **Cost** | Running cost for this Claude Code session |
+| **Duration** | How long the session has been active |
+| **Lines** | Net lines changed (+/-) |
+
+### Setup
+
+```bash
+npx @savecontext/mcp@latest --setup-statusline
+```
+
+Then restart Claude Code. That's it.
+
+### How It Works
+
+1. **Cache Sync**: Every SaveContext tool call refreshes a local cache file (`~/.savecontext/status-cache/<tty>.json`) with your current session info
+2. **Status Script**: Claude Code runs the status line script on each prompt, which reads the cache and parses your transcript for context usage
+3. **TTY Isolation**: Each terminal instance gets its own cache key, so multiple Claude Code windows show their own sessions
+
+### Script Location
+
+The status line script is installed to `~/.savecontext/statusline.py`. Source available at [`server/scripts/statusline.py`](https://github.com/greenfieldlabs-inc/savecontext/blob/main/server/scripts/statusline.py).
+
+### Manual Configuration
+
+If you prefer manual setup, add to `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "python3 ~/.savecontext/statusline.py"
+  }
+}
+```
+
+---
+
 ## CLI Authentication
 
 ### Commands
