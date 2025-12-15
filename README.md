@@ -15,6 +15,51 @@
 
 ---
 
+## Overview
+
+SaveContext is a Model Context Protocol (MCP) server that provides stateful session management for AI coding assistants. It solves the problem of context loss when switching between AI tools or when conversations exceed token limits by maintaining persistent storage of decisions, tasks, and session state with checkpoint/restore capabilities.
+
+## Features
+
+- **Multi-Agent Support**: Run multiple CLI/IDE instances simultaneously with agent-scoped session tracking
+- **Automatic Provider Detection**: Detects 30 MCP clients including coding tools (Claude Code, Cursor, Cline, VS Code, JetBrains, etc.) and desktop apps (Claude Desktop, Perplexity, ChatGPT, Raycast, etc.)
+- **Session Lifecycle Management**: Full session state management with pause, resume, end, switch, and delete operations
+- **Multi-Path Sessions**: Sessions can span multiple related directories (monorepos, frontend/backend, etc.)
+- **Project Isolation**: Automatically filters sessions by project path - only see sessions from your current repository
+- **Auto-Resume**: If an active session exists for your project, automatically resume it instead of creating duplicates
+- **Session Management**: Organize work by sessions with automatic channel detection from git branches
+- **Checkpoints**: Create named snapshots of session state with optional git status capture
+- **Checkpoint Search**: Lightweight keyword search across all checkpoints with project/session filtering to find historical decisions
+- **Smart Compaction**: Analyze priority items and generate restoration summaries when approaching context limits
+- **Channel System**: Automatically derive channels from git branches (e.g., `feature/auth` → `feature-auth`)
+- **Local Storage**: SQLite database with WAL mode for fast, reliable persistence
+- **Cross-Tool Compatible**: Works with any MCP-compatible client (Claude Code, Cursor, Factory, Codex, Cline, etc.)
+
+## Installation
+
+### Using npm (Recommended)
+
+```bash
+npm install -g @savecontext/mcp
+```
+
+### Using npx (No installation)
+
+```bash
+npx -y @savecontext/mcp
+```
+
+### From source (Development)
+
+```bash
+git clone https://github.com/greenfieldlabs-inc/savecontext.git
+cd savecontext/server
+pnpm install
+pnpm build
+```
+
+---
+
 ## Quick Start (Cloud)
 
 Get started with SaveContext Cloud in under a minute:
@@ -223,51 +268,6 @@ savecontext-projects delete --force  # Skip confirmation for projects with sessi
 # Merge two projects (moves all sessions to target)
 savecontext-projects merge
 savecontext-projects merge --keep-source  # Don't delete source project after merge
-```
-
----
-
-## Overview
-
-SaveContext is a Model Context Protocol (MCP) server that provides stateful session management for AI coding assistants. It solves the problem of context loss when switching between AI tools or when conversations exceed token limits by maintaining persistent storage of decisions, tasks, and session state with checkpoint/restore capabilities.
-
-## Features
-
-- **Multi-Agent Support**: Run multiple CLI/IDE instances simultaneously with agent-scoped session tracking
-- **Automatic Provider Detection**: Detects 30 MCP clients including coding tools (Claude Code, Cursor, Cline, VS Code, JetBrains, etc.) and desktop apps (Claude Desktop, Perplexity, ChatGPT, Raycast, etc.)
-- **Session Lifecycle Management**: Full session state management with pause, resume, end, switch, and delete operations
-- **Multi-Path Sessions**: Sessions can span multiple related directories (monorepos, frontend/backend, etc.)
-- **Project Isolation**: Automatically filters sessions by project path - only see sessions from your current repository
-- **Auto-Resume**: If an active session exists for your project, automatically resume it instead of creating duplicates
-- **Session Management**: Organize work by sessions with automatic channel detection from git branches
-- **Checkpoints**: Create named snapshots of session state with optional git status capture
-- **Checkpoint Search**: Lightweight keyword search across all checkpoints with project/session filtering to find historical decisions
-- **Smart Compaction**: Analyze priority items and generate restoration summaries when approaching context limits
-- **Channel System**: Automatically derive channels from git branches (e.g., `feature/auth` → `feature-auth`)
-- **Local Storage**: SQLite database with WAL mode for fast, reliable persistence
-- **Cross-Tool Compatible**: Works with any MCP-compatible client (Claude Code, Cursor, Factory, Codex, Cline, etc.)
-
-## Installation
-
-### Using npm (Recommended)
-
-```bash
-npm install -g @savecontext/mcp
-```
-
-### Using npx (No installation)
-
-```bash
-npx -y @savecontext/mcp
-```
-
-### From source (Development)
-
-```bash
-git clone https://github.com/greenfieldlabs-inc/savecontext.git
-cd savecontext/server
-pnpm install
-pnpm build
 ```
 
 ## Configuration
