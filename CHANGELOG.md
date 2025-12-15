@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.14] - 2025-12-15
+
+### Added
+- **Claude Code Status Line** - See your active session directly in Claude Code
+  - `npx @savecontext/mcp@latest --setup-statusline` for one-command setup
+  - Displays: session name, context usage (tokens + %), cost, duration, lines changed
+  - Automatically refreshes on every SaveContext tool call
+  - 2-hour cache TTL per terminal instance
+  - Works with both local and cloud modes
+- **Improved tool definitions** - Better agent guidance for efficient context retrieval
+  - `context_get`: Added `query`, `search_all_sessions`, `threshold` params to schema (semantic search was backend-only, now exposed to agents)
+  - `context_list_sessions`: Added `search` param to schema (keyword search was backend-only, now exposed to agents)
+  - Tool descriptions now emphasize search-first approach to reduce unnecessary full listings
+  - Local mode: `query` param performs keyword fallback with relevance scoring
+
 ## [0.1.13] - 2025-12-12
 
 ### Added

@@ -638,3 +638,54 @@ export interface DeviceFlowOptions {
   /** Whether to save credentials to disk (default: true) */
   saveCredentials?: boolean;
 }
+
+// ====================
+// Status Cache Types
+// ====================
+
+/**
+ * Session info stored in status cache for Claude Code status line
+ */
+export interface StatusCacheEntry {
+  sessionId: string;
+  sessionName: string;
+  projectPath: string;
+  timestamp: number;
+  provider?: string;
+  itemCount?: number;
+  sessionStatus?: 'active' | 'paused' | 'completed';
+}
+
+// ====================
+// Claude Code Settings Types
+// ====================
+
+/**
+ * Claude Code status line configuration
+ */
+export interface ClaudeCodeStatusLine {
+  type: 'command';
+  command: string;
+}
+
+/**
+ * Claude Code settings.local.json structure
+ */
+export interface ClaudeCodeSettings {
+  permissions?: {
+    allow?: string[];
+    deny?: string[];
+    ask?: string[];
+  };
+  statusLine?: ClaudeCodeStatusLine;
+}
+
+/**
+ * Setup status line result
+ */
+export interface SetupStatusLineResult {
+  success: boolean;
+  settingsPath: string;
+  scriptPath: string;
+  error?: string;
+}

@@ -44,9 +44,17 @@ program
   .version(VERSION)
   .description('SaveContext MCP Server - Local or Cloud mode')
   .option('--api-key <key>', 'API key for cloud mode')
+  .option('--setup-statusline', 'Configure Claude Code status line (run this first)')
   .parse(process.argv);
 
 const options = program.opts();
+
+// Handle --setup-statusline before anything else
+if (options.setupStatusline) {
+  const { setupStatusLine } = await import('./cli/setup.js');
+  await setupStatusLine();
+  process.exit(0);
+}
 
 // ====================
 // Mode Detection
@@ -117,6 +125,7 @@ import {
   TaskUpdate,
 } from './types/index.js';
 import { loadConfig, loadCredentials, getCloudMcpUrl, shouldShowCloudPrompt, markCloudPromptShown } from './utils/config.js';
+import { updateStatusLine, refreshStatusCache } from './utils/status-cache.js';
 
 // Initialize backend (local or cloud)
 let db: DatabaseManager | null = null;
@@ -358,7 +367,16 @@ async function handleSessionStart(args: any) {
     // Cloud mode: set agent metadata and proxy to API
     if (mode === 'cloud') {
       cloud!.setAgentMetadata(agentId, projectPath, branch || 'main', provider);
-      return await cloud!.startSession(args);
+      const result = await cloud!.startSession(args);
+      // Update status line with cloud session info
+      if (result.success && result.data) {
+        const data = result.data as SessionResponse & { item_count?: number };
+        updateStatusLine(
+          { id: data.id, name: data.name, project_path: projectPath, status: 'active' },
+          { itemCount: data.item_count, provider, projectPath }
+        );
+      }
+      return result;
     }
 
     // Local mode: use SQLite
@@ -391,6 +409,9 @@ async function handleSessionStart(args: any) {
       // Set as current session in memory
       currentSessionId = agentSession.id;
       const stats = getDb().getSessionStats(agentSession.id);
+
+      // Update status line for Claude Code
+      updateStatusLine(agentSession, { itemCount: stats?.total_items, provider, projectPath });
 
       return success(
         {
@@ -433,6 +454,9 @@ async function handleSessionStart(args: any) {
 
     // Set as current session in memory
     currentSessionId = session.id;
+
+    // Update status line for Claude Code
+    updateStatusLine(session, { itemCount: 0, provider, projectPath });
 
     const response: SessionResponse = {
       id: session.id,
@@ -509,7 +533,7 @@ async function handleSaveContext(args: any) {
  */
 async function handleGetContext(args: any) {
   try {
-    // Cloud mode: proxy to API
+    // Cloud mode: proxy to API (supports full semantic search)
     if (mode === 'cloud') {
       return await cloud!.getContext(args);
     }
@@ -535,6 +559,49 @@ async function handleGetContext(args: any) {
       };
 
       return success(response);
+    }
+
+    // If query is provided, perform keyword search (fallback for local mode)
+    if (args?.query) {
+      const query = String(args.query).toLowerCase();
+      const keywords = query.split(/\s+/).filter((k: string) => k.length > 2);
+
+      // Get all items from session, then filter by keyword match
+      const allItems = getDb().getContextItems(sessionId, {
+        category: validated.category,
+        priority: validated.priority,
+        channel: validated.channel,
+        limit: 1000, // Get more items for keyword search
+        offset: 0,
+      });
+
+      // Score items by keyword matches in value
+      const scoredItems = allItems
+        .map((item) => {
+          const valueText = String(item.value).toLowerCase();
+          const keyText = String(item.key).toLowerCase();
+          let score = 0;
+          for (const keyword of keywords) {
+            if (valueText.includes(keyword)) score += 2;
+            if (keyText.includes(keyword)) score += 1;
+          }
+          return { item, score };
+        })
+        .filter((s) => s.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, validated.limit || CONTEXT_ITEMS_DEFAULT_LIMIT);
+
+      const items = scoredItems.map((s) => s.item);
+
+      const response = {
+        items,
+        total: items.length,
+        session_id: sessionId,
+        search_mode: 'keyword',
+        tip: 'Upgrade to SaveContext Cloud for AI-powered semantic search: https://savecontext.dev',
+      };
+
+      return success(response, `Found ${items.length} items (keyword search)`);
     }
 
     // Otherwise, get filtered items
@@ -1781,7 +1848,11 @@ async function handleSessionEnd() {
   try {
     // Cloud mode: proxy to API
     if (mode === 'cloud') {
-      return await cloud!.endSession();
+      const result = await cloud!.endSession();
+      if (result.success) {
+        updateStatusLine(null);
+      }
+      return result;
     }
 
     // Local mode: use SQLite
@@ -1803,12 +1874,18 @@ async function handleSessionEnd() {
     // Clear current session
     currentSessionId = null;
 
+    // Clear status line for Claude Code
+    updateStatusLine(null);
+
     // Clear agent association with this session
     const branch = await getCurrentBranch();
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
     const provider = getCurrentProvider();
     const agentId = getAgentId(projectPath, branch || 'main', provider);
     getDb().clearCurrentSessionForAgent(agentId);
+
+    // Clear status line for Claude Code
+    updateStatusLine(null);
 
     return success(
       {
@@ -1833,7 +1910,11 @@ async function handleSessionPause() {
   try {
     // Cloud mode: proxy to API
     if (mode === 'cloud') {
-      return await cloud!.pauseSession();
+      const result = await cloud!.pauseSession();
+      if (result.success) {
+        updateStatusLine(null);
+      }
+      return result;
     }
 
     // Local mode: use SQLite
@@ -1856,6 +1937,9 @@ async function handleSessionPause() {
     const provider = getCurrentProvider();
     const agentId = getAgentId(projectPath, branch || 'main', provider);
     getDb().clearCurrentSessionForAgent(agentId);
+
+    // Clear status line for Claude Code
+    updateStatusLine(null);
 
     return success(
       {
@@ -1882,7 +1966,15 @@ async function handleSessionResume(args: any) {
       const provider = getCurrentProvider();
       const agentId = getAgentId(projectPath, branch || 'main', provider);
       cloud!.setAgentMetadata(agentId, projectPath, branch || 'main', provider);
-      return await cloud!.resumeSession(args);
+      const result = await cloud!.resumeSession(args);
+      if (result.success && result.data) {
+        const data = result.data as { session_id: string; session_name: string; item_count?: number };
+        updateStatusLine(
+          { id: data.session_id, name: data.session_name, project_path: projectPath, status: 'active' },
+          { itemCount: data.item_count, provider, projectPath }
+        );
+      }
+      return result;
     }
 
     // Local mode: use SQLite
@@ -1917,6 +2009,13 @@ async function handleSessionResume(args: any) {
 
     const stats = getDb().getSessionStats(session_id);
 
+    // Update status line for Claude Code
+    updateStatusLine(session, {
+      itemCount: stats?.total_items,
+      provider: getCurrentProvider(),
+      projectPath: normalizeProjectPath(getCurrentProjectPath()),
+    });
+
     return success(
       {
         session_id: session.id,
@@ -1940,7 +2039,17 @@ async function handleSessionSwitch(args: any) {
   try {
     // Cloud mode: proxy to API
     if (mode === 'cloud') {
-      return await cloud!.switchSession(args);
+      const result = await cloud!.switchSession(args);
+      if (result.success && result.data) {
+        const data = result.data as { session_id: string; current_session: string; item_count?: number };
+        const projectPath = normalizeProjectPath(getCurrentProjectPath());
+        const provider = getCurrentProvider();
+        updateStatusLine(
+          { id: data.session_id, name: data.current_session, project_path: projectPath, status: 'active' },
+          { itemCount: data.item_count, provider, projectPath }
+        );
+      }
+      return result;
     }
 
     // Local mode: use SQLite
@@ -1986,6 +2095,9 @@ async function handleSessionSwitch(args: any) {
     await updateAgentActivity();
 
     const stats = getDb().getSessionStats(session_id);
+
+    // Update status line for Claude Code
+    updateStatusLine(targetSession, { itemCount: stats?.total_items });
 
     return success(
       {
@@ -2038,6 +2150,10 @@ async function handleSessionDelete(args: any) {
     const deleted = getDb().deleteSession(session_id);
 
     if (deleted) {
+      // If we somehow deleted what the status line is showing, clear it (best-effort)
+      if (currentSessionId === session_id) {
+        updateStatusLine(null);
+      }
       return success(
         { session_id, session_name: session.name },
         `Session '${session.name}' deleted successfully`
@@ -2360,13 +2476,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_get',
-        description: 'Retrieve saved context items with filtering by category, priority, channel. Use to recall previous decisions, check task status, or review session history.',
+        description: 'Retrieve saved context items. PREFER using query param for semantic search when looking for specific information - searches item values by meaning. Use key for exact retrieval, or filters (category, priority) when browsing.',
         inputSchema: {
           type: 'object',
           properties: {
+            query: {
+              type: 'string',
+              description: 'RECOMMENDED: Semantic search query to find items by meaning (e.g., "how did we handle authentication"). Cloud mode uses AI-powered search; local mode uses keyword fallback.',
+            },
+            search_all_sessions: {
+              type: 'boolean',
+              description: 'When using query, search across ALL your sessions (default: false, searches current session only)',
+            },
+            threshold: {
+              type: 'number',
+              minimum: 0,
+              maximum: 1,
+              description: 'Semantic search threshold (0-1). Lower = more results. Default: 0.5. Only applies to cloud mode.',
+            },
             key: {
               type: 'string',
-              description: 'Specific key to retrieve (if not provided, returns filtered list)',
+              description: 'Exact key to retrieve a specific item (bypasses search)',
             },
             category: {
               type: 'string',
@@ -2888,10 +3018,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_list_sessions',
-        description: 'List recent sessions with summary. Filters by current project path by default. Use at conversation start to find previous work or when user asks to continue from earlier session.',
+        description: 'Find sessions by keyword search or list recent sessions. PREFER using search param when looking for specific sessions - it searches name and description. Only omit search when you need to browse all recent sessions.',
         inputSchema: {
           type: 'object',
           properties: {
+            search: {
+              type: 'string',
+              description: 'RECOMMENDED: Keyword search on session name and description. Use this first when looking for specific sessions.',
+            },
             limit: {
               type: 'number',
               description: 'Maximum sessions to return (default: 10)',
@@ -3046,6 +3180,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Don't fail requests if agent metadata update fails
         console.error('Failed to update agent metadata:', err);
       }
+    }
+
+    // Refresh status cache on every tool call to keep it fresh
+    try {
+      const projectPath = normalizeProjectPath(getCurrentProjectPath());
+      const provider = getCurrentProvider();
+      if (mode === 'cloud') {
+        // Cloud mode: get status which includes session info
+        const statusResult = await cloud!.getSessionStatus();
+        if (statusResult.success && statusResult.data?.current_session_id) {
+          refreshStatusCache({
+            id: statusResult.data.current_session_id,
+            name: statusResult.data.session_name,
+            project_path: statusResult.data.project_path,
+            status: statusResult.data.status,
+          }, { itemCount: statusResult.data.item_count, provider, projectPath });
+        }
+      } else if (currentSessionId) {
+        // Local mode: use module-level currentSessionId
+        const session = db!.getSession(currentSessionId);
+        if (session) {
+          const stats = getDb().getSessionStats(currentSessionId);
+          refreshStatusCache(session, { itemCount: stats?.total_items || 0, provider, projectPath });
+        }
+      }
+    } catch {
+      // Silently fail - status cache refresh is non-critical
     }
 
     switch (name) {
