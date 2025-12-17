@@ -707,3 +707,29 @@ export interface SetupStatusLineResult {
   scriptPath: string;
   error?: string;
 }
+
+// ====================
+// Skill Types
+// ====================
+
+export interface SetupSkillResult {
+  success: boolean;
+  skillPath: string;
+  error?: string;
+}
+
+export interface SkillInstallation {
+  tool: string;
+  path: string;
+  installedAt: number;
+}
+
+export interface SkillSyncConfig {
+  installations: SkillInstallation[];
+}
+
+export interface SetupSkillOptions {
+  tool?: string;
+  path?: string;
+  sync?: boolean;
+}

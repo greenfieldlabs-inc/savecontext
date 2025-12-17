@@ -16,12 +16,45 @@ import time
 # ============================================================================
 
 def get_savecontext_session():
-    """Read SaveContext session from cache using TTY-based key resolution."""
+    """Read SaveContext session from cache using platform-specific key resolution."""
+    import platform
     cache_dir = os.path.expanduser("~/.savecontext/status-cache")
 
+    # Check explicit env var first (works on all platforms)
     status_key = os.environ.get('SAVECONTEXT_STATUS_KEY')
 
-    if not status_key:
+    system = platform.system()
+    is_windows = system == 'Windows'
+    is_wsl = system == 'Linux' and 'microsoft' in platform.release().lower()
+
+    if not status_key and (is_windows or is_wsl):
+        # Windows Terminal session GUID (works in native Windows and WSL)
+        wt_session = os.environ.get('WT_SESSION')
+        if wt_session:
+            status_key = f"wt-{wt_session}"
+
+        # ConEmu/Cmder terminal
+        if not status_key:
+            conemu_pid = os.environ.get('ConEmuPID') or os.environ.get('ConEmuServerPID')
+            if conemu_pid:
+                status_key = f"conemu-{conemu_pid}"
+
+        # Windows session name (Console, RDP-Tcp#0, etc.)
+        if not status_key:
+            session_name = os.environ.get('SESSIONNAME')
+            if session_name:
+                ppid = os.getppid()
+                status_key = f"win-{session_name}-{ppid}"
+
+        # Fallback: use parent process ID
+        if not status_key:
+            ppid = os.getppid()
+            if ppid:
+                prefix = "wslpid" if is_wsl else "winpid"
+                status_key = f"{prefix}-{ppid}"
+
+    if not status_key and system in ('Darwin', 'Linux'):
+        # macOS/Linux: Try to get TTY from parent process
         ppid = os.getppid()
         try:
             result = subprocess.run(
@@ -29,20 +62,57 @@ def get_savecontext_session():
                 capture_output=True, text=True, timeout=1
             )
             tty = result.stdout.strip()
-            if tty and tty not in ('?', '??'):
+            if tty and tty not in ('?', '??', '-'):
                 status_key = f"tty-{tty}"
         except:
             pass
 
-    if not status_key:
-        status_key = os.environ.get('TERM_SESSION_ID')
-        if status_key:
-            status_key = f"term-{status_key}"
+        # macOS Terminal session ID
+        if not status_key:
+            term_session = os.environ.get('TERM_SESSION_ID')
+            if term_session:
+                status_key = f"term-{term_session}"
 
-    if not status_key:
-        status_key = os.environ.get('ITERM_SESSION_ID')
-        if status_key:
-            status_key = f"iterm-{status_key}"
+        # iTerm2 session ID
+        if not status_key:
+            iterm_session = os.environ.get('ITERM_SESSION_ID')
+            if iterm_session:
+                status_key = f"iterm-{iterm_session}"
+
+        # Linux: GNOME Terminal
+        if not status_key:
+            gnome_term = os.environ.get('GNOME_TERMINAL_SERVICE')
+            if gnome_term:
+                status_key = f"gnome-{ppid}"
+
+        # Linux: Konsole (KDE)
+        if not status_key:
+            konsole = os.environ.get('KONSOLE_DBUS_SESSION')
+            if konsole:
+                status_key = f"konsole-{ppid}"
+
+        # Linux: Tilix
+        if not status_key:
+            tilix = os.environ.get('TILIX_ID')
+            if tilix:
+                status_key = f"tilix-{tilix}"
+
+        # Linux: Kitty
+        if not status_key:
+            kitty = os.environ.get('KITTY_PID')
+            if kitty:
+                status_key = f"kitty-{kitty}"
+
+        # Linux: Alacritty
+        if not status_key:
+            alacritty = os.environ.get('ALACRITTY_SOCKET')
+            if alacritty:
+                status_key = f"alacritty-{ppid}"
+
+        # Linux/macOS fallback: use parent process ID
+        if not status_key:
+            prefix = "linuxpid" if system == 'Linux' else "macpid"
+            status_key = f"{prefix}-{ppid}"
 
     if not status_key:
         return None

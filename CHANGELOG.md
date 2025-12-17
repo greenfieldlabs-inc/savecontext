@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.16] - 2025-12-17
+
+### Added
+- **SaveContext Skill for AI Coding Tools** - Teach AI agents how to use SaveContext effectively
+  - `npx @savecontext/mcp --setup-skill` installs to Claude Code (`~/.claude/skills/savecontext/`)
+  - `--tool codex` installs to OpenAI Codex (`~/.codex/skills/savecontext/`)
+  - `--tool <name> --path <path>` installs to any tool with custom skill directory
+  - `--sync` updates all previously configured installations
+  - Skill config saved to `~/.savecontext/skill-sync.json` for easy updates
+  - SKILL.md: Behavioral guidance for session management, context saving, checkpointing
+  - references/WORKFLOWS.md: Detailed patterns for multi-session work, compaction recovery, multi-agent coordination
+  - **Formatting guidance**: Thorough examples showing how to structure context values with markdown formatting, good/bad comparisons, length guidelines
+
+### Fixed
+- **Cross-platform statusline support** - Session tracking now works on Windows, macOS, Linux, and WSL
+  - **Setup detects Python automatically**: Tries `py -3` (Windows), `python3`, `python` in order
+  - Shows platform-specific install instructions if Python 3 not found
+  - **Windows**: `WT_SESSION`, `ConEmuPID`, `SESSIONNAME` + PPID, `winpid-{PPID}` fallback
+  - **WSL**: Detects via kernel release, uses Windows Terminal env vars when available
+  - **Linux**: TTY, GNOME Terminal, Konsole, Tilix, Kitty, Alacritty, `linuxpid-{PPID}` fallback
+  - **macOS**: TTY, `TERM_SESSION_ID`, `ITERM_SESSION_ID`, `macpid-{PPID}` fallback
+  - **All users**: Run `npx @savecontext/mcp@latest --setup-statusline` to update
+
+### Changed
+- Build script now copies skills directory to dist
+- Package now includes `skills` directory for npm publishing
+
 ## [0.1.15] - 2025-12-15
 
 ### Added

@@ -106,9 +106,56 @@ Then restart Claude Code. That's it.
 
 ### How It Works
 
-1. **PostToolUse Hook**: A Claude Code hook intercepts SaveContext MCP tool responses and writes session info to a local cache file (`~/.savecontext/status-cache/<tty>.json`)
+1. **PostToolUse Hook**: A Claude Code hook intercepts SaveContext MCP tool responses and writes session info to a local cache file (`~/.savecontext/status-cache/<key>.json`)
 2. **Status Script**: Claude Code runs the status line script on each prompt, which reads the cache and parses your transcript for context usage
-3. **TTY Isolation**: Each terminal instance gets its own cache key based on TTY, so multiple Claude Code windows show their own sessions without overlap
+3. **Terminal Isolation**: Each terminal instance gets its own cache key, so multiple Claude Code windows show their own sessions without overlap
+
+### Cross-Platform Support
+
+The statusline scripts automatically detect your platform and terminal to generate a unique session key:
+
+| Platform | Detection Method | Example Key |
+|----------|------------------|-------------|
+| **Windows Terminal** | `WT_SESSION` env var | `wt-abc123-def` |
+| **ConEmu/Cmder** | `ConEmuPID` env var | `conemu-12345` |
+| **Windows CMD/PS** | `SESSIONNAME` + PPID | `win-Console-1234` |
+| **WSL** | Kernel contains "microsoft" | `wt-*` or `wslpid-*` |
+| **macOS Terminal.app** | `TERM_SESSION_ID` | `term-abc123` |
+| **iTerm2** | `ITERM_SESSION_ID` | `iterm-xyz789` |
+| **GNOME Terminal** | `GNOME_TERMINAL_SERVICE` | `gnome-12345` |
+| **Konsole** | `KONSOLE_DBUS_SESSION` | `konsole-12345` |
+| **Kitty** | `KITTY_PID` | `kitty-12345` |
+| **Tilix** | `TILIX_ID` | `tilix-session-1` |
+| **Alacritty** | `ALACRITTY_SOCKET` | `alacritty-12345` |
+| **TTY (SSH, etc.)** | `ps -o tty=` command | `tty-pts_0` |
+| **Fallback** | Parent process ID | `linuxpid-*`, `macpid-*`, `winpid-*` |
+
+**Manual Override**: Set `SAVECONTEXT_STATUS_KEY` environment variable to use a custom key:
+```bash
+export SAVECONTEXT_STATUS_KEY="my-custom-session"
+```
+
+### Troubleshooting
+
+If the statusline doesn't work after setup:
+
+1. **Check Python is installed**: The scripts require Python 3.x
+   - Windows: Install from [python.org](https://python.org) or run `winget install Python.Python.3`
+   - macOS: Run `brew install python3` or use system Python
+   - Linux: Run `apt install python3` or equivalent
+
+2. **Verify scripts are installed**: Check `~/.savecontext/` contains:
+   - `statusline.py`
+   - `hooks/update-status-cache.py`
+
+3. **Restart Claude Code**: Changes to `settings.json` require a restart
+
+4. **Check Claude Code settings**: Run `cat ~/.claude/settings.json` and verify the `statusLine` and `hooks` sections exist
+
+**Still not working?** Please [open an issue](https://github.com/greenfieldlabs-inc/savecontext/issues) with:
+- Your OS and terminal (e.g., "Windows 11 + Windows Terminal", "macOS + iTerm2")
+- Output of `python3 --version` (or `py -3 --version` on Windows)
+- Any error messages from Claude Code
 
 ### What Gets Tracked
 
@@ -128,6 +175,54 @@ Other tools like `context_save`, `context_get`, checkpoints, etc. don't change t
 | PostToolUse hook | `~/.savecontext/hooks/update-status-cache.py` | Intercepts MCP responses, updates cache |
 
 Source available at [`server/scripts/`](https://github.com/greenfieldlabs-inc/savecontext/blob/main/server/scripts/).
+
+---
+
+## Skills
+
+SaveContext includes a skill system that teaches AI coding assistants how to use SaveContext effectively. Skills are markdown files containing workflows, best practices, and usage patterns.
+
+### Setup Skills
+
+```bash
+npx @savecontext/mcp@latest --setup-skill
+```
+
+This installs the SaveContext skill to your AI tool's skills directory.
+
+### Supported Tools
+
+We natively support **Claude Code** and **OpenAI Codex** with automatic path detection:
+
+| Tool | Default Location |
+|------|------------------|
+| Claude Code | `~/.claude/skills/savecontext/` |
+| OpenAI Codex | `~/.codex/skills/savecontext/` |
+
+### Custom Tool Locations
+
+You can add skills to any AI tool that supports a skills directory:
+
+```bash
+# Install to a custom path
+npx @savecontext/mcp@latest --setup-skill --path ~/.my-ai-tool/skills/savecontext
+```
+
+Your custom locations are saved to `~/.savecontext/skill-sync.json` and will be updated automatically when you run `--setup-skill --sync` in the future.
+
+### Syncing Skills
+
+To update skills across all your configured tools:
+
+```bash
+npx @savecontext/mcp@latest --setup-skill --sync
+```
+
+This re-installs skills to every location in your sync config, including any custom paths you've added.
+
+**Want native support for another AI tool?** [Open an issue](https://github.com/greenfieldlabs-inc/savecontext/issues) with the tool name and its skills directory path.
+
+---
 
 ### Manual Configuration
 

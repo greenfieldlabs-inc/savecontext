@@ -1,0 +1,15 @@
+# Python cache
+**/__pycache__/
+*.pyc
+
+# Status cache (generated at runtime)
+scripts/statusline.json
+
+# Source files (dist is published)
+src/
+
+# Tests
+tests/
+
+# TypeScript config
+tsconfig.json

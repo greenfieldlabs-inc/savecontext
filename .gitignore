@@ -42,6 +42,9 @@ coverage/
 .coverage
 htmlcov/
 
+# Local test files (not for CI)
+server/tests/
+
 # Temporary files
 *.tmp
 *.temp
