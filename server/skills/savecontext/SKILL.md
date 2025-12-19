@@ -1,6 +1,6 @@
 ---
 name: savecontext
-description: This skill should be used when the user asks to "save context", "remember this decision", "track my progress", "checkpoint my work", "resume where I left off", "continue from last session", "persist state across sessions", "prepare for compaction", "restore from checkpoint", "switch sessions", or when starting work and needing to check for existing sessions.
+description: This skill should be used when the user asks to "save context", "remember this decision", "track my progress", "checkpoint my work", "resume where I left off", "continue from last session", "persist state across sessions", "prepare for compaction", "restore from checkpoint", "switch sessions", or when starting work and needing to check for existing sessions. Also triggers on compound workflows like "wrap up session", "wrap up and checkpoint", "end of day checkpoint", "resume fully", "pick up where I left off and show status", "checkpoint with tags", "log work and checkpoint", "tag and checkpoint", "prepare for handoff", "handoff to another agent".
 ---
 
 # SaveContext
@@ -46,6 +46,46 @@ When beginning work on a project:
 **Session Naming:**
 - Good: `"implementing-oauth2-authentication"`, `"fixing-payment-webhook-bug"`
 - Bad: `"working on stuff"`, `"session 1"`, `"test"`
+
+## Compound Workflows
+
+When user requests compound actions, execute these sequences automatically.
+
+### Wrap Up Session
+**Triggers:** "wrap up", "wrap up session", "end of day", "checkpoint everything", "wrap up and checkpoint"
+
+Execute in order:
+1. `context_save` - Log current progress with what was accomplished
+2. `context_tag` - Tag recent items with relevant work stream tags
+3. `context_checkpoint` - Create checkpoint with descriptive name
+4. `context_session_pause` - Pause session for later resumption
+
+### Resume Fully
+**Triggers:** "resume fully", "pick up where I left off and show status", "continue and show context"
+
+Execute in order:
+1. `context_session_start` - Resume existing session
+2. `context_status` - Show session stats (item count, checkpoints)
+3. `context_get priority="high"` - Display critical decisions/blockers
+4. `context_get category="task"` - Show pending tasks and next steps
+
+### Checkpoint with Tags
+**Triggers:** "checkpoint with tags", "tag and checkpoint", "log work and checkpoint"
+
+Execute in order:
+1. `context_get` - Review recent items in session
+2. Ask user (or infer) what tags to apply
+3. `context_tag` - Tag items with specified tags
+4. `context_checkpoint` - Create checkpoint including tagged items
+
+### Prepare for Handoff
+**Triggers:** "prepare for handoff", "handoff to another agent", "hand off"
+
+Execute in order:
+1. `context_save` - Log final progress summary
+2. `context_tag` - Tag all items with `handoff` tag
+3. `context_checkpoint name="handoff-ready"` - Create handoff checkpoint
+4. Display: session name, checkpoint ID, and key context for receiving agent
 
 ## What to Save
 

@@ -1,6 +1,6 @@
 {
   "name": "savecontext",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "SaveContext - Never lose context in your AI coding sessions",
   "private": true,
   "workspaces": [

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.17] - 2025-12-19
+
+### Fixed
+- **`--setup-skill` flag now works** - Flag was documented in v0.1.16 but missing from published package
+
+### Added
+- **Compound Workflow Triggers** - SKILL.md now recognizes multi-step workflow requests
+  - "wrap up session", "end of day", "checkpoint everything"
+  - "resume fully", "pick up where I left off and show status"
+  - "checkpoint with tags", "tag and checkpoint"
+  - "prepare for handoff", "handoff to another agent"
+- **Compound Workflows Section** - SKILL.md includes step-by-step recipes for:
+  - Wrap Up Session: save progress, tag items, checkpoint, pause
+  - Resume Fully: start session, show status, display high-priority items and tasks
+  - Checkpoint with Tags: review items, tag, create checkpoint
+  - Prepare for Handoff: log summary, tag all items, create handoff checkpoint
+
 ## [0.1.16] - 2025-12-17
 
 ### Added
