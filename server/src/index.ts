@@ -46,6 +46,9 @@ program
   .option('--api-key <key>', 'API key for cloud mode')
   .option('--setup-statusline', 'Configure Claude Code status line (run this first)')
   .option('--setup-skill', 'Install SaveContext skill for AI coding tools')
+  .option('--tool <name>', 'Target tool for skill install (claude, codex, gemini, etc.)')
+  .option('--path <path>', 'Custom path for skill install')
+  .option('--sync', 'Sync skill to all previously configured tools')
   .parse(process.argv);
 
 const options = program.opts();
@@ -60,7 +63,11 @@ if (options.setupStatusline) {
 // Handle --setup-skill
 if (options.setupSkill) {
   const { setupSkill } = await import('./cli/setup.js');
-  await setupSkill();
+  await setupSkill({
+    tool: options.tool,
+    path: options.path,
+    sync: options.sync,
+  });
   process.exit(0);
 }
 
