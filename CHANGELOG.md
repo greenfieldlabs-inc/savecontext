@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.20] - 2026-01-03
+
+### Added
+- **Dashboard npx command** - Run the dashboard without cloning the repo
+  - `npx @savecontext/dashboard` starts the dashboard on port 3333
+  - `npx @savecontext/dashboard -p 4000` for custom port
+  - Uses Next.js standalone output mode for self-contained distribution
+  - Includes pnpm symlink resolution for native module compatibility
+
+### Changed
+- **Next.js upgraded to 16.1.1** - Security patches for CVE-2025-55184 and CVE-2025-67779
+  - Uses webpack bundler for production builds (Turbopack has issues with native modules in standalone mode)
+  - 0 vulnerabilities in npm audit
+
+### Fixed
+- **Embedding provider lazy retry** - If embedding provider (HuggingFace, Ollama, etc.) is unavailable at startup, the server now retries automatically on first search instead of staying broken until restart
+  - Added 1-minute retry cooldown to avoid hammering unavailable providers
+  - Provider automatically recovers when it becomes available
+- **Improved error messages for semantic search fallback**
+  - Now shows actual configured provider name instead of generic "Install Ollama" message
+  - Startup message indicates provider will retry on first search
+  - Keyword fallback tip shows configured provider status
+
 ## [0.1.19] - 2026-01-02
 
 ### Changed

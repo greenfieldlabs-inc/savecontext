@@ -1,7 +1,7 @@
 {
   "name": "@savecontext/mcp",
-  "version": "0.1.19",
-  "description": "SaveContext MCP Server - Never lose context in your AI coding sessions",
+  "version": "0.1.20",
+  "description": "The OS for AI coding agents",
   "main": "dist/index.js",
   "type": "module",
   "bin": {

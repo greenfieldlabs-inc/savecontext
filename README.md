@@ -2,7 +2,7 @@
 
 # SaveContext
 
-**Local-first project memory for AI coding assistants**
+**The OS for AI coding agents**
 
 [![npm version](https://img.shields.io/npm/v/@savecontext/mcp?color=brightgreen)](https://www.npmjs.com/package/@savecontext/mcp)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
@@ -25,7 +25,7 @@ SaveContext is a Model Context Protocol (MCP) server that gives AI coding assist
 - **Semantic Search** — Find past decisions by meaning, not just keywords
 - **Checkpoints** — Snapshot and restore session state at any point
 
-## Features
+## 🛠️ Features
 
 - **Local Semantic Search**: AI-powered search using Ollama or Transformers.js for offline embedding generation
 - **Multi-Agent Support**: Run multiple CLI/IDE instances simultaneously with agent-scoped session tracking
@@ -45,7 +45,7 @@ SaveContext is a Model Context Protocol (MCP) server that gives AI coding assist
 - **Plans System**: Create PRDs and specs, link issues to plans, track implementation progress
 - **Dashboard UI**: Local Next.js web interface for visual session, context, and issue management
 
-## Installation
+## 📦 Installation
 
 ### Using npm (Recommended)
 
@@ -70,7 +70,7 @@ pnpm build
 
 ---
 
-## Quick Start
+## ⚡️ Quick Start
 
 Get started with SaveContext in under a minute:
 
@@ -103,7 +103,45 @@ ollama pull nomic-embed-text
 
 ---
 
-## Claude Code Status Line
+## 📊 Dashboard
+
+A local web interface for visual session, context, memory, plan, and issue management.
+
+```bash
+# Run the dashboard (starts on port 3333)
+npx @savecontext/dashboard
+
+# Or specify a custom port
+npx @savecontext/dashboard -p 4000
+```
+
+**Features:**
+- **Projects View**: See all projects with session counts
+- **Sessions**: Browse sessions, view context items, manage checkpoints
+- **Memory**: View and manage project memory (commands, configs, notes)
+- **Issues**: Track tasks, bugs, features with Linear-style interface
+- **Plans**: Create and manage PRDs/specs linked to issues
+
+> **Note**: The dashboard reads from the same SQLite database as the MCP server (`~/.savecontext/data/savecontext.db`).
+
+<details>
+<summary><b>Running from source (Development)</b></summary>
+
+```bash
+git clone https://github.com/greenfieldlabs-inc/savecontext.git
+cd savecontext/dashboard
+pnpm install
+pnpm dev          # runs on port 3333
+pnpm dev -p 4000  # or specify a custom port
+```
+
+</details>
+
+---
+
+##  Claude Code Status Line
+
+> **Note:** This feature is specific to **Claude Code** (Anthropic's CLI tool). Other editors like Cursor, Windsurf, VS Code, etc. show MCP connection status in their own UI - this terminal status line feature doesn't apply to them.
 
 **Never lose track of your session** - See real-time session info directly in Claude Code's status bar.
 
@@ -364,29 +402,6 @@ savecontext-projects delete --force  # Skip confirmation for projects with sessi
 savecontext-projects merge
 savecontext-projects merge --keep-source  # Don't delete source project after merge
 ```
-
-## Dashboard
-
-A local Next.js web interface for visual session, context, memory, plan, and issue management.
-
-### Running the Dashboard
-
-```bash
-cd savecontext/dashboard
-pnpm install
-pnpm dev          # runs on port 3333
-pnpm dev -p 4000  # or specify a custom port
-```
-
-### Features
-
-- **Projects View**: See all projects with session counts
-- **Sessions**: Browse sessions, view context items, manage checkpoints
-- **Memory**: View and manage project memory (commands, configs, notes)
-- **Issues**: Track tasks, bugs, features with Linear-style interface
-- **Plans**: Create and manage PRDs/specs linked to issues
-
-> **Note**: The dashboard reads from the same SQLite database as the MCP server (`~/.savecontext/data/savecontext.db`).
 
 ## Configuration
 
