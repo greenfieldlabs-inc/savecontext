@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.21] - 2026-01-03
+
+### Fixed
+- **Dashboard standalone build fix** - Resolved native module loading error when running via `npx @savecontext/dashboard`
+  - Clean webpack build eliminates Turbopack module hashing artifacts
+  - better-sqlite3 now loads correctly in standalone mode
+
 ## [0.1.20] - 2026-01-03
 
 ### Added
