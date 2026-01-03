@@ -99,6 +99,24 @@ export class DatabaseManager {
 
     // Create tables
     this.createTables();
+
+    // Cleanup stale agent sessions (older than 24 hours)
+    this.cleanupStaleAgentSessions();
+  }
+
+  /**
+   * Delete agent sessions that haven't been active in 24 hours
+   * Runs on startup to keep the database clean
+   */
+  private cleanupStaleAgentSessions(): void {
+    const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const result = this.db.prepare(
+      'DELETE FROM agent_sessions WHERE last_active_at < ?'
+    ).run(twentyFourHoursAgo);
+
+    if (result.changes > 0) {
+      console.error(`[SaveContext] Cleaned up ${result.changes} stale agent sessions`);
+    }
   }
 
   private createTables(): void {
