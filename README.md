@@ -365,6 +365,29 @@ savecontext-projects merge
 savecontext-projects merge --keep-source  # Don't delete source project after merge
 ```
 
+## Dashboard
+
+A local Next.js web interface for visual session, context, memory, plan, and issue management.
+
+### Running the Dashboard
+
+```bash
+cd savecontext/dashboard
+pnpm install
+pnpm dev          # runs on port 3333
+pnpm dev -p 4000  # or specify a custom port
+```
+
+### Features
+
+- **Projects View**: See all projects with session counts
+- **Sessions**: Browse sessions, view context items, manage checkpoints
+- **Memory**: View and manage project memory (commands, configs, notes)
+- **Issues**: Track tasks, bugs, features with Linear-style interface
+- **Plans**: Create and manage PRDs/specs linked to issues
+
+> **Note**: The dashboard reads from the same SQLite database as the MCP server (`~/.savecontext/data/savecontext.db`).
+
 ## Configuration
 
 <details>
