@@ -150,19 +150,31 @@ def parse_context_from_transcript(transcript_path):
         with open(transcript_path, 'r', encoding='utf-8', errors='replace') as f:
             lines = f.readlines()
 
-        # Find threshold from most recent compact_boundary preTokens
-        threshold = None
-        for line in reversed(lines):
+        # Collect ALL compact_boundary preTokens, use median (robust to outliers)
+        all_pre_tokens = []
+        for line in lines:
+            # Fast string filter before expensive JSON parsing
+            if 'compact_boundary' not in line:
+                continue
             try:
                 data = json.loads(line.strip())
                 if (data.get('type') == 'system' and
                     data.get('subtype') == 'compact_boundary'):
                     pre_tokens = data.get('compactMetadata', {}).get('preTokens', 0)
                     if pre_tokens > 0:
-                        threshold = pre_tokens
-                        break
+                        all_pre_tokens.append(pre_tokens)
             except:
                 continue
+
+        # Use median as threshold (handles outlier compaction points)
+        threshold = None
+        if all_pre_tokens:
+            sorted_tokens = sorted(all_pre_tokens)
+            mid = len(sorted_tokens) // 2
+            if len(sorted_tokens) % 2 == 0:
+                threshold = (sorted_tokens[mid - 1] + sorted_tokens[mid]) // 2
+            else:
+                threshold = sorted_tokens[mid]
 
         # Find current token count from most recent assistant message
         recent_lines = lines[-30:] if len(lines) > 30 else lines
