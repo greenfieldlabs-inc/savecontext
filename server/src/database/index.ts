@@ -43,25 +43,9 @@ import {
   UpdatePlanArgs,
   ListPlansArgs,
   SqliteBindValue,
+  Project,
+  DatabaseConfig,
 } from '../types/index.js';
-
-export interface Project {
-  id: string;
-  project_path: string;
-  name: string;
-  description: string | null;
-  issue_prefix: string | null;
-  next_issue_number: number;
-  plan_prefix: string | null;
-  next_plan_number: number;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface DatabaseConfig {
-  filename?: string;
-  dataDir?: string;
-}
 
 /**
  * Safely parse tags JSON string, returning empty array on error

@@ -19,7 +19,8 @@ import chalk from 'chalk';
 import ora from 'ora';
 import boxen from 'boxen';
 import { CloudClient } from '../cloud-client.js';
-import { DatabaseManager, Project } from '../database/index.js';
+import { DatabaseManager } from '../database/index.js';
+import { Project } from '../types/index.js';
 import {
   loadCredentials,
   getCloudApiUrl,
