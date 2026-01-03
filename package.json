@@ -1,10 +1,11 @@
 {
   "name": "savecontext",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "SaveContext - Never lose context in your AI coding sessions",
   "private": true,
   "workspaces": [
-    "server"
+    "server",
+    "dashboard"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
@@ -19,7 +20,7 @@
     "url": "https://github.com/greenfieldlabs-inc/savecontext.git"
   },
   "author": "Shane Monastero",
-  "license": "MIT",
+  "license": "AGPL-3.0",
   "engines": {
     "node": ">=18.0.0"
   }

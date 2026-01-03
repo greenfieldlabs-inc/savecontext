@@ -1,6 +1,6 @@
 {
   "name": "@savecontext/mcp",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "SaveContext MCP Server - Never lose context in your AI coding sessions",
   "main": "dist/index.js",
   "type": "module",
@@ -10,6 +10,9 @@
     "savecontext-migrate": "./dist/cli/migrate.js",
     "savecontext-sessions": "./dist/cli/sessions.js",
     "savecontext-projects": "./dist/cli/projects.js",
+    "savecontext-plans": "./dist/cli/plans.js",
+    "savecontext-issues": "./dist/cli/issues.js",
+    "savecontext-embeddings": "./dist/cli/embeddings.js",
     "savecontext-statusline": "./scripts/statusline.sh",
     "mcp": "./dist/index.js",
     "migrate": "./dist/cli/migrate.js"
@@ -23,11 +26,12 @@
     "skills"
   ],
   "scripts": {
-    "build": "tsc && cp src/database/schema.sql dist/database/ && cp -r skills dist/ && chmod +x dist/index.js dist/cli/migrate.js dist/cli/auth.js dist/cli/sessions.js dist/cli/projects.js dist/cli/setup.js",
+    "build": "tsc && cp src/database/schema.sql dist/database/ && cp -r src/database/migrations dist/database/ && cp -r skills dist/ && chmod +x dist/index.js dist/cli/migrate.js dist/cli/auth.js dist/cli/sessions.js dist/cli/projects.js dist/cli/plans.js dist/cli/issues.js dist/cli/setup.js dist/cli/embeddings.js",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "serve": "tsx src/index.ts",
-    "test": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prepublishOnly": "cp ../README.md ./README.md",
     "postpublish": "rm -f ./README.md"
   },
@@ -54,17 +58,20 @@
   "homepage": "https://savecontext.dev",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.2",
+    "@xenova/transformers": "^2.17.2",
     "better-sqlite3": "^11.6.0",
     "boxen": "^8.0.1",
     "chalk": "5",
     "clipboardy": "^5.0.1",
     "commander": "^14.0.2",
-    "ora": "^9.0.0"
+    "ora": "^9.0.0",
+    "sqlite-vec": "0.1.7-alpha.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^4.0.16"
   }
 }

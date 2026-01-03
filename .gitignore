@@ -4,6 +4,9 @@ node_modules/
 __pycache__/
 *.pyc
 
+# Tests
+tests/
+
 # Build outputs
 dist/
 build/
