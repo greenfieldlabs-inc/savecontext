@@ -5,6 +5,86 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.19] - 2026-01-02
+
+### Changed
+- **BREAKING: Task tools renamed to Issue tools** - All 13 task-related MCP tools renamed for clarity
+  - `context_task_create` → `context_issue_create`
+  - `context_task_update` → `context_issue_update`
+  - `context_task_list` → `context_issue_list`
+  - `context_task_complete` → `context_issue_complete`
+  - `context_task_claim` → `context_issue_claim`
+  - `context_task_release` → `context_issue_release`
+  - `context_task_get_ready` → `context_issue_get_ready`
+  - `context_task_get_next_block` → `context_issue_get_next_block`
+  - `context_task_create_batch` → `context_issue_create_batch`
+  - `context_task_add_dependency` → `context_issue_add_dependency`
+  - `context_task_remove_dependency` → `context_issue_remove_dependency`
+  - `context_task_add_labels` → `context_issue_add_labels`
+  - `context_task_remove_labels` → `context_issue_remove_labels`
+- **Parameter name changes** for issue tools
+  - `taskId` → `issueId`
+  - `task_ids` → `issue_ids`
+  - `taskType` → `issueType`
+  - `task_title` → `issue_title`
+  - `taskIndex` → `issueIndex` (in batch create)
+- **Status value changes** - Issue status now uses clearer terminology
+  - `pending` → `open`
+  - `done` → `closed`
+  - Full status set: `open`, `in_progress`, `blocked`, `closed`, `deferred`
+- **Database schema updated** - Local SQLite schema uses `issues` table instead of `tasks`
+  - Table renamed: `tasks` → `issues`
+  - Table renamed: `task_labels` → `issue_labels`
+  - Table renamed: `task_dependencies` → `issue_dependencies`
+  - Column renamed: `task_type` → `issue_type`
+  - Column renamed: `completed_at` → `closed_at`
+  - Column renamed: `completed_in_session` → `closed_in_session`
+- **CLI renamed** - `savecontext-tasks` → `savecontext-issues`
+- **Enhanced issue features** - Issues now support:
+  - Human-readable short IDs (e.g., PROJ-123)
+  - 5-level priority system (0=lowest to 4=critical)
+  - Issue types: task, bug, feature, epic, chore
+  - Parent-child hierarchies (Epic > Task > Subtask)
+  - Labels for categorization
+  - Dependencies between issues
+  - Plan linking
+  - Agent attribution tracking
+- **License changed from MIT to AGPL-3.0** - Commercial license available for proprietary use
+
+### Added
+- **Plans system** - Create PRDs and specifications, link issues to plans, track implementation progress
+  - `context_plan_create` - Create a new plan (PRD/specification)
+  - `context_plan_list` - List plans with status filtering
+  - `context_plan_get` - Get plan details with linked epics
+  - `context_plan_update` - Update plan title, content, status, or success criteria
+- **Project management tools** - Explicit project CRUD operations
+  - `context_project_create` - Create a new project with custom issue prefix
+  - `context_project_list` - List all projects with session counts
+  - `context_project_get` - Get project details by path
+  - `context_project_update` - Update project settings
+  - `context_project_delete` - Delete project with cascade
+- **Issue delete tool** - `context_issue_delete` for permanent issue removal
+- **Local embeddings library** - Multi-provider support for semantic search
+  - Ollama provider (recommended, uses nomic-embed-text)
+  - HuggingFace provider (cloud API, any HF model)
+  - Transformers.js fallback (in-process, no external deps)
+- **Embeddings CLI** - `savecontext-embeddings` for managing vector embeddings
+  - `status` - Check embedding provider and item status
+  - `backfill` - Generate embeddings for existing items
+  - `providers` - List available embedding providers
+- **Issues CLI** - `savecontext-issues` for issue management from command line
+- **Plans CLI** - `savecontext-plans` for plan management from command line
+- **Dashboard** - Local Next.js web interface for visual session and issue management
+- **Category rename** - `task` category renamed to `reminder` for clarity
+
+### Fixed
+- **Migration failures now propagate** - Previously, migration errors were silently logged but swallowed, causing the app to continue with broken schema. Now throws error immediately to fail fast.
+- **N+1 query in `tagContextItems()`** - Previously made 2 database calls per item in a loop. Now uses batch IN clause query + transaction wrapper for 10-100x performance improvement when tagging multiple items.
+- **Semantic search without active session** - `context_get` with `search_all_sessions: true` now works even when no session is active. Previously failed with "No active session" error despite not needing one.
+
+### Improved
+- **Database type safety** - Added `SqliteBindValue` type (`string | number | bigint | Buffer | null`) and replaced 11 instances of `params: any[]` with proper typing. Catches type errors at compile time (e.g., accidentally passing booleans which SQLite doesn't support).
+
 ## [0.1.18] - 2025-12-19
 
 ### Fixed

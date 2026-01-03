@@ -10,6 +10,7 @@ Detailed workflow patterns for common scenarios.
 - [Multi-Agent Coordination](#multi-agent-coordination)
 - [Branch Switching Workflow](#branch-switching-workflow)
 - [Semantic Search Patterns](#semantic-search-patterns)
+- [Implementation Planning Workflow](#implementation-planning-workflow)
 
 ---
 
@@ -177,7 +178,7 @@ context_save
 - Existing mobile sessions gracefully migrated
 
 **Estimated scope:** 12 files, ~400 lines changed"
-  category="task"
+  category="reminder"
   priority="high"
 
 # 3. Create checkpoint with git status
@@ -253,7 +254,7 @@ context_restore
 
 # 3. Check restored context
 context_get priority="high"
-context_get category="task"
+context_get category="reminder"
 ```
 
 ---
@@ -444,6 +445,278 @@ context_get  # Now see all items in that session
 
 ---
 
+## Implementation Planning Workflow
+
+For complex features requiring architectural planning before implementation.
+
+### When to Create a Plan
+
+Create a plan when:
+- Feature requires PRD/specification document
+- Work spans multiple epics or major components
+- Need to track success criteria separately from tasks
+- Multiple agents or developers will reference the same spec
+
+Skip plans for simple features where an epic with subtasks suffices.
+
+### Step 1: Enter Plan Mode
+
+Before creating a SaveContext plan, enter your tool's planning mode to explore the codebase and design the approach:
+
+**Claude Code (CLI):**
+```
+# Claude Code has an EnterPlanMode tool
+# Use it to explore codebase, understand architecture, design approach
+# Write your implementation plan in the plan file
+# Exit plan mode when ready to create SaveContext plan
+```
+
+**Other CLI Tools and AI Coding Agents:**
+- Enter your plan mode if available
+- Research existing patterns in the codebase
+- Understand affected files and dependencies
+- Draft implementation approach before committing to plan
+
+### Step 2: Create the Plan
+
+```
+context_plan_create
+  title="User Authentication System"
+  content="## Overview
+Implement OAuth2 authentication with JWT tokens and refresh token rotation.
+
+## Requirements
+1. Support Google and GitHub OAuth providers
+2. JWT access tokens (15min expiry)
+3. Refresh token rotation with family tracking
+4. Token revocation for logout
+
+## Technical Approach
+- Use passport.js for OAuth providers
+- RS256 JWT signing with key rotation
+- Refresh tokens stored in PostgreSQL with device fingerprinting
+
+## Files Affected
+- auth/*.ts - New authentication logic
+- middleware/auth.ts - JWT validation middleware
+- lib/tokens.ts - Token generation and validation
+- db/migrations/*.sql - User and token tables
+
+## Dependencies
+- jsonwebtoken, passport, passport-google-oauth20
+- @types/passport, @types/jsonwebtoken"
+  successCriteria="- All OAuth flows work end-to-end
+- Token refresh works without user re-auth
+- 95% test coverage on auth code
+- No increase in login latency (p99 < 200ms)"
+  status="active"
+```
+
+### Step 3: Create Epics Linked to Plan
+
+Break the plan into major work streams (epics):
+
+```
+# Epic 1: Core JWT infrastructure
+context_issue_create
+  title="Implement JWT token infrastructure"
+  issueType="epic"
+  planId="PLAN-abc123"
+  priority=3
+  description="Set up JWT generation, validation, and refresh token rotation"
+
+# Epic 2: OAuth provider integration
+context_issue_create
+  title="Integrate OAuth providers"
+  issueType="epic"
+  planId="PLAN-abc123"
+  priority=3
+  description="Add Google and GitHub OAuth using passport.js"
+
+# Epic 3: Auth middleware and protection
+context_issue_create
+  title="Implement auth middleware"
+  issueType="epic"
+  planId="PLAN-abc123"
+  priority=2
+  description="Create middleware for protected routes and token validation"
+```
+
+### Step 4: Create Tasks Under Epics
+
+Break epics into implementable tasks:
+
+```
+# Tasks for JWT infrastructure epic
+context_issue_create
+  title="Set up JWT key pair generation"
+  issueType="task"
+  parentId="EPIC-1"  # Parent epic ID
+  planId="PLAN-abc123"
+  description="Create script for RS256 key generation and rotation"
+
+context_issue_create
+  title="Implement access token generation"
+  issueType="task"
+  parentId="EPIC-1"
+  planId="PLAN-abc123"
+  description="Create lib/tokens.ts with sign/verify functions"
+
+context_issue_create
+  title="Add refresh token storage"
+  issueType="task"
+  parentId="EPIC-1"
+  planId="PLAN-abc123"
+  description="Create token_families table and repository"
+```
+
+### Step 5: Set Dependencies
+
+```
+# Token verification depends on token generation
+context_issue_add_dependency
+  issueId="TASK-verify-tokens"
+  dependsOnId="TASK-generate-tokens"
+  dependencyType="blocks"
+```
+
+### Step 6: Execute the Plan
+
+Combine issue tracking with context saves to preserve work across sessions:
+
+```
+# 1. Get ready issues (open, no blockers, unassigned)
+context_issue_get_ready
+
+# 2. Claim work
+context_issue_claim issue_ids=["TASK-jwt-gen"]
+
+# 3. Save what you're working on (for session continuity)
+context_save
+  key="working-on-jwt-gen"
+  value="Implementing JWT generation in lib/tokens.ts
+
+Approach: RS256 with rotating key pairs
+Files: lib/tokens.ts, lib/keys.ts
+Status: In progress"
+  category="progress"
+
+# 4. Do the work...
+
+# 5. Save any decisions made during implementation
+context_save
+  key="jwt-signing-decision"
+  value="## JWT Signing Algorithm
+
+Choice: RS256 over HS256
+Rationale: Asymmetric keys allow public verification without exposing secret
+Trade-off: Slightly larger tokens, key rotation complexity
+
+Impact: lib/tokens.ts, middleware/auth.ts"
+  category="decision"
+  priority="high"
+
+# 6. Save gotchas discovered
+context_save
+  key="jwt-gotcha-clockskew"
+  value="JWT validation fails with 'token not yet valid' if server clocks differ.
+
+Fix: Added 30s clockTolerance to jsonwebtoken verify options.
+File: lib/tokens.ts:47"
+  category="note"
+
+# 7. Complete the issue
+context_issue_complete id="TASK-jwt-gen" issue_title="Implement JWT generation"
+
+# 8. Update progress for the epic
+context_save
+  key="epic-jwt-progress"
+  value="## JWT Infrastructure Epic
+
+Completed:
+- TASK-jwt-gen: JWT generation with RS256 ✓
+
+In Progress:
+- TASK-jwt-verify: Token validation middleware
+
+Remaining:
+- TASK-refresh-tokens: Refresh token rotation
+
+Blockers: None
+Next: Implement verify middleware"
+  category="progress"
+
+# 9. Claim next issue and repeat
+context_issue_claim issue_ids=["TASK-jwt-verify"]
+```
+
+**Save Rhythm:**
+- **On claim**: Save what you're starting (category: progress)
+- **On decisions**: Save architectural choices immediately (category: decision, priority: high)
+- **On gotchas**: Save tricky issues and their fixes (category: note)
+- **On complete**: Update epic progress summary (category: progress)
+- **On blockers**: Save blocker details (category: reminder, priority: high)
+
+### Description Standards
+
+**Plan Descriptions:**
+```markdown
+## Overview
+One paragraph explaining the feature and its value.
+
+## Requirements
+Numbered list of functional requirements.
+
+## Technical Approach
+How you'll implement it (patterns, libraries, architecture).
+
+## Files Affected
+List of files/directories that will change.
+
+## Dependencies
+External packages needed.
+```
+
+**Epic Descriptions:**
+```markdown
+Brief statement of what this work stream accomplishes.
+
+Scope: [files or components affected]
+Depends on: [other epics if any]
+```
+
+**Task Descriptions:**
+```markdown
+Specific implementation details.
+File: [primary file to modify]
+Acceptance: [how to verify it's done]
+```
+
+### Plan Status Transitions
+
+```
+draft → active → completed
+```
+
+- **draft**: Plan is being written, not ready for implementation
+- **active**: Plan approved, epics/tasks can be worked
+- **completed**: All success criteria met
+
+### Viewing Plan Progress
+
+```
+# Get plan with linked epics
+context_plan_get plan_id="PLAN-abc123"
+
+# List issues linked to plan
+context_issue_list planId="PLAN-abc123"
+
+# Check epic completion
+context_issue_list planId="PLAN-abc123" issueType="epic"
+```
+
+---
+
 ## Checklist Templates
 
 ### Session Start Checklist
@@ -451,7 +724,7 @@ context_get  # Now see all items in that session
 - [ ] Call `context_session_start` with descriptive name
 - [ ] Check `context_status` for existing items
 - [ ] Review high-priority decisions: `context_get priority="high"`
-- [ ] Check current tasks: `context_get category="task"`
+- [ ] Check current tasks: `context_get category="reminder"`
 
 ### Pre-Checkpoint Checklist
 

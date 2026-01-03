@@ -1,12 +1,11 @@
-![SaveContext](https://pub-4304173ae3f74a77852a77192ab0b3e3.r2.dev/cover.png)
 <div align="center">
 
 # SaveContext
 
-**Persistent context management for AI coding sessions**
+**Local-first project memory for AI coding assistants**
 
 [![npm version](https://img.shields.io/npm/v/@savecontext/mcp?color=brightgreen)](https://www.npmjs.com/package/@savecontext/mcp)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-orange)](https://modelcontextprotocol.io)
 
 [Website](https://savecontext.dev) • [NPM](https://www.npmjs.com/package/@savecontext/mcp) • [Changelog](https://savecontext.dev/changelog)
@@ -17,12 +16,20 @@
 
 ## Overview
 
-SaveContext is a Model Context Protocol (MCP) server that provides stateful session management for AI coding assistants. It solves the problem of context loss when switching between AI tools or when conversations exceed token limits by maintaining persistent storage of decisions, tasks, and session state with checkpoint/restore capabilities.
+SaveContext is a Model Context Protocol (MCP) server that gives AI coding assistants persistent memory across sessions. It combines context management, issue tracking, and project planning into a single local-first tool that works with any MCP-compatible client.
+
+**Core capabilities:**
+- **Context & Memory** — Save decisions, progress, and notes that persist across conversations
+- **Issue Tracking** — Manage tasks, bugs, and epics with dependencies and hierarchies
+- **Plans & PRDs** — Create specs and link them to implementation issues
+- **Semantic Search** — Find past decisions by meaning, not just keywords
+- **Checkpoints** — Snapshot and restore session state at any point
 
 ## Features
 
+- **Local Semantic Search**: AI-powered search using Ollama or Transformers.js for offline embedding generation
 - **Multi-Agent Support**: Run multiple CLI/IDE instances simultaneously with agent-scoped session tracking
-- **Automatic Provider Detection**: Detects 30 MCP clients including coding tools (Claude Code, Cursor, Cline, VS Code, JetBrains, etc.) and desktop apps (Claude Desktop, Perplexity, ChatGPT, Raycast, etc.)
+- **Automatic Provider Detection**: Detects 30+ MCP clients including coding tools (Claude Code, Cursor, Cline, VS Code, JetBrains, etc.) and desktop apps (Claude Desktop, Perplexity, ChatGPT, Raycast, etc.)
 - **Session Lifecycle Management**: Full session state management with pause, resume, end, switch, and delete operations
 - **Multi-Path Sessions**: Sessions can span multiple related directories (monorepos, frontend/backend, etc.)
 - **Project Isolation**: Automatically filters sessions by project path - only see sessions from your current repository
@@ -34,6 +41,9 @@ SaveContext is a Model Context Protocol (MCP) server that provides stateful sess
 - **Channel System**: Automatically derive channels from git branches (e.g., `feature/auth` → `feature-auth`)
 - **Local Storage**: SQLite database with WAL mode for fast, reliable persistence
 - **Cross-Tool Compatible**: Works with any MCP-compatible client (Claude Code, Cursor, Factory, Codex, Cline, etc.)
+- **Fully Offline**: No cloud account required, all data stays on your machine
+- **Plans System**: Create PRDs and specs, link issues to plans, track implementation progress
+- **Dashboard UI**: Local Next.js web interface for visual session, context, and issue management
 
 ## Installation
 
@@ -60,23 +70,36 @@ pnpm build
 
 ---
 
-## Quick Start (Cloud)
+## Quick Start
 
-Get started with SaveContext Cloud in under a minute:
+Get started with SaveContext in under a minute:
 
 ```bash
 # 1. Install the package
 npm install -g @savecontext/mcp
 
-# 2. Authenticate with SaveContext Cloud
-savecontext-auth login
-
-# 3. Copy the MCP config (auto-copied to clipboard) and add to your AI tool
+# 2. Add to your AI tool's MCP config
 ```
 
-The CLI opens your browser for OAuth (GitHub or Google), then displays your MCP configuration ready to paste.
+Add this to your MCP configuration (Claude Code, Cursor, etc.):
 
-**Free tier included** - Start with generous limits, upgrade for higher usage. [View plans](https://savecontext.dev)
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "npx",
+      "args": ["-y", "@savecontext/mcp"]
+    }
+  }
+}
+```
+
+That's it! Your AI assistant now has persistent memory across sessions.
+
+**Optional:** Install [Ollama](https://ollama.com) for AI-powered semantic search:
+```bash
+ollama pull nomic-embed-text
+```
 
 ---
 
@@ -263,71 +286,9 @@ chmod +x ~/.savecontext/statusline.py ~/.savecontext/hooks/update-status-cache.p
 
 ---
 
-## CLI Authentication
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `savecontext-auth login` | Authenticate via browser OAuth (GitHub/Google) |
-| `savecontext-auth status` | Show authentication status, mode, and MCP URL |
-| `savecontext-auth whoami` | Display current user info (email, provider, key prefix) |
-| `savecontext-auth logout` | Clear local credentials (API key remains valid in cloud) |
-
-### Login Options
-
-```bash
-savecontext-auth login [options]
-
-Options:
-  -q, --quiet       Suppress decorative output (spinners, boxes)
-  --json            Machine-readable JSON output (implies --quiet)
-  --no-clipboard    Don't copy MCP config to clipboard
-  --no-save         Don't save credentials to disk (outputs full API key)
-  --redact          Hide API key in output (still saved to credentials file)
-```
-
-### Security Notes
-
-- **API key shown once**: The full API key is displayed only during login and cannot be retrieved again. Save it immediately.
-- **Clipboard**: By default, the MCP config (including API key) is copied to your clipboard. On shared machines, use `--no-clipboard` or clear your clipboard after pasting.
-- **Terminal history**: Consider clearing terminal scrollback if it's logged, as the API key is visible in output.
-- **Credentials stored**: Auth credentials are saved to `~/.savecontext/credentials.json` with 600 permissions (owner-only).
-
-### CI/Automation
-
-For headless environments or CI pipelines:
-
-```bash
-# JSON output, skip local storage, capture API key for secrets manager
-API_KEY=$(savecontext-auth login --json --no-save | jq -r '.apiKey')
-vault kv put secret/savecontext api_key="$API_KEY"
-
-# Quiet mode with clipboard disabled (still saves to ~/.savecontext/)
-savecontext-auth login --quiet --no-clipboard
-```
-
-The `--json` flag outputs:
-```json
-{
-  "success": true,
-  "email": "user@example.com",
-  "provider": "github",
-  "keyPrefix": "sk_abc",
-  "copied": false,
-  "saved": true
-}
-```
-
-- `saved: true` means credentials were written to `~/.savecontext/credentials.json`
-- `copied: true` means MCP config was copied to clipboard
-- `apiKey` field is only included when `--no-save` is used (otherwise omitted for security since it's saved to disk)
-
-When using `--no-save`, set `SAVECONTEXT_API_KEY` environment variable for subsequent CLI commands.
-
 ## CLI Session Management
 
-Manage sessions directly from the command line (requires cloud authentication).
+Manage sessions directly from the command line.
 
 ### Commands
 
@@ -371,7 +332,7 @@ savecontext-sessions remove-path [session_id]  # Remove a path
 
 ## CLI Project Management
 
-Manage projects directly from the command line (requires cloud authentication).
+Manage projects directly from the command line.
 
 ### Commands
 
@@ -406,46 +367,11 @@ savecontext-projects merge --keep-source  # Don't delete source project after me
 
 ## Configuration
 
-### HTTP Streamable Transport (Cloud Only)
-
-For MCP clients that support direct HTTP connections (without spawning a local process), SaveContext Cloud provides an HTTP endpoint:
-
-**Endpoint:** `https://mcp.savecontext.dev/mcp`
-
-**Example (Claude Desktop):**
-
-In Claude Desktop: Settings → Connectors → Add Custom Connector
-- **Name:** SaveContext
-- **URL:** `https://mcp.savecontext.dev/mcp`
-- **Headers:** `Authorization: Bearer sk_your_api_key_here`
-
-Or in `claude_desktop_config.json`:
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "type": "http",
-      "url": "https://mcp.savecontext.dev/mcp",
-      "headers": {
-        "Authorization": "Bearer sk_your_api_key_here"
-      }
-    }
-  }
-}
-```
-
-Use this pattern for any HTTP-capable MCP client. Replace `type: "stdio"` configs with `type: "http"` and the URL/headers above.
-
-**Note:** HTTP transport requires SaveContext Cloud (API key required). Local-only mode uses stdio transport.
-
----
-
 <details>
 <summary><b>Install in Claude Code</b></summary>
 
 <br>
 
-**Local Mode (Free)**
 ```json
 {
   "mcpServers": {
@@ -453,25 +379,6 @@ Use this pattern for any HTTP-capable MCP client. Replace `type: "stdio"` config
       "type": "stdio",
       "command": "npx",
       "args": ["-y", "@savecontext/mcp"]
-    }
-  }
-}
-```
-
-**Cloud Mode (Paid)**
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev",
-        "SAVECONTEXT_COMPACTION_THRESHOLD": "85",
-        "SAVECONTEXT_COMPACTION_MODE": "remind"
-      }
     }
   }
 }
@@ -489,29 +396,12 @@ Use this pattern for any HTTP-capable MCP client. Replace `type: "stdio"` config
 
 <br>
 
-**Local Mode (Free)**
 ```json
 {
   "mcpServers": {
     "savecontext": {
       "command": "npx",
       "args": ["-y", "@savecontext/mcp"]
-    }
-  }
-}
-```
-
-**Cloud Mode (Paid)**
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
     }
   }
 }
@@ -529,29 +419,12 @@ Use this pattern for any HTTP-capable MCP client. Replace `type: "stdio"` config
 
 <br>
 
-**Local Mode (Free)**
 ```json
 {
   "mcpServers": {
     "savecontext": {
       "command": "npx",
       "args": ["-y", "@savecontext/mcp"]
-    }
-  }
-}
-```
-
-**Cloud Mode (Paid)**
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
     }
   }
 }
@@ -564,7 +437,6 @@ Use this pattern for any HTTP-capable MCP client. Replace `type: "stdio"` config
 
 <br>
 
-**Local Mode (Free)**
 ```json
 {
   "mcp": {
@@ -573,25 +445,6 @@ Use this pattern for any HTTP-capable MCP client. Replace `type: "stdio"` config
         "type": "stdio",
         "command": "npx",
         "args": ["-y", "@savecontext/mcp"]
-      }
-    }
-  }
-}
-```
-
-**Cloud Mode (Paid)**
-```json
-{
-  "mcp": {
-    "servers": {
-      "savecontext": {
-        "type": "stdio",
-        "command": "npx",
-        "args": ["-y", "@savecontext/mcp"],
-        "env": {
-          "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-          "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-        }
       }
     }
   }
@@ -607,14 +460,8 @@ Use this pattern for any HTTP-capable MCP client. Replace `type: "stdio"` config
 
 Factory's droid supports MCP servers through its CLI.
 
-**Remote Server Connection (HTTP)**
 ```bash
-droid mcp add savecontext https://mcp.savecontext.dev --type http --header "SAVECONTEXT_API_KEY: sk_your_api_key_here"
-```
-
-**Local Server Connection (Stdio)**
-```bash
-droid mcp add savecontext "npx -y @savecontext/mcp" --env SAVECONTEXT_API_KEY=sk_your_api_key_here
+droid mcp add savecontext "npx -y @savecontext/mcp"
 ```
 
 </details>
@@ -624,19 +471,11 @@ droid mcp add savecontext "npx -y @savecontext/mcp" --env SAVECONTEXT_API_KEY=sk
 
 <br>
 
-**Local Server Connection**
 ```toml
 [mcp_servers.savecontext]
-args = ["-y", "@savecontext/mcp", "--api-key", "sk_your_api_key_here"]
+args = ["-y", "@savecontext/mcp"]
 command = "npx"
 startup_timeout_ms = 20_000
-```
-
-**Remote Server Connection**
-```toml
-[mcp_servers.savecontext]
-url = "https://mcp.savecontext.dev"
-http_headers = { "SAVECONTEXT_API_KEY" = "sk_your_api_key_here" }
 ```
 
 </details>
@@ -646,31 +485,12 @@ http_headers = { "SAVECONTEXT_API_KEY" = "sk_your_api_key_here" }
 
 <br>
 
-**Remote Server Connection**
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "serverUrl": "https://mcp.savecontext.dev",
-      "headers": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here"
-      }
-    }
-  }
-}
-```
-
-**Local Server Connection**
 ```json
 {
   "mcpServers": {
     "savecontext": {
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
+      "args": ["-y", "@savecontext/mcp"]
     }
   }
 }
@@ -691,11 +511,7 @@ Add this to your Zed `settings.json`:
     "SaveContext": {
       "source": "custom",
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
+      "args": ["-y", "@savecontext/mcp"]
     }
   }
 }
@@ -708,12 +524,6 @@ Add this to your Zed `settings.json`:
 
 <br>
 
-**Remote Server Connection**
-
-Open Claude Desktop and navigate to Settings > Connectors > Add Custom Connector. Enter the name as `SaveContext` and the remote MCP server URL as `https://mcp.savecontext.dev`.
-
-**Local Server Connection**
-
 Open Claude Desktop developer settings and edit your `claude_desktop_config.json` file:
 
 ```json
@@ -721,11 +531,7 @@ Open Claude Desktop developer settings and edit your `claude_desktop_config.json
   "mcpServers": {
     "savecontext": {
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
+      "args": ["-y", "@savecontext/mcp"]
     }
   }
 }
@@ -753,11 +559,7 @@ Open Claude Desktop developer settings and edit your `claude_desktop_config.json
   "mcpServers": {
     "savecontext": {
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
+      "args": ["-y", "@savecontext/mcp"]
     }
   }
 }
@@ -774,8 +576,6 @@ Open Claude Desktop developer settings and edit your `claude_desktop_config.json
 
 Roo Code natively supports MCP servers.
 
-**Local Mode (Free)**
-
 Edit Roo Code's MCP settings:
 
 ```json
@@ -789,50 +589,12 @@ Edit Roo Code's MCP settings:
 }
 ```
 
-**Cloud Mode (Paid)**
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
-    }
-  }
-}
-```
-
 </details>
 
 <details>
 <summary><b>Install in Augment Code</b></summary>
 
 <br>
-
-**Remote Server Connection**
-
-In Augment Code settings, add remote MCP server:
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "savecontext": {
-        "url": "https://mcp.savecontext.dev",
-        "headers": {
-          "SAVECONTEXT_API_KEY": "sk_your_api_key_here"
-        }
-      }
-    }
-  }
-}
-```
-
-**Local Server Connection**
 
 ```json
 {
@@ -841,11 +603,7 @@ In Augment Code settings, add remote MCP server:
       "savecontext": {
         "type": "stdio",
         "command": "npx",
-        "args": ["-y", "@savecontext/mcp"],
-        "env": {
-          "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-          "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-        }
+        "args": ["-y", "@savecontext/mcp"]
       }
     }
   }
@@ -866,11 +624,7 @@ Add to your Kilo Code MCP configuration:
   "mcpServers": {
     "savecontext": {
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
+      "args": ["-y", "@savecontext/mcp"]
     }
   }
 }
@@ -888,9 +642,7 @@ Add SaveContext to your Gemini CLI configuration:
 ```bash
 gemini mcp add savecontext \
   --command "npx" \
-  --args "-y @savecontext/mcp" \
-  --env SAVECONTEXT_API_KEY=sk_your_api_key_here \
-  --env SAVECONTEXT_BASE_URL=https://mcp.savecontext.dev
+  --args "-y @savecontext/mcp"
 ```
 
 </details>
@@ -907,11 +659,7 @@ Navigate to Perplexity Desktop Settings → Integrations → MCP Servers:
   "mcpServers": {
     "savecontext": {
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
+      "args": ["-y", "@savecontext/mcp"]
     }
   }
 }
@@ -932,11 +680,7 @@ In LM Studio, go to Settings → Tools → MCP and add:
     "savecontext": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
+      "args": ["-y", "@savecontext/mcp"]
     }
   }
 }
@@ -957,11 +701,7 @@ Add to your Copilot Coding Agent configuration:
     "servers": {
       "savecontext": {
         "command": "npx",
-        "args": ["-y", "@savecontext/mcp"],
-        "env": {
-          "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-          "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-        }
+        "args": ["-y", "@savecontext/mcp"]
       }
     }
   }
@@ -980,8 +720,6 @@ Configure via GitHub Copilot CLI settings:
 ```bash
 gh copilot config set mcp.servers.savecontext.command "npx"
 gh copilot config set mcp.servers.savecontext.args "-y @savecontext/mcp"
-gh copilot config set mcp.servers.savecontext.env.SAVECONTEXT_API_KEY "sk_your_api_key_here"
-gh copilot config set mcp.servers.savecontext.env.SAVECONTEXT_BASE_URL "https://mcp.savecontext.dev"
 ```
 
 </details>
@@ -998,11 +736,7 @@ In Warp terminal, navigate to Settings → AI → MCP Servers:
   "mcpServers": {
     "savecontext": {
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
+      "args": ["-y", "@savecontext/mcp"]
     }
   }
 }
@@ -1023,11 +757,7 @@ Add to Qodo Gen MCP configuration file:
     "savecontext": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
+      "args": ["-y", "@savecontext/mcp"]
     }
   }
 }
@@ -1046,10 +776,6 @@ In your Replit project, add to `.replit` configuration:
 [mcp.servers.savecontext]
 command = "npx"
 args = ["-y", "@savecontext/mcp"]
-
-[mcp.servers.savecontext.env]
-SAVECONTEXT_API_KEY = "sk_your_api_key_here"
-SAVECONTEXT_BASE_URL = "https://mcp.savecontext.dev"
 ```
 
 </details>
@@ -1066,11 +792,7 @@ Configure in Amazon Q Developer settings:
   "mcpServers": {
     "savecontext": {
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
+      "args": ["-y", "@savecontext/mcp"]
     }
   }
 }
@@ -1085,8 +807,6 @@ Configure in Amazon Q Developer settings:
 
 Add to Cody's MCP server configuration:
 
-**Local Mode (Free)**
-
 ```json
 {
   "mcp": {
@@ -1094,25 +814,6 @@ Add to Cody's MCP server configuration:
       "savecontext": {
         "command": "npx",
         "args": ["-y", "@savecontext/mcp"]
-      }
-    }
-  }
-}
-```
-
-**Cloud Mode (Paid)**
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "savecontext": {
-        "command": "npx",
-        "args": ["-y", "@savecontext/mcp"],
-        "env": {
-          "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-          "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-        }
       }
     }
   }
@@ -1133,11 +834,7 @@ In Tabnine settings, navigate to Extensions → MCP:
   "mcpServers": {
     "savecontext": {
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
+      "args": ["-y", "@savecontext/mcp"]
     }
   }
 }
@@ -1157,11 +854,7 @@ Open the "Settings" page of the app, navigate to "Plugins," and enter the follow
   "mcpServers": {
     "savecontext": {
       "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
+      "args": ["-y", "@savecontext/mcp"]
     }
   }
 }
@@ -1178,7 +871,6 @@ For more information, see [BoltAI's Documentation](https://docs.boltai.com/docs/
 
 Add this to your Opencode configuration file. See [Opencode MCP docs](https://opencode.ai/docs/mcp-servers) for more info.
 
-**Local Mode:**
 ```json
 {
   "mcp": {
@@ -1186,23 +878,6 @@ Add this to your Opencode configuration file. See [Opencode MCP docs](https://op
       "type": "local",
       "command": ["npx", "-y", "@savecontext/mcp"],
       "enabled": true
-    }
-  }
-}
-```
-
-**Cloud Mode:**
-```json
-{
-  "mcp": {
-    "savecontext": {
-      "type": "local",
-      "command": ["npx", "-y", "@savecontext/mcp"],
-      "enabled": true,
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
     }
   }
 }
@@ -1220,29 +895,12 @@ See [Qwen Coder MCP Configuration](https://qwenlm.github.io/qwen-code-docs/en/to
 1. Open the Qwen Coder settings file at `~/.qwen/settings.json`
 2. Add the following to the `mcpServers` object:
 
-**Local Mode:**
 ```json
 {
   "mcpServers": {
     "savecontext": {
       "command": "npx",
       "args": ["-y", "@savecontext/mcp"]
-    }
-  }
-}
-```
-
-**Cloud Mode:**
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
     }
   }
 }
@@ -1261,7 +919,6 @@ Configure SaveContext MCP in Visual Studio 2022 by following the [Visual Studio 
 
 Add this to your Visual Studio MCP config file:
 
-**Local Mode:**
 ```json
 {
   "mcp": {
@@ -1270,25 +927,6 @@ Add this to your Visual Studio MCP config file:
         "type": "stdio",
         "command": "npx",
         "args": ["-y", "@savecontext/mcp"]
-      }
-    }
-  }
-}
-```
-
-**Cloud Mode:**
-```json
-{
-  "mcp": {
-    "servers": {
-      "savecontext": {
-        "type": "stdio",
-        "command": "npx",
-        "args": ["-y", "@savecontext/mcp"],
-        "env": {
-          "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-          "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-        }
       }
     }
   }
@@ -1306,29 +944,12 @@ For more information and troubleshooting, refer to the [Visual Studio MCP Server
 
 Add this to your Windsurf MCP config file. See [Windsurf MCP docs](https://docs.windsurf.com/windsurf/cascade/mcp) for more info.
 
-**Local Mode:**
 ```json
 {
   "mcpServers": {
     "savecontext": {
       "command": "npx",
       "args": ["-y", "@savecontext/mcp"]
-    }
-  }
-}
-```
-
-**Cloud Mode:**
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev"
-      }
     }
   }
 }
@@ -1349,17 +970,11 @@ For local development (running from source):
     "savecontext": {
       "type": "stdio",
       "command": "node",
-      "args": ["/path/to/savecontext/server/dist/index.js"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "http://localhost:3001"
-      }
+      "args": ["/path/to/savecontext/server/dist/index.js"]
     }
   }
 }
 ```
-
-For local-only development (no cloud API), omit both `SAVECONTEXT_API_KEY` and `SAVECONTEXT_BASE_URL`.
 
 </details>
 
@@ -1406,137 +1021,127 @@ Control when and how SaveContext preserves context before your conversation wind
 - Pair programming: `threshold=80, mode=remind`
 - Short tasks: `threshold=90, mode=manual`
 
-#### Cloud Mode (SaveContext Cloud)
+#### Local Semantic Search
 
-SaveContext supports two modes of operation:
+SaveContext supports local semantic search using vector embeddings. When enabled, `context_get` can find items by meaning rather than just keywords.
 
-| Feature | Local Mode | Cloud Mode |
-|---------|------------|------------|
-| **Storage** | SQLite on your machine | PostgreSQL cloud database |
-| **Data Location** | `~/.savecontext/data/savecontext.db` | [savecontext.dev](https://savecontext.dev) |
-| **Rate Limits** | None | Based on plan tier |
-| **Account Required** | No | Yes |
-| **Multi-Device Sync** | No | Yes |
-| **Automatic Backups** | No | Yes |
-| **Team Collaboration** | No | Coming soon |
-| **Analytics Dashboard** | No | Coming soon |
-| **Pricing** | Free forever | Free tier included, [plans available](https://savecontext.dev) |
+**How It Works:**
+1. When you save context items, embeddings are generated in the background
+2. The `context_get` tool's `query` parameter uses vector similarity to find relevant items
+3. Falls back to keyword search if no embedding provider is available
 
-**Local Mode (Default - Free)**
-- Uses local SQLite database (`~/.savecontext/data/savecontext.db`)
-- All data stored on your machine
-- No rate limits or usage restrictions
-- No account required
-- Open source and self-hosted
+**Setting Up Ollama (Recommended):**
 
-**Cloud Mode (SaveContext Cloud)**
-- Uses PostgreSQL-backed cloud API at [savecontext.dev](https://savecontext.dev)
-- Session data synced to cloud storage
-- Access sessions from multiple devices
-- Automatic backups and disaster recovery
-- Advanced analytics dashboard (coming soon)
-- Team collaboration features (coming soon)
-- Free tier included with generous limits
-- [Plans available](https://savecontext.dev) for higher usage
-
-**Configuring Cloud Mode:**
-
-The easiest way to get started is with the CLI:
+[Ollama](https://ollama.ai) provides fast, local embedding generation:
 
 ```bash
-npm install -g @savecontext/mcp
-savecontext-auth login
+# Install Ollama
+brew install ollama  # macOS
+# or download from https://ollama.ai
+
+# Pull the embedding model
+ollama pull nomic-embed-text
+
+# Ollama runs automatically in the background
 ```
 
-This opens your browser for OAuth authentication and copies the MCP config to your clipboard.
+SaveContext will automatically detect and use Ollama when available.
 
-Alternatively, sign up at [savecontext.dev](https://savecontext.dev) and manually configure:
+**Using HuggingFace (Custom Models):**
 
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
-      "env": {
-        "SAVECONTEXT_API_KEY": "sk_your_api_key_here",
-        "SAVECONTEXT_BASE_URL": "https://mcp.savecontext.dev",
-        "SAVECONTEXT_COMPACTION_THRESHOLD": "85",
-        "SAVECONTEXT_COMPACTION_MODE": "remind"
-      }
-    }
-  }
-}
+Use any embedding model from HuggingFace Hub:
+
+```bash
+# Set your HuggingFace token
+export HF_TOKEN=hf_your_token_here
+
+# Optionally specify a custom model
+export HF_MODEL=BAAI/bge-base-en-v1.5
 ```
+
+Supported models include: `sentence-transformers/all-MiniLM-L6-v2`, `BAAI/bge-*`, `thenlper/gte-*`, `intfloat/e5-*`, `nomic-ai/nomic-embed-text-v1.5`, and any HuggingFace embedding model.
+
+**Fallback to Transformers.js:**
+
+If no other provider is available, SaveContext falls back to [@xenova/transformers](https://github.com/xenova/transformers.js) which runs entirely in-process. This is slower but requires no external dependencies.
+
+**Provider Comparison:**
+
+| Feature | Ollama | HuggingFace | Transformers.js |
+|---------|--------|-------------|-----------------|
+| Speed | Fast (~50ms) | Medium (~200ms) | Slower (~500ms) |
+| Model | nomic-embed-text | Any HF model | all-MiniLM-L6-v2 |
+| Setup | Requires install | HF_TOKEN env | Automatic |
+| Location | Local | Cloud API | In-process |
 
 **Environment Variables:**
 
-- `SAVECONTEXT_API_KEY` - Your API key from SaveContext Cloud (format: `sk_*`)
-  - If present: enables cloud mode
-  - If absent: uses local SQLite mode
-- `SAVECONTEXT_BASE_URL` - Cloud API endpoint (default: `https://mcp.savecontext.dev`)
-  - For development: `http://localhost:3001`
-  - For production: `https://mcp.savecontext.dev`
+| Variable | Description |
+|----------|-------------|
+| `SAVECONTEXT_EMBEDDINGS_ENABLED` | Set to `false` to disable embeddings |
+| `SAVECONTEXT_EMBEDDING_PROVIDER` | Force provider: `ollama`, `huggingface`, or `transformers` |
+| `OLLAMA_ENDPOINT` | Ollama API URL (default: `http://localhost:11434`) |
+| `OLLAMA_MODEL` | Ollama model (default: `nomic-embed-text`) |
+| `HF_TOKEN` | HuggingFace API token (required for HF provider) |
+| `HF_MODEL` | HuggingFace model ID (default: `sentence-transformers/all-MiniLM-L6-v2`) |
 
-**How Cloud Mode Works:**
+**Embeddings CLI:**
 
-When an API key is provided, the MCP server acts as a lightweight proxy:
-
-```
-MCP Client (Claude Desktop, etc.)
-    ↓ stdio
-Local MCP Server Process
-    ↓ HTTPS (if API key present)
-SaveContext Cloud API (PostgreSQL)
-```
-
-The server detects the mode at startup and routes all operations accordingly. All tool calls work identically in both modes - the only difference is where data is stored.
-
-**Migrating Local Data to Cloud:**
-
-If you have existing local data and want to migrate it to SaveContext Cloud, use the migration CLI:
+Manage embeddings with the `savecontext-embeddings` command:
 
 ```bash
-# Using npx (recommended)
-npx -y -p @savecontext/mcp savecontext-migrate <api-key>
+# Check embedding status and coverage
+savecontext-embeddings status
 
-# Or with environment variable
-SAVECONTEXT_API_KEY=sk_your_key npx -y -p @savecontext/mcp savecontext-migrate
+# Generate embeddings for items without them
+savecontext-embeddings backfill
+savecontext-embeddings backfill --limit 500         # Process up to 500 items
+savecontext-embeddings backfill --provider ollama   # Force specific provider
+savecontext-embeddings backfill --dry-run           # Preview without generating
 
-# If installed globally
-savecontext-migrate <api-key>
+# View and configure providers
+savecontext-embeddings providers                    # List available providers
+savecontext-embeddings models                       # List supported HuggingFace models
+savecontext-embeddings config                       # View current configuration
+savecontext-embeddings config --provider ollama     # Set preferred provider
+savecontext-embeddings config --enabled false       # Disable embeddings
+
+# Reset embeddings (useful when switching models)
+savecontext-embeddings reset                        # Prompts for confirmation
+savecontext-embeddings reset --force                # Skip confirmation
 ```
 
-The migration tool will:
-1. Check if your cloud account is empty (migration only works for new accounts)
-2. Read your local SQLite database
-3. Upload all sessions, context items, checkpoints, project memory, and tasks
-4. Validate against your tier limits before migrating
+**Config File:**
 
-**Important Notes:**
-- Migration is one-time only - it requires an empty cloud account
-- Your local data is preserved after migration
-- Tier limits are enforced server-side:
-  - **Free**: 300 API calls/month, 100 context items, 3 projects, 5 checkpoints
-  - **Pro**: 3,000 API calls/month, 5,000 context items, 10 projects, unlimited checkpoints
-  - **Max**: 15,000 API calls/month, unlimited context items, unlimited projects, unlimited checkpoints
-  - **Custom limits for teams available** - Contact support@savecontext.dev for details
+Settings persist in `~/.savecontext/config.json`. The CLI's `config` command manages this file.
 
-**New Files Added for Cloud Support:**
+**Keyword Fallback:**
 
-- `src/cloud-client.ts` - HTTP client for cloud API communication with Bearer token authentication
-- `src/cli/migrate.ts` - Migration CLI for local to cloud data transfer
-- `src/types/index.ts` - Complete type definitions shared between local and cloud modes
+When no embedding provider is available, `context_get` with a `query` parameter uses keyword matching instead:
+- Splits query into keywords (3+ characters)
+- Scores items by keyword matches in key and value
+- Returns top matches sorted by score
+- Response includes `search_mode: "keyword"` and a tip to install Ollama
 
-All validation, type safety, and MCP protocol handling remains consistent across both modes.
+**Using Semantic Search:**
+
+```javascript
+// Find items by meaning
+context_get({ query: "how did we handle authentication" })
+
+// Combine with filters
+context_get({ query: "database decisions", category: "decision" })
+
+// Adjust threshold (lower = more results)
+context_get({ query: "API endpoints", threshold: 0.3 })
+
+// Search across all sessions
+context_get({ query: "payment integration", search_all_sessions: true })
+```
 
 ## Architecture
 
-SaveContext operates in two modes with different architectures:
-
-### Local Mode Architecture
-
-In local mode (default), all data is stored on your machine in SQLite:
+All data is stored locally on your machine in SQLite:
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -1560,86 +1165,41 @@ In local mode (default), all data is stored on your machine in SQLite:
 - **No network calls** - all data stays local
 - **Unlimited usage** - no rate limits
 
-### Cloud Mode Architecture
-
-In cloud mode, the local MCP server acts as a thin proxy to the cloud API:
-
-```
-┌────────────────────────────────────────┐
-│  Your Machine                          │
-│  ┌───────────────────┐                 │
-│  │  AI Coding Tool   │                 │
-│  │  (Claude Code,    │                 │
-│  │   Cursor, etc.)   │                 │
-│  └─────────┬─────────┘                 │
-│            │ stdio                     │
-│            ▼                           │
-│  ┌───────────────────┐                 │
-│  │  SaveContext MCP  │                 │
-│  │  Server (proxy)   │                 │
-│  └─────────┬─────────┘                 │
-└────────────┼───────────────────────────┘
-             │ HTTPS + Bearer Token
-             ▼
-┌────────────────────────────────────────┐
-│  SaveContext Cloud                     │
-│  ┌───────────────────┐                 │
-│  │  API Gateway      │                 │
-│  │  (Lambda)         │                 │
-│  └─────────┬─────────┘                 │
-│            │                           │
-│            ▼                           │
-│  ┌───────────────────┐                 │
-│  │  PostgreSQL (RDS) │                 │
-│  │  with encryption  │                 │
-│  └───────────────────┘                 │
-└────────────────────────────────────────┘
-```
-
-- **Multi-device sync** - access sessions from anywhere
-- **Automatic backups** - managed PostgreSQL with point-in-time recovery
-- **Team features** (coming soon) - share context across team members
-
-### HTTP Transport (Cloud Only)
-
-For MCP clients that support direct HTTP connections, SaveContext Cloud also offers HTTP Streamable Transport - bypassing the local stdio proxy entirely:
-
-```
-┌───────────────────┐          ┌───────────────────────────┐
-│  AI Coding Tool   │──HTTPS──►│  SaveContext Cloud API    │
-│  (HTTP-capable)   │          │  mcp.savecontext.dev/mcp  │
-└───────────────────┘          └───────────────────────────┘
-```
-
-This is useful for tools like Claude Desktop that support HTTP connectors natively.
-
 ### Server Implementation
 
-The MCP server is built on `@modelcontextprotocol/sdk` and provides 35 tools for context management, including session lifecycle, memory storage, task management, and checkpoints. The server maintains a single active session per connection and stores data either in a local SQLite database (local mode) or via cloud API (cloud mode).
+The MCP server is built on `@modelcontextprotocol/sdk` and provides 52 tools for context management, including session lifecycle, memory storage, issue tracking, plan management, and checkpoints. The server maintains a single active session per connection and stores data in a local SQLite database with optional semantic search via sqlite-vec.
 
 ```
 server/
 ├── src/
-│   ├── index.ts              # MCP server with tool handlers
-│   ├── cloud-client.ts       # HTTP client for cloud API
+│   ├── index.ts              # MCP server entry point
+│   ├── cloud-client.ts       # Cloud API client (legacy, to be removed)
 │   ├── cli/
-│   │   ├── auth.ts           # savecontext-auth CLI
-│   │   ├── device-flow.ts    # RFC 8628 device authorization
-│   │   ├── migrate.ts        # Local to cloud migration
 │   │   ├── sessions.ts       # savecontext-sessions CLI
-│   │   └── projects.ts       # savecontext-projects CLI
+│   │   ├── projects.ts       # savecontext-projects CLI
+│   │   ├── embeddings.ts     # savecontext-embeddings CLI
+│   │   ├── issues.ts         # savecontext-issues CLI
+│   │   ├── plans.ts          # savecontext-plans CLI
+│   │   ├── migrate.ts        # savecontext-migrate CLI (cloud→local)
+│   │   ├── auth.ts           # savecontext-auth CLI (legacy)
+│   │   ├── device-flow.ts    # OAuth device flow (legacy)
+│   │   └── setup.ts          # --setup-skill, --setup-statusline
 │   ├── database/
 │   │   ├── index.ts          # DatabaseManager class
-│   │   └── schema.sql        # SQLite schema
-│   ├── utils/
-│   │   ├── channels.ts       # Channel derivation
-│   │   ├── config.ts         # Credentials and state management
-│   │   ├── constants.ts      # Shared constants
-│   │   ├── git.ts            # Git branch and status
-│   │   ├── project.ts        # Project path utilities
-│   │   └── validation.ts     # Input validation
-│   └── types/
-│       └── index.ts          # TypeScript type definitions
+│   │   ├── schema.sql        # SQLite schema
+│   │   └── migrations/       # 10 migration files
+│   ├── tools/
+│   │   └── registry.ts       # Tool definitions (52 MCP tools)
+│   ├── lib/
+│   │   └── embeddings/
+│   │       ├── index.ts      # Provider exports
+│   │       ├── factory.ts    # Provider factory
+│   │       ├── ollama.ts     # Ollama provider
+│   │       ├── huggingface.ts # HuggingFace provider
+│   │       ├── transformers.ts # Transformers.js fallback
+│   │       └── chunker.ts    # Text chunking
+│   ├── types/                # 18 domain type files
+│   └── utils/                # Shared utilities
 └── dist/                     # Compiled JavaScript
 ```
 
@@ -1664,10 +1224,15 @@ The server uses SQLite with the following schema:
 - `session_id` (TEXT) - Foreign key to sessions
 - `key` (TEXT) - Unique identifier within session
 - `value` (TEXT) - Context content
-- `category` (TEXT) - One of: task, decision, progress, note
+- `category` (TEXT) - One of: reminder, decision, progress, note
 - `priority` (TEXT) - One of: high, normal, low
 - `channel` (TEXT) - Channel for filtering
 - `size` (INTEGER) - Character count
+- `embedding_status` (TEXT) - Embedding state: none, pending, complete, failed
+- `embedding_provider` (TEXT) - Which provider generated the embedding
+- `embedding_model` (TEXT) - Model used for embedding
+- `embedding_dimensions` (INTEGER) - Vector dimensions (768 for Ollama, 384 for Transformers.js)
+- `embedded_at` (INTEGER) - Timestamp when embedding was generated
 - `created_at` (INTEGER)
 - `updated_at` (INTEGER)
 
@@ -1713,17 +1278,38 @@ This enables multi-agent support: multiple tools can work on the same session si
 
 Memory persists across sessions and is accessible by all agents working on the project. Useful for storing frequently used commands, API endpoints, deployment instructions, etc.
 
-**tasks** - Simple task management for tracking work across sessions
+**vec_context_items** - Vector embeddings for semantic search (sqlite-vec virtual table)
+- `item_id` (TEXT PRIMARY KEY) - Foreign key to context_items
+- `embedding` (float[768]) - Vector embedding for similarity search
+
+**embeddings_config** - Stores embedding provider configuration
 - `id` (TEXT PRIMARY KEY)
-- `project_path` (TEXT) - Project directory path
-- `title` (TEXT) - Task title
-- `description` (TEXT) - Optional task description
-- `status` (TEXT) - todo or done
+- `provider` (TEXT) - Provider name: ollama or transformers
+- `model` (TEXT) - Model name (e.g., nomic-embed-text, all-MiniLM-L6-v2)
+- `dimensions` (INTEGER) - Vector dimensions
+- `endpoint` (TEXT) - API endpoint (for Ollama)
 - `created_at` (INTEGER)
 - `updated_at` (INTEGER)
-- `completed_at` (INTEGER) - Timestamp when marked done
 
-Tasks are project-scoped and persist across all sessions for that project.
+**issues** - Issue tracking for managing work across sessions
+- `id` (TEXT PRIMARY KEY)
+- `short_id` (TEXT) - Human-readable ID (e.g., PROJ-123)
+- `project_path` (TEXT) - Project directory path
+- `title` (TEXT) - Issue title
+- `description` (TEXT) - Optional issue description
+- `details` (TEXT) - Implementation details or notes
+- `status` (TEXT) - open, in_progress, blocked, closed, or deferred
+- `priority` (INTEGER) - 0=lowest, 1=low, 2=medium, 3=high, 4=critical
+- `issue_type` (TEXT) - task, bug, feature, epic, or chore
+- `parent_id` (TEXT) - Parent issue ID for subtasks
+- `created_in_session` (TEXT) - Session ID where issue was created
+- `closed_in_session` (TEXT) - Session ID where issue was closed
+- `created_at` (INTEGER)
+- `updated_at` (INTEGER)
+- `closed_at` (INTEGER) - Timestamp when closed
+- `deferred_at` (INTEGER) - Timestamp when deferred
+
+Issues are project-scoped and persist across all sessions for that project. Supports hierarchies (Epic > Task > Subtask), labels, and dependencies.
 
 ### Channel System
 
@@ -1767,7 +1353,7 @@ Creates a new session and sets it as active. Auto-derives channel from git branc
 {
   key: string,                              // Required: unique identifier
   value: string,                            // Required: context content
-  category?: 'task'|'decision'|'progress'|'note',  // Default: 'note'
+  category?: 'reminder'|'decision'|'progress'|'note',  // Default: 'note'
   priority?: 'high'|'normal'|'low',        // Default: 'normal'
   channel?: string                          // Default: session channel
 }
@@ -1777,15 +1363,18 @@ Saves a context item to the active session.
 **context_get**
 ```javascript
 {
-  key?: string,          // Optional: retrieve specific item
-  category?: string,     // Optional: filter by category
-  priority?: string,     // Optional: filter by priority
-  channel?: string,      // Optional: filter by channel
-  limit?: number,        // Default: 100
-  offset?: number        // Default: 0
+  query?: string,              // RECOMMENDED: semantic search by meaning (e.g., "how did we handle auth")
+  search_all_sessions?: boolean,  // Search across ALL sessions (default: false)
+  threshold?: number,          // Semantic search threshold 0-1, lower = more results (default: 0.5)
+  key?: string,                // Exact key to retrieve specific item (bypasses search)
+  category?: string,           // Filter by category
+  priority?: string,           // Filter by priority
+  channel?: string,            // Filter by channel
+  limit?: number,              // Default: 100
+  offset?: number              // Default: 0
 }
 ```
-Retrieves context items with optional filtering.
+Retrieves context items with optional filtering. Use `query` for semantic search by meaning, or `key` for exact retrieval.
 
 **context_delete**
 ```javascript
@@ -1809,7 +1398,7 @@ Returns:
 {
   key: string,                                      // Required: key of item to update
   value?: string,                                   // Optional: new value
-  category?: 'task'|'decision'|'progress'|'note',  // Optional: new category
+  category?: 'reminder'|'decision'|'progress'|'note',  // Optional: new category
   priority?: 'high'|'normal'|'low',                // Optional: new priority
   channel?: string                                  // Optional: new channel
 }
@@ -1863,13 +1452,14 @@ Renames the current active session. Requires `current_name` for verification to 
 **context_list_sessions**
 ```javascript
 {
+  search?: string,             // RECOMMENDED: keyword search on name and description
   limit?: number,              // Default: 10
   project_path?: string,       // Optional: filter by project path (defaults to current directory)
   status?: string,             // Optional: 'active', 'paused', 'completed', or 'all'
   include_completed?: boolean  // Default: false
 }
 ```
-Lists recent sessions ordered by most recently updated. By default, filters to show only sessions from the current project path and excludes completed sessions.
+Lists recent sessions ordered by most recently updated. Use `search` to find sessions by name or description. By default, filters to show only sessions from the current project path and excludes completed sessions.
 
 **context_session_end**
 
@@ -1993,7 +1583,7 @@ Returns:
 }
 ```
 
-### Project Memory & Tasks
+### Project Memory & Issues
 
 **context_memory_save**
 ```javascript
@@ -2092,113 +1682,382 @@ Returns:
 }
 ```
 
-**context_task_create**
+**context_issue_create**
 ```javascript
 {
-  title: string,         // Required: task title
-  description?: string   // Optional: task description
+  title: string,                            // Required: issue title
+  description?: string,                     // Optional: issue description
+  details?: string,                         // Optional: implementation details
+  priority?: number,                        // Optional: 0-4 (default: 2=medium)
+  issueType?: 'task'|'bug'|'feature'|'epic'|'chore',  // Default: 'task'
+  parentId?: string,                        // Optional: parent issue ID for subtasks
+  labels?: string[],                        // Optional: labels for categorization
+  planId?: string,                          // Optional: link to a plan
+  status?: 'open'|'in_progress'|'blocked'|'closed'|'deferred'  // Default: 'open'
 }
 ```
-Creates a new task for the current project. Tasks persist across all sessions and are accessible by all agents working on this project. Simple todo/done status tracking.
+Creates a new issue for the current project. Issues persist across all sessions and are accessible by all agents working on this project. Supports hierarchies (Epic > Task > Subtask), priority levels, labels, and dependencies.
 
 Returns:
 ```javascript
 {
   success: true,
-  task: {
-    id: "task_...",
+  issue: {
+    id: "issue_...",
+    shortId: "PROJ-1",
     title: "Implement user authentication",
     description: "Add JWT-based auth with refresh tokens",
-    status: "todo",
-    project_path: "/Users/you/project",
-    created_at: 1730577600000
+    status: "open",
+    priority: 2,
+    issueType: "feature",
+    projectPath: "/Users/you/project",
+    createdAt: 1730577600000
   },
-  message: "Created task: Implement user authentication"
+  message: "Created issue: Implement user authentication"
 }
 ```
 
-**context_task_update**
+**context_issue_update**
 ```javascript
 {
-  task_id: string,       // Required: ID of task to update
-  title?: string,        // Optional: new title
-  description?: string,  // Optional: new description
-  status?: 'todo'|'done' // Optional: new status
+  id: string,                               // Required: ID of issue to update
+  issue_title: string,                      // Required: current title for verification
+  title?: string,                           // Optional: new title
+  description?: string,                     // Optional: new description
+  details?: string,                         // Optional: new implementation details
+  status?: 'open'|'in_progress'|'blocked'|'closed'|'deferred',  // Optional: new status
+  priority?: number,                        // Optional: new priority (0-4)
+  issueType?: 'task'|'bug'|'feature'|'epic'|'chore',  // Optional: new type
+  parentId?: string | null,                 // Optional: new parent (null to remove)
+  planId?: string | null,                   // Optional: link to plan (null to remove)
+  add_project_path?: string,                // Optional: add issue to additional project
+  remove_project_path?: string              // Optional: remove issue from project
 }
 ```
-Updates an existing task. Can modify title, description, or status. At least one field to update is required. When marking a task as 'done', automatically sets the `completed_at` timestamp.
+Updates an existing issue. Can modify title, description, status, priority, type, parent, or plan link. Supports multi-project issues via `add_project_path`/`remove_project_path`. When changing status to 'closed', automatically sets the `closed_at` timestamp.
 
 Returns:
 ```javascript
 {
   success: true,
-  task: {
-    id: "task_...",
+  issue: {
+    id: "issue_...",
+    shortId: "PROJ-1",
     title: "Implement user authentication",
     description: "Add JWT-based auth with refresh tokens",
-    status: "done",
-    updated_at: 1730577600000,
-    completed_at: 1730577600000
+    status: "closed",
+    updatedAt: 1730577600000,
+    closedAt: 1730577600000
   },
-  message: "Updated task"
+  message: "Updated issue"
 }
 ```
 
-**context_task_list**
+**context_issue_list**
 ```javascript
 {
-  status?: 'todo'|'done'|'all'  // Optional: filter by status (default: 'all')
+  status?: 'open'|'in_progress'|'blocked'|'closed'|'deferred',  // Optional: filter by status
+  priority?: number,                        // Optional: filter by exact priority (0-4)
+  priority_min?: number,                    // Optional: minimum priority
+  priority_max?: number,                    // Optional: maximum priority
+  issueType?: 'task'|'bug'|'feature'|'epic'|'chore',  // Optional: filter by type
+  parentId?: string,                        // Optional: filter by parent issue
+  planId?: string,                          // Optional: filter by plan (issues linked to a plan)
+  labels?: string[],                        // Optional: filter by labels (all must match)
+  labels_any?: string[],                    // Optional: filter by labels (any must match)
+  has_subtasks?: boolean,                   // Optional: filter by has subtasks
+  has_dependencies?: boolean,               // Optional: filter by has dependencies
+  all_projects?: boolean,                   // Optional: search all projects (default: false)
+  sortBy?: 'priority'|'createdAt'|'updatedAt',  // Default: 'createdAt'
+  sortOrder?: 'asc'|'desc',                 // Default: 'desc'
+  limit?: number                            // Optional: max results
 }
 ```
-Lists tasks for the current project with optional status filtering. Returns tasks ordered by creation date (newest first).
+Lists issues for the current project with filtering and sorting. Use `planId` to find issues linked to a specific plan. Use `all_projects: true` to search across all projects. Returns issues ordered by creation date (newest first) by default.
 
 Returns:
 ```javascript
 {
   success: true,
-  tasks: [
+  issues: [
     {
-      id: "task_...",
+      id: "issue_...",
+      shortId: "PROJ-2",
       title: "Fix login bug",
       description: "Users can't login with special characters in password",
-      status: "todo",
-      created_at: 1730577600000,
-      updated_at: 1730577600000
+      status: "open",
+      priority: 3,
+      issueType: "bug",
+      createdAt: 1730577600000,
+      updatedAt: 1730577600000
     },
     {
-      id: "task_...",
+      id: "issue_...",
+      shortId: "PROJ-1",
       title: "Add password reset",
-      status: "done",
-      created_at: 1730577500000,
-      completed_at: 1730577800000
+      status: "closed",
+      priority: 2,
+      issueType: "feature",
+      createdAt: 1730577500000,
+      closedAt: 1730577800000
     }
   ],
   count: 2,
-  project_path: "/Users/you/project"
+  projectPath: "/Users/you/project"
 }
 ```
 
-**context_task_complete**
+**context_issue_complete**
 ```javascript
 {
-  task_id: string  // Required: ID of task to mark as done
+  id: string,          // Required: ID of issue to mark as closed
+  issue_title: string  // Required: issue title for verification
 }
 ```
-Quick convenience method to mark a task as done. Equivalent to `context_task_update` with `status: 'done'`, but more concise. Automatically sets the `completed_at` timestamp.
+Quick convenience method to mark an issue as closed. Equivalent to `context_issue_update` with `status: 'closed'`, but more concise. Automatically sets the `closed_at` timestamp and unblocks dependent issues.
 
 Returns:
 ```javascript
 {
   success: true,
-  task: {
-    id: "task_...",
+  issue: {
+    id: "issue_...",
+    shortId: "PROJ-1",
     title: "Implement user authentication",
-    status: "done",
-    completed_at: 1730577600000
+    status: "closed",
+    closedAt: 1730577600000
   },
-  message: "Task marked as done"
+  message: "Issue marked as closed"
 }
 ```
+
+**context_issue_claim**
+```javascript
+{
+  issue_ids: string[]  // Required: IDs of issues to claim
+}
+```
+Claim issues for the current agent. Marks them as in_progress and assigns to the current agent. Use for coordinating work across multiple agents.
+
+**context_issue_release**
+```javascript
+{
+  issue_ids: string[]  // Required: IDs of issues to release
+}
+```
+Release claimed issues back to the pool. Unassigns and sets status back to open.
+
+**context_issue_get_ready**
+```javascript
+{
+  limit?: number,                           // Optional: max results (default: 10)
+  sortBy?: 'priority'|'createdAt'           // Optional: sort field (default: 'priority')
+}
+```
+Get issues that are ready to work on (open, no blocking dependencies, not assigned to another agent).
+
+**context_issue_get_next_block**
+```javascript
+{
+  count?: number,                           // Optional: number to claim (default: 3)
+  priority_min?: number,                    // Optional: minimum priority
+  labels?: string[]                         // Optional: filter by labels
+}
+```
+Get next block of ready issues and claim them. Smart issue assignment for agents working through a backlog.
+
+**context_issue_create_batch**
+```javascript
+{
+  issues: [                                 // Required: array of issues to create
+    {
+      title: string,
+      description?: string,
+      details?: string,
+      priority?: number,
+      issueType?: string,
+      labels?: string[],
+      parentId?: string,                    // Can use "$N" to reference by array index
+      planId?: string
+    }
+  ],
+  dependencies?: [                          // Optional: dependencies between issues
+    {
+      issueIndex: number,                   // Index of issue in array
+      dependsOnIndex: number,               // Index of dependency in array
+      dependencyType?: 'blocks'|'related'|'parent-child'|'discovered-from'
+    }
+  ],
+  planId?: string                           // Optional: link all issues to a plan
+}
+```
+Create multiple issues at once with dependencies. Useful for breaking down plans into issue hierarchies. Supports referencing other issues in the batch by index.
+
+**context_issue_add_dependency**
+```javascript
+{
+  issueId: string,                          // Required: issue that will have the dependency
+  dependsOnId: string,                      // Required: issue it depends on
+  dependencyType?: 'blocks'|'related'|'parent-child'|'discovered-from'  // Default: 'blocks'
+}
+```
+Add a dependency between issues. The issue will depend on another issue.
+
+**context_issue_remove_dependency**
+```javascript
+{
+  issueId: string,                          // Required: issue with the dependency
+  dependsOnId: string                       // Required: issue it depends on
+}
+```
+Remove a dependency between issues.
+
+**context_issue_add_labels**
+```javascript
+{
+  id: string,                               // Required: issue ID
+  labels: string[]                          // Required: labels to add
+}
+```
+Add labels to an issue for categorization.
+
+**context_issue_remove_labels**
+```javascript
+{
+  id: string,                               // Required: issue ID
+  labels: string[]                          // Required: labels to remove
+}
+```
+Remove labels from an issue.
+
+**context_issue_delete**
+```javascript
+{
+  id: string,          // Required: ID of issue to delete
+  issue_title: string  // Required: issue title for verification
+}
+```
+Delete an issue permanently. Also removes all dependencies. Cannot be undone.
+
+Returns:
+```javascript
+{
+  success: true,
+  deleted: true,
+  id: "issue_...",
+  shortId: "PROJ-1",
+  title: "Old issue title"
+}
+```
+
+### Plan Management
+
+**context_plan_create**
+```javascript
+{
+  title: string,             // Required: plan title
+  content: string,           // Required: plan content in markdown
+  status?: 'draft'|'active'|'completed',  // Default: 'draft'
+  successCriteria?: string,  // Optional: success criteria
+  project_path?: string      // Optional: defaults to current directory
+}
+```
+Create a new plan (PRD/specification) for the current project. Plans organize work into epics and tasks.
+
+Returns:
+```javascript
+{
+  success: true,
+  plan: {
+    id: "plan_...",
+    shortId: "PLAN-1",
+    title: "User Authentication System",
+    status: "draft",
+    projectPath: "/Users/you/project",
+    createdAt: 1730577600000
+  }
+}
+```
+
+**context_plan_list**
+```javascript
+{
+  status?: 'draft'|'active'|'completed'|'all',  // Default: 'active'
+  project_path?: string,     // Optional: filter by project
+  limit?: number             // Default: 50
+}
+```
+List plans for the current project with filtering.
+
+**context_plan_get**
+```javascript
+{
+  plan_id: string  // Required: ID of plan to retrieve
+}
+```
+Get details of a specific plan including linked epics and issues.
+
+**context_plan_update**
+```javascript
+{
+  id: string,                // Required: ID of plan to update
+  title?: string,            // Optional: new title
+  content?: string,          // Optional: new content
+  status?: 'draft'|'active'|'completed',  // Optional: new status
+  successCriteria?: string   // Optional: new success criteria
+}
+```
+Update a plan's title, content, status, or success criteria.
+
+### Project Management
+
+**context_project_create**
+```javascript
+{
+  project_path: string,      // Required: absolute path to project
+  name?: string,             // Optional: display name (defaults to folder name)
+  description?: string,      // Optional: project description
+  issue_prefix?: string      // Optional: prefix for issue IDs (e.g., "SC" creates SC-1)
+}
+```
+Create a new project. Projects must be created before starting sessions.
+
+**context_project_list**
+```javascript
+{
+  include_session_count?: boolean,  // Default: false
+  limit?: number                    // Default: 50
+}
+```
+List all projects with optional session counts.
+
+**context_project_get**
+```javascript
+{
+  project_path: string  // Required: absolute path to project
+}
+```
+Get details of a specific project by path.
+
+**context_project_update**
+```javascript
+{
+  project_path: string,      // Required: absolute path to project
+  name?: string,             // Optional: new project name
+  description?: string,      // Optional: new description
+  issue_prefix?: string      // Optional: new issue prefix
+}
+```
+Update project settings (name, description, issue prefix).
+
+**context_project_delete**
+```javascript
+{
+  project_path: string,      // Required: absolute path to project
+  confirm: boolean           // Required: must be true to confirm deletion
+}
+```
+Delete a project and all associated data (issues, plans, memory). Sessions are unlinked but not deleted.
 
 ### Checkpoint Management
 
@@ -2221,12 +2080,13 @@ Creates a named checkpoint of the current session state. Supports selective chec
 ```javascript
 {
   checkpoint_id: string,           // Required: checkpoint ID to restore
+  checkpoint_name: string,         // Required: checkpoint name (for verification)
   // Filtering options for selective restoration:
   restore_tags?: string[],         // Only restore items with these tags
   restore_categories?: string[]    // Only restore items in these categories
 }
 ```
-Restores context items from a checkpoint into the current session. Supports selective restoration via filters.
+Restores context items from a checkpoint into the current session. Requires both `checkpoint_id` and `checkpoint_name` for verification. Supports selective restoration via filters.
 
 **context_tag**
 ```javascript
@@ -2243,24 +2103,27 @@ Tag context items for organization and filtering. Supports tagging by specific k
 ```javascript
 {
   checkpoint_id: string,   // Required: checkpoint to modify
+  checkpoint_name: string, // Required: checkpoint name (for verification)
   item_keys: string[]      // Required: keys of items to add
 }
 ```
-Add items to an existing checkpoint. Use to incrementally build up checkpoints or add items you forgot to include.
+Add items to an existing checkpoint. Requires both ID and name for verification. Use to incrementally build up checkpoints or add items you forgot to include.
 
 **context_checkpoint_remove_items**
 ```javascript
 {
   checkpoint_id: string,   // Required: checkpoint to modify
+  checkpoint_name: string, // Required: checkpoint name (for verification)
   item_keys: string[]      // Required: keys of items to remove
 }
 ```
-Remove items from an existing checkpoint. Use to fix checkpoints that contain unwanted items or to clean up mixed work streams.
+Remove items from an existing checkpoint. Requires both ID and name for verification. Use to fix checkpoints that contain unwanted items or to clean up mixed work streams.
 
 **context_checkpoint_split**
 ```javascript
 {
   source_checkpoint_id: string,  // Required: checkpoint to split
+  source_checkpoint_name: string,  // Required: checkpoint name (for verification)
   splits: [                      // Required: split configurations
     {
       name: string,              // Required: name for new checkpoint
@@ -2271,7 +2134,7 @@ Remove items from an existing checkpoint. Use to fix checkpoints that contain un
   ]
 }
 ```
-Split a checkpoint into multiple checkpoints based on tags or categories. Use to separate mixed work streams into organized checkpoints.
+Split a checkpoint into multiple checkpoints based on tags or categories. Requires both ID and name for verification. Use to separate mixed work streams into organized checkpoints.
 
 **Workflow Example: Splitting a Mixed Checkpoint**
 ```javascript
@@ -2299,6 +2162,7 @@ context_tag({
 // Step 3: Split checkpoint using tags
 context_checkpoint_split({
   source_checkpoint_id: "ckpt_abc123",
+  source_checkpoint_name: "mixed-work-checkpoint",
   splits: [
     {
       name: "auth-work",
@@ -2313,16 +2177,20 @@ context_checkpoint_split({
 // Returns warnings if item counts look wrong (0 items or all items)
 
 // Step 4: Delete original mixed checkpoint
-context_checkpoint_delete({ checkpoint_id: "ckpt_abc123" })
+context_checkpoint_delete({
+  checkpoint_id: "ckpt_abc123",
+  checkpoint_name: "mixed-work-checkpoint"
+})
 ```
 
 **context_checkpoint_delete**
 ```javascript
 {
-  checkpoint_id: string  // Required: checkpoint to delete
+  checkpoint_id: string,    // Required: checkpoint to delete
+  checkpoint_name: string   // Required: checkpoint name (for verification)
 }
 ```
-Delete a checkpoint permanently. Use to clean up failed, duplicate, or unwanted checkpoints. Cannot be undone.
+Delete a checkpoint permanently. Requires both ID and name for verification. Use to clean up failed, duplicate, or unwanted checkpoints. Cannot be undone.
 
 **context_list_checkpoints**
 ```javascript
@@ -2451,4 +2319,4 @@ See [CONTRIBUTING.md](https://github.com/greenfieldlabs-inc/savecontext/blob/mai
 
 ## License
 
-MIT - see [LICENSE](https://github.com/greenfieldlabs-inc/savecontext/blob/main/LICENSE)
+AGPL-3.0 - see [LICENSE](https://github.com/greenfieldlabs-inc/savecontext/blob/main/LICENSE). Commercial license available for proprietary use.
