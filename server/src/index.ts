@@ -148,8 +148,51 @@ async function initializeEmbeddings(): Promise<void> {
       console.error('[SaveContext] Embeddings will be regenerated with new provider dimensions');
     }
     console.error(`[SaveContext] Semantic search: enabled (${info.provider}/${info.model}, ${info.dimensions}d)`);
+
+    // Run startup backfill for any items missing embeddings
+    runStartupBackfill().catch((err) => {
+      console.error('[SaveContext] Startup backfill failed:', err);
+    });
   } else {
     console.error('[SaveContext] Semantic search: disabled (install Ollama for local embeddings)');
+  }
+}
+
+/**
+ * Automatically backfill embeddings for items that were saved when provider wasn't ready.
+ * Runs at startup after embedding provider is initialized.
+ */
+async function runStartupBackfill(): Promise<void> {
+  if (!embeddingProvider) return;
+
+  const stats = db.getEmbeddingStats();
+  if (stats.pending === 0) return;
+
+  console.error(`[SaveContext] Backfilling ${stats.pending} items missing embeddings...`);
+
+  const items = db.getAllItemsNeedingEmbeddings(50); // Process in batches of 50
+  let processed = 0;
+  let errors = 0;
+
+  for (const item of items) {
+    try {
+      await generateEmbeddingAsync(item.id, item.value);
+      processed++;
+    } catch {
+      errors++;
+    }
+  }
+
+  if (errors > 0) {
+    console.error(`[SaveContext] Backfill complete: ${processed} processed, ${errors} errors`);
+  } else if (processed > 0) {
+    console.error(`[SaveContext] Backfill complete: ${processed} items embedded`);
+  }
+
+  // If there are more items, schedule another batch
+  const remaining = db.getEmbeddingStats().pending;
+  if (remaining > 0) {
+    console.error(`[SaveContext] ${remaining} items remaining, will process on next startup`);
   }
 }
 
