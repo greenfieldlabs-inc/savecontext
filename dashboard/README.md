@@ -15,8 +15,11 @@ npx @savecontext/dashboard -p 4000
 
 ## Requirements
 
+- Node.js 20.x (native module compatibility)
 - SaveContext MCP server must be installed and have created data
 - Reads from `~/.savecontext/data/savecontext.db`
+
+> Note: Next release will use Bun for cross-platform compatibility.
 
 ## Links
 

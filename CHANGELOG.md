@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.22] - 2026-01-03
+
+### Fixed
+- **Dashboard null stats crash** - Fixed TypeError when stats contain null values (empty issues table)
+  - Added null coalescing for all stats returned from database queries
+  - Dashboard now works correctly for new users with no issues
+
+### Changed
+- **Node 20.x requirement** - Dashboard requires Node.js 20.x for native module compatibility
+  - Documented in dashboard README
+  - Future release will use Bun for cross-platform compatibility
+
 ## [0.1.21] - 2026-01-03
 
 ### Fixed

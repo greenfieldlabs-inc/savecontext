@@ -115,6 +115,8 @@ npx @savecontext/dashboard
 npx @savecontext/dashboard -p 4000
 ```
 
+> **Note:** Dashboard currently requires Node.js 20.x for native module compatibility. Next release will use Bun for cross-platform support.
+
 **Features:**
 - **Projects View**: See all projects with session counts
 - **Sessions**: Browse sessions, view context items, manage checkpoints

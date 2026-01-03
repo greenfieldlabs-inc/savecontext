@@ -471,20 +471,20 @@ export function getStats(): Stats {
       SUM(CASE WHEN status = 'open' OR status = 'in_progress' OR status = 'blocked' THEN 1 ELSE 0 END) as todo,
       SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) as done
     FROM issues
-  `).get() as { total: number; todo: number; done: number };
+  `).get() as { total: number; todo: number | null; done: number | null };
 
   return {
-    total_sessions: sessionStats.total,
-    active_sessions: sessionStats.active,
-    paused_sessions: sessionStats.paused,
-    completed_sessions: sessionStats.completed,
-    total_context_items: itemCount.count,
-    total_checkpoints: checkpointCount.count,
-    total_projects: projectCount.count,
-    total_memory_items: memoryCount.count,
-    total_tasks: issueStats.total,
-    tasks_todo: issueStats.todo,
-    tasks_done: issueStats.done
+    total_sessions: sessionStats.total || 0,
+    active_sessions: sessionStats.active || 0,
+    paused_sessions: sessionStats.paused || 0,
+    completed_sessions: sessionStats.completed || 0,
+    total_context_items: itemCount.count || 0,
+    total_checkpoints: checkpointCount.count || 0,
+    total_projects: projectCount.count || 0,
+    total_memory_items: memoryCount.count || 0,
+    total_tasks: issueStats.total || 0,
+    tasks_todo: issueStats.todo || 0,
+    tasks_done: issueStats.done || 0
   };
 }
 
