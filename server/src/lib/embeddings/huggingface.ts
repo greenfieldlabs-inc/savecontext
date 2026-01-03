@@ -73,6 +73,10 @@ export class HuggingFaceEmbeddingProvider implements EmbeddingProvider {
 
     try {
       // Quick test with minimal input using feature-extraction pipeline
+      // 5 second timeout for availability check
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+
       const response = await fetch(
         `${this.endpoint}/models/${this.model}/pipeline/feature-extraction`,
         {
@@ -82,8 +86,11 @@ export class HuggingFaceEmbeddingProvider implements EmbeddingProvider {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ inputs: 'test' }),
+          signal: controller.signal,
         }
       );
+
+      clearTimeout(timeout);
 
       // Model might be loading (503), that's okay
       if (response.status === 503) {

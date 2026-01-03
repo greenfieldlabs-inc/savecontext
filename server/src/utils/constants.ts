@@ -12,6 +12,9 @@ export const COMPACTION_REMINDER_LIMIT = 20;
 export const COMPACTION_PROGRESS_LIMIT = 10;
 export const COMPACTION_ITEM_COUNT_THRESHOLD = 40;
 
+// Embedding provider
+export const EMBEDDING_PROVIDER_RETRY_INTERVAL = 60000; // 1 minute between retries
+
 // Schema constraints
 export const SESSION_NAME_MAX_LENGTH = 200;
 export const CONTEXT_VALUE_MAX_LENGTH = 100000;

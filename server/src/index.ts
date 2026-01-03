@@ -29,6 +29,7 @@ import {
   COMPACTION_PROGRESS_LIMIT,
   COMPACTION_ITEM_COUNT_THRESHOLD,
   CONTEXT_ITEMS_DEFAULT_LIMIT,
+  EMBEDDING_PROVIDER_RETRY_INTERVAL,
 } from './utils/constants.js';
 import { tools } from './tools/registry.js';
 
@@ -123,7 +124,7 @@ import {
   GetReadyIssuesArgs,
   CreateBatchArgs,
 } from './types/index.js';
-import { loadConfig } from './utils/config.js';
+import { loadConfig, getEmbeddingSettings } from './utils/config.js';
 import { updateStatusLine, refreshStatusCache } from './utils/status-cache.js';
 import { createEmbeddingProvider, getProviderInfo } from './lib/embeddings/factory.js';
 import { chunkText } from './lib/embeddings/chunker.js';
@@ -134,6 +135,34 @@ const db = new DatabaseManager();
 
 // Initialize embedding provider (for local semantic search)
 let embeddingProvider: EmbeddingProvider | null = null;
+let lastProviderRetry = 0;
+
+/**
+ * Get embedding provider with lazy retry.
+ * If provider failed at startup, retry periodically instead of staying broken forever.
+ */
+async function getEmbeddingProviderWithRetry(): Promise<EmbeddingProvider | null> {
+  // Already have a working provider
+  if (embeddingProvider) return embeddingProvider;
+
+  // Don't retry too frequently
+  const now = Date.now();
+  if (now - lastProviderRetry < EMBEDDING_PROVIDER_RETRY_INTERVAL) {
+    return null;
+  }
+
+  // Try to initialize
+  lastProviderRetry = now;
+  embeddingProvider = await createEmbeddingProvider();
+
+  if (embeddingProvider) {
+    const info = getProviderInfo(embeddingProvider);
+    console.error(`[SaveContext] Semantic search: recovered (${info.provider}/${info.model}, ${info.dimensions}d)`);
+    db.ensureVecDimensions(info.dimensions!);
+  }
+
+  return embeddingProvider;
+}
 
 async function initializeEmbeddings(): Promise<void> {
   embeddingProvider = await createEmbeddingProvider();
@@ -152,7 +181,12 @@ async function initializeEmbeddings(): Promise<void> {
       console.error('[SaveContext] Startup backfill failed:', err);
     });
   } else {
-    console.error('[SaveContext] Semantic search: disabled (install Ollama for local embeddings)');
+    const config = getEmbeddingSettings();
+    if (config?.provider) {
+      console.error(`[SaveContext] Semantic search: ${config.provider} unavailable at startup (will retry on first search)`);
+    } else {
+      console.error('[SaveContext] Semantic search: disabled (no provider configured)');
+    }
   }
 }
 
@@ -674,10 +708,11 @@ async function handleGetContext(args: any) {
       const limit = validated.limit || CONTEXT_ITEMS_DEFAULT_LIMIT;
       const threshold = typeof args.threshold === 'number' ? args.threshold : 0.5;
 
-      // Try semantic search first if provider available
-      if (embeddingProvider) {
+      // Try semantic search first if provider available (with lazy retry)
+      const provider = await getEmbeddingProviderWithRetry();
+      if (provider) {
         try {
-          const queryEmbedding = await embeddingProvider.generateEmbedding(query);
+          const queryEmbedding = await provider.generateEmbedding(query);
           const searchSessionId = searchAllSessions ? null : sessionId;
           const semanticResults = getDb().semanticSearch(queryEmbedding, searchSessionId, {
             threshold,
@@ -740,12 +775,21 @@ async function handleGetContext(args: any) {
 
       const items = scoredItems.map((s) => s.item);
 
+      // Show helpful tip based on configured provider
+      const embeddingConfig = getEmbeddingSettings();
+      let tip: string | undefined;
+      if (!provider) {
+        tip = embeddingConfig?.provider
+          ? `${embeddingConfig.provider} provider unavailable - will retry automatically`
+          : 'Configure an embedding provider for semantic search';
+      }
+
       const response = {
         items,
         total: items.length,
         session_id: sessionId,
         search_mode: 'keyword',
-        tip: embeddingProvider ? undefined : 'Install Ollama for AI-powered semantic search',
+        tip,
       };
 
       return success(response, `Found ${items.length} items (keyword search)`);
