@@ -5,6 +5,10 @@
  *
  * This CLI is for USER operations (organizing sessions).
  * Agent lifecycle operations (start, resume, switch, pause) should be done via MCP tools.
+ *
+ * Supports both local (SQLite) and cloud modes:
+ * - Local mode (default): Uses local SQLite database
+ * - Cloud mode: When SAVECONTEXT_API_KEY is set
  */
 
 import { createInterface } from 'node:readline';
@@ -16,6 +20,8 @@ import chalk from 'chalk';
 import ora from 'ora';
 import boxen from 'boxen';
 import { CloudClient } from '../cloud-client.js';
+import { DatabaseManager } from '../database/index.js';
+import type { Session } from '../types/index.js';
 import {
   loadCredentials,
   getCloudApiUrl,
@@ -28,7 +34,7 @@ const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-
 
 const program = new Command();
 
-// Session list response type
+// Session list response type (unified for both modes)
 interface SessionListItem {
   id: string;
   name: string;
@@ -46,17 +52,243 @@ interface SessionListResponse {
   total?: number;
 }
 
-/**
- * Get CloudClient instance with API key
- */
-function getClient(): CloudClient {
+// Mode detection
+type Mode = 'local' | 'cloud';
+
+function getMode(): Mode {
   const apiKey = process.env.SAVECONTEXT_API_KEY || loadCredentials()?.apiKey;
-  if (!apiKey) {
-    console.error(chalk.red('\nNot authenticated.'));
-    console.error(chalk.dim('Run "savecontext-auth login" first.\n'));
-    process.exit(1);
-  }
+  return apiKey ? 'cloud' : 'local';
+}
+
+/**
+ * Get CloudClient instance (only for cloud mode)
+ */
+function getCloudClient(): CloudClient | null {
+  const apiKey = process.env.SAVECONTEXT_API_KEY || loadCredentials()?.apiKey;
+  if (!apiKey) return null;
   return new CloudClient(apiKey, getCloudApiUrl());
+}
+
+/**
+ * Get DatabaseManager instance (for local mode)
+ */
+let _dbManager: DatabaseManager | null = null;
+function getDbManager(): DatabaseManager {
+  if (!_dbManager) {
+    _dbManager = new DatabaseManager();
+  }
+  return _dbManager;
+}
+
+/**
+ * Convert local Session to SessionListItem format
+ */
+function sessionToListItem(session: Session, itemCount?: number): SessionListItem {
+  return {
+    id: session.id,
+    name: session.name,
+    description: session.description,
+    status: session.status || 'active',
+    project_paths: session.project_path ? [session.project_path] : undefined,
+    item_count: itemCount,
+    created_at: session.created_at,
+    updated_at: session.updated_at,
+  };
+}
+
+type SessionStatus = 'active' | 'paused' | 'completed' | 'all';
+
+/**
+ * Session operations that work in both local and cloud modes
+ */
+async function fetchSessions(options: {
+  project_path?: string;
+  limit?: number;
+  include_completed?: boolean;
+  status?: SessionStatus;
+  search?: string;
+}): Promise<{ success: boolean; message?: string; data?: SessionListResponse }> {
+  const mode = getMode();
+
+  if (mode === 'cloud') {
+    const client = getCloudClient()!;
+    return client.listSessions(options);
+  }
+
+  // Local mode
+  const db = getDbManager();
+  const sessions = db.listSessions(options.limit || 50, {
+    project_path: options.project_path,
+    status: options.status,
+    include_completed: options.include_completed,
+  });
+
+  // Convert to SessionListItem format with item counts
+  const sessionItems: SessionListItem[] = sessions.map((s) => {
+    const itemCount = db.getContextItems(s.id).length;
+    const paths = db.getSessionPaths(s.id);
+    return {
+      ...sessionToListItem(s, itemCount),
+      project_paths: paths.length > 0 ? paths : (s.project_path ? [s.project_path] : undefined),
+    };
+  });
+
+  // Apply search filter locally if provided
+  let filtered = sessionItems;
+  if (options.search) {
+    const search = options.search.toLowerCase();
+    filtered = sessionItems.filter(
+      (s) =>
+        s.name.toLowerCase().includes(search) ||
+        (s.description && s.description.toLowerCase().includes(search))
+    );
+  }
+
+  return {
+    success: true,
+    data: {
+      sessions: filtered,
+      count: filtered.length,
+      total: filtered.length,
+    },
+  };
+}
+
+async function renameSession(
+  sessionId: string,
+  currentName: string,
+  newName: string
+): Promise<{ success: boolean; message?: string }> {
+  const mode = getMode();
+
+  if (mode === 'cloud') {
+    const client = getCloudClient()!;
+    return client.renameSession({
+      session_id: sessionId,
+      current_name: currentName,
+      new_name: newName,
+    });
+  }
+
+  // Local mode
+  const db = getDbManager();
+  const success = db.renameSession(sessionId, newName);
+  return {
+    success,
+    message: success ? undefined : 'Session not found',
+  };
+}
+
+async function deleteSession(
+  sessionId: string,
+  sessionName: string
+): Promise<{ success: boolean; message?: string }> {
+  const mode = getMode();
+
+  if (mode === 'cloud') {
+    const client = getCloudClient()!;
+    return client.deleteSession({
+      session_id: sessionId,
+      session_name: sessionName,
+    });
+  }
+
+  // Local mode
+  const db = getDbManager();
+  try {
+    const success = db.deleteSession(sessionId);
+    return {
+      success,
+      message: success ? undefined : 'Session not found',
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'Failed to delete session',
+    };
+  }
+}
+
+async function endSession(
+  sessionId: string,
+  _sessionName: string
+): Promise<{ success: boolean; message?: string }> {
+  const mode = getMode();
+
+  if (mode === 'cloud') {
+    const client = getCloudClient()!;
+    return client.endSession({
+      session_id: sessionId,
+      session_name: _sessionName,
+    });
+  }
+
+  // Local mode
+  const db = getDbManager();
+  const session = db.getSession(sessionId);
+  if (!session) {
+    return { success: false, message: 'Session not found' };
+  }
+
+  db.endSession(sessionId);
+  return { success: true };
+}
+
+async function addPath(
+  sessionId: string,
+  _sessionName: string,
+  projectPath: string
+): Promise<{ success: boolean; message?: string }> {
+  const mode = getMode();
+
+  if (mode === 'cloud') {
+    const client = getCloudClient()!;
+    return client.addSessionPath({
+      session_id: sessionId,
+      session_name: _sessionName,
+      project_path: projectPath,
+    });
+  }
+
+  // Local mode
+  const db = getDbManager();
+  const success = db.addProjectPath(sessionId, projectPath);
+  return {
+    success,
+    message: success ? undefined : 'Path already exists or session not found',
+  };
+}
+
+async function removePath(
+  sessionId: string,
+  _sessionName: string,
+  projectPath: string
+): Promise<{ success: boolean; message?: string }> {
+  const mode = getMode();
+
+  if (mode === 'cloud') {
+    const client = getCloudClient()!;
+    return client.removeSessionPath({
+      session_id: sessionId,
+      session_name: _sessionName,
+      project_path: projectPath,
+    });
+  }
+
+  // Local mode
+  const db = getDbManager();
+  try {
+    const success = db.removeProjectPath(sessionId, projectPath);
+    return {
+      success,
+      message: success ? undefined : 'Path not found',
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : 'Failed to remove path',
+    };
+  }
 }
 
 /**
@@ -149,7 +381,6 @@ program
   .option('--search <text>', 'Search sessions by name or description')
   .option('--json', 'Output as JSON')
   .action(async (options: { all?: boolean; status?: string; global?: boolean; project?: string; limit?: string; search?: string; json?: boolean }) => {
-    const client = getClient();
     const spinner = options.json ? null : ora('Fetching sessions...').start();
 
     try {
@@ -166,7 +397,7 @@ program
       // Only set include_completed if --all flag is used (not for --status)
       const includeCompleted = options.all ? true : undefined;
 
-      const response = await client.listSessions({
+      const response = await fetchSessions({
         project_path: projectPath,
         limit: parseInt(options.limit || '50', 10),
         include_completed: includeCompleted,
@@ -189,7 +420,12 @@ program
       }
 
       if (!data.sessions || data.sessions.length === 0) {
-        console.log(chalk.yellow('\nNo sessions found.\n'));
+        console.log(chalk.yellow('\nNo sessions found for this project.'));
+        if (!options.global) {
+          console.log(chalk.dim('Use --global to see sessions from all projects.\n'));
+        } else {
+          console.log('');
+        }
         return;
       }
 
@@ -259,13 +495,12 @@ program
   .description('Show details of a specific session (or pick from list)')
   .option('--json', 'Output as JSON')
   .action(async (sessionId: string | undefined, options: { json?: boolean }) => {
-    const client = getClient();
     let targetId = sessionId;
 
     // If no session_id provided, show picker
     if (!targetId) {
       const spinner = ora('Fetching sessions...').start();
-      const listResponse = await client.listSessions({ include_completed: true, limit: 50 });
+      const listResponse = await fetchSessions({ include_completed: true, limit: 50 });
       spinner.stop();
 
       if (!listResponse.success || !(listResponse.data as SessionListResponse).sessions?.length) {
@@ -285,7 +520,7 @@ program
 
     try {
       // Get session status which includes details
-      const response = await client.listSessions({ include_completed: true, limit: 100 });
+      const response = await fetchSessions({ include_completed: true, limit: 100 });
       spinner?.stop();
 
       if (!response.success) {
@@ -339,14 +574,13 @@ program
   .command('rename [session_id] [new_name]')
   .description('Rename a session')
   .action(async (sessionId: string | undefined, newName: string | undefined) => {
-    const client = getClient();
     let targetId = sessionId;
     let targetName: string | undefined;
 
     // If no session_id provided, show picker
     if (!targetId) {
       const spinner = ora('Fetching sessions...').start();
-      const listResponse = await client.listSessions({ include_completed: true, limit: 50 });
+      const listResponse = await fetchSessions({ include_completed: true, limit: 50 });
       spinner.stop();
 
       if (!listResponse.success || !(listResponse.data as SessionListResponse).sessions?.length) {
@@ -363,7 +597,7 @@ program
       targetName = selected.name;
     } else {
       // Look up session name for verification
-      const listResponse = await client.listSessions({ include_completed: true, limit: 100 });
+      const listResponse = await fetchSessions({ include_completed: true, limit: 100 });
       if (listResponse.success) {
         const session = (listResponse.data as SessionListResponse).sessions.find(s => s.id === targetId);
         targetName = session?.name;
@@ -398,11 +632,7 @@ program
     const spinner = ora('Renaming session...').start();
 
     try {
-      const response = await client.renameSession({
-        session_id: targetId,
-        current_name: targetName,
-        new_name: newName,
-      });
+      const response = await renameSession(targetId, targetName, newName);
 
       if (response.success) {
         spinner.succeed(chalk.green(`Renamed "${targetName}" → "${newName}"`));
@@ -426,7 +656,6 @@ program
   .description('Delete a session permanently')
   .option('-f, --force', 'Skip confirmation')
   .action(async (sessionId: string | undefined, options: { force?: boolean }) => {
-    const client = getClient();
     let targetId = sessionId;
     let targetName: string | undefined;
     let targetStatus: string | undefined;
@@ -434,7 +663,7 @@ program
     // If no session_id provided, show picker
     if (!targetId) {
       const spinner = ora('Fetching sessions...').start();
-      const listResponse = await client.listSessions({ include_completed: true, limit: 50 });
+      const listResponse = await fetchSessions({ include_completed: true, limit: 50 });
       spinner.stop();
 
       if (!listResponse.success || !(listResponse.data as SessionListResponse).sessions?.length) {
@@ -452,7 +681,7 @@ program
       targetStatus = selected.status;
     } else {
       // Look up session for verification
-      const listResponse = await client.listSessions({ include_completed: true, limit: 100 });
+      const listResponse = await fetchSessions({ include_completed: true, limit: 100 });
       if (listResponse.success) {
         const session = (listResponse.data as SessionListResponse).sessions.find(s => s.id === targetId);
         targetName = session?.name;
@@ -483,10 +712,7 @@ program
     const spinner = ora('Deleting session...').start();
 
     try {
-      const response = await client.deleteSession({
-        session_id: targetId,
-        session_name: targetName,
-      });
+      const response = await deleteSession(targetId, targetName);
 
       if (response.success) {
         spinner.succeed(chalk.green(`Deleted session "${targetName}"`));
@@ -508,14 +734,13 @@ program
   .command('archive [session_id]')
   .description('Archive (complete) a session')
   .action(async (sessionId: string | undefined) => {
-    const client = getClient();
     let targetId = sessionId;
     let targetName: string | undefined;
 
     // If no session_id provided, show picker (only non-completed sessions)
     if (!targetId) {
       const spinner = ora('Fetching sessions...').start();
-      const listResponse = await client.listSessions({ include_completed: false, limit: 50 });
+      const listResponse = await fetchSessions({ include_completed: false, limit: 50 });
       spinner.stop();
 
       if (!listResponse.success || !(listResponse.data as SessionListResponse).sessions?.length) {
@@ -542,7 +767,7 @@ program
       targetName = selected.name;
     } else {
       // Look up session for verification
-      const listResponse = await client.listSessions({ include_completed: true, limit: 100 });
+      const listResponse = await fetchSessions({ include_completed: true, limit: 100 });
       if (listResponse.success) {
         const session = (listResponse.data as SessionListResponse).sessions.find(s => s.id === targetId);
         targetName = session?.name;
@@ -557,10 +782,7 @@ program
     const spinner = ora('Archiving session...').start();
 
     try {
-      const response = await client.endSession({
-        session_id: targetId,
-        session_name: targetName,
-      });
+      const response = await endSession(targetId, targetName);
 
       if (response.success) {
         spinner.succeed(chalk.green(`Archived session "${targetName}"`));
@@ -587,14 +809,13 @@ pathsCmd
   .command('add [session_id] [path]')
   .description('Add a project path to a session')
   .action(async (sessionId: string | undefined, projectPath: string | undefined) => {
-    const client = getClient();
     let targetId = sessionId;
     let targetName: string | undefined;
 
     // If no session_id provided, show picker
     if (!targetId) {
       const spinner = ora('Fetching sessions...').start();
-      const listResponse = await client.listSessions({ include_completed: true, limit: 50 });
+      const listResponse = await fetchSessions({ include_completed: true, limit: 50 });
       spinner.stop();
 
       if (!listResponse.success || !(listResponse.data as SessionListResponse).sessions?.length) {
@@ -611,7 +832,7 @@ pathsCmd
       targetName = selected.name;
     } else {
       // Look up session for verification
-      const listResponse = await client.listSessions({ include_completed: true, limit: 100 });
+      const listResponse = await fetchSessions({ include_completed: true, limit: 100 });
       if (listResponse.success) {
         const session = (listResponse.data as SessionListResponse).sessions.find(s => s.id === targetId);
         targetName = session?.name;
@@ -632,11 +853,7 @@ pathsCmd
     const spinner = ora('Adding path...').start();
 
     try {
-      const response = await client.addSessionPath({
-        session_id: targetId,
-        session_name: targetName,
-        project_path: projectPath,
-      });
+      const response = await addPath(targetId, targetName, projectPath);
 
       if (response.success) {
         spinner.succeed(chalk.green(`Added path "${projectPath}" to "${targetName}"`));
@@ -655,14 +872,13 @@ pathsCmd
   .command('remove [session_id] <path>')
   .description('Remove a project path from a session')
   .action(async (sessionId: string | undefined, projectPath: string) => {
-    const client = getClient();
     let targetId = sessionId;
     let targetName: string | undefined;
 
     // If no session_id provided, show picker
     if (!targetId) {
       const spinner = ora('Fetching sessions...').start();
-      const listResponse = await client.listSessions({ include_completed: true, limit: 50 });
+      const listResponse = await fetchSessions({ include_completed: true, limit: 50 });
       spinner.stop();
 
       if (!listResponse.success || !(listResponse.data as SessionListResponse).sessions?.length) {
@@ -679,7 +895,7 @@ pathsCmd
       targetName = selected.name;
     } else {
       // Look up session for verification
-      const listResponse = await client.listSessions({ include_completed: true, limit: 100 });
+      const listResponse = await fetchSessions({ include_completed: true, limit: 100 });
       if (listResponse.success) {
         const session = (listResponse.data as SessionListResponse).sessions.find(s => s.id === targetId);
         targetName = session?.name;
@@ -694,11 +910,7 @@ pathsCmd
     const spinner = ora('Removing path...').start();
 
     try {
-      const response = await client.removeSessionPath({
-        session_id: targetId,
-        session_name: targetName,
-        project_path: projectPath,
-      });
+      const response = await removePath(targetId, targetName, projectPath);
 
       if (response.success) {
         spinner.succeed(chalk.green(`Removed path "${projectPath}" from "${targetName}"`));
