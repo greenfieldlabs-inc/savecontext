@@ -6,7 +6,13 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import type { SaveContextLocalConfig, SaveContextCredentials, SaveContextSession, SaveContextState } from '../types/index.js';
+import type {
+  SaveContextLocalConfig,
+  SaveContextCredentials,
+  SaveContextSession,
+  SaveContextState,
+  EmbeddingSettings,
+} from '../types/index.js';
 
 // Configuration directory and file paths
 const CONFIG_DIR = join(homedir(), '.savecontext');
@@ -243,25 +249,36 @@ export function saveState(state: SaveContextState): void {
   writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
 }
 
-/**
- * Check if cloud prompt should be shown (once per 24h for local mode users)
- */
-export function shouldShowCloudPrompt(): boolean {
-  const state = loadState();
-  const lastShown = state.notices.cloudPrompt?.lastShownAt;
-  if (!lastShown) return true;
+// ====================
+// Embedding Configuration
+// ====================
 
-  const oneDayMs = 24 * 60 * 60 * 1000;
-  return Date.now() - new Date(lastShown).getTime() > oneDayMs;
+/**
+ * Get embedding settings from config file
+ */
+export function getEmbeddingSettings(): EmbeddingSettings | undefined {
+  const config = loadConfig();
+  return config.embeddings;
 }
 
 /**
- * Mark cloud prompt as shown (updates timestamp)
+ * Save embedding settings (merges with existing config)
  */
-export function markCloudPromptShown(): void {
-  const state = loadState();
-  state.notices.cloudPrompt = {
-    lastShownAt: new Date().toISOString(),
+export function saveEmbeddingSettings(settings: EmbeddingSettings): void {
+  const config = loadConfig();
+  config.embeddings = {
+    ...config.embeddings,
+    ...settings,
   };
-  saveState(state);
+  saveConfig(config);
 }
+
+/**
+ * Reset embedding settings (removes from config)
+ */
+export function resetEmbeddingSettings(): void {
+  const config = loadConfig();
+  delete config.embeddings;
+  saveConfig(config);
+}
+
