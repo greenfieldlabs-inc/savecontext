@@ -89,7 +89,7 @@ export interface RemoveSessionPathArgs {
 // Context Item Types
 // ====================
 
-export type ItemCategory = 'task' | 'decision' | 'progress' | 'note';
+export type ItemCategory = 'reminder' | 'decision' | 'progress' | 'note';
 export type ItemPriority = 'high' | 'normal' | 'low';
 
 export interface ContextItem {
@@ -164,29 +164,249 @@ export interface DeleteMemoryArgs {
 }
 
 // ====================
-// Task Types
+// Issue Types
 // ====================
 
-export interface CreateTaskArgs {
+export type IssueStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'deferred';
+export type IssueType = 'task' | 'bug' | 'feature' | 'epic' | 'chore';
+export type DependencyType = 'blocks' | 'related' | 'parent-child' | 'discovered-from';
+
+export interface Issue {
+  id: string;
+  shortId?: string;
+  projectPath: string;
+  planId?: string;
   title: string;
   description?: string;
+  details?: string;
+  status: IssueStatus;
+  priority: number;  // 0-4: lowest, low, medium, high, critical
+  issueType: IssueType;
+  createdByAgent?: string;
+  closedByAgent?: string;
+  createdInSession?: string;
+  closedInSession?: string;
+  assignedToAgent?: string;
+  assignedAt?: number;
+  assignedInSession?: string;
+  createdAt: number;
+  updatedAt: number;
+  closedAt?: number;
+  deferredAt?: number;
+  labels?: string[];
+  dependencyCount?: number;
+  dependentCount?: number;
+  subtaskCount?: number;
+  parentId?: string;  // Populated from issue_dependencies with type='parent-child'
 }
 
-export interface UpdateTaskArgs {
+export interface CreateIssueArgs {
+  title: string;
+  description?: string;
+  details?: string;
+  priority?: number;  // 0-4, default 2
+  issueType?: IssueType;
+  parentId?: string;
+  planId?: string;    // Link to a Plan (PRD/spec)
+  labels?: string[];
+  status?: IssueStatus;
+}
+
+export interface UpdateIssueArgs {
   id: string;
-  task_title: string;
+  issue_title: string;
   title?: string;
   description?: string;
-  status?: 'todo' | 'done';
+  details?: string;
+  status?: IssueStatus;
+  priority?: number;
+  issueType?: IssueType;
+  parentId?: string | null;
+  planId?: string | null;
+  projectPath?: string;
 }
 
-export interface ListTasksArgs {
-  status?: 'todo' | 'done';
+export interface ListIssuesArgs {
+  project_path?: string;
+  status?: IssueStatus;
+  priority?: number;
+  priorityMin?: number;
+  priorityMax?: number;
+  issueType?: IssueType;
+  labels?: string[];
+  labelsAny?: string[];
+  parentId?: string;
+  planId?: string;
+  hasSubtasks?: boolean;
+  hasDependencies?: boolean;
+  sortBy?: 'priority' | 'createdAt' | 'updatedAt';
+  sortOrder?: 'asc' | 'desc';
+  limit?: number;
 }
 
-export interface CompleteTaskArgs {
+export interface CompleteIssueArgs {
   id: string;
-  task_title: string;
+  issue_title: string;
+}
+
+// Dependency management
+export interface AddDependencyArgs {
+  issueId: string;
+  dependsOnId: string;
+  dependencyType?: DependencyType;
+}
+
+export interface RemoveDependencyArgs {
+  issueId: string;
+  dependsOnId: string;
+}
+
+// Label management
+export interface AddLabelsArgs {
+  id: string;
+  labels: string[];
+}
+
+export interface RemoveLabelsArgs {
+  id: string;
+  labels: string[];
+}
+
+// Agent assignment
+export interface ClaimIssuesArgs {
+  issue_ids: string[];
+}
+
+export interface GetNextBlockArgs {
+  count?: number;
+  priority_min?: number;
+  labels?: string[];
+}
+
+export interface ReleaseIssuesArgs {
+  issue_ids: string[];
+}
+
+export interface GetReadyIssuesArgs {
+  limit?: number;
+  sortBy?: 'priority' | 'createdAt';
+}
+
+// Batch creation
+export interface CreateBatchArgs {
+  planId?: string;    // Link all issues in batch to a Plan (individual issues can override)
+  issues: Array<{
+    title: string;
+    description?: string;
+    details?: string;
+    priority?: number;
+    issueType?: IssueType;
+    parentId?: string;  // Can use '$0', '$1' to reference earlier issues in batch
+    planId?: string;    // Override batch-level planId for this issue
+    labels?: string[];
+  }>;
+  dependencies?: Array<{
+    issueIndex: number;
+    dependsOnIndex: number;
+    dependencyType?: DependencyType;
+  }>;
+}
+
+// ====================
+// Issue Operation Results
+// ====================
+
+export interface AddDependencyResult {
+  created: boolean;
+  issueId: string;
+  issueShortId: string;
+  dependsOnId: string;
+  dependsOnShortId: string;
+  dependencyType: DependencyType;
+  issueBlocked: boolean;
+}
+
+export interface RemoveDependencyResult {
+  removed: boolean;
+  issueId: string;
+  dependsOnId: string;
+  issueUnblocked: boolean;
+}
+
+export interface AddLabelsResult {
+  issueId: string;
+  shortId: string;
+  labels: string[];
+  addedCount: number;
+}
+
+export interface RemoveLabelsResult {
+  issueId: string;
+  shortId: string;
+  labels: string[];
+  removedCount: number;
+}
+
+export interface ClaimIssuesResult {
+  claimedIssues: Array<{
+    id: string;
+    shortId: string;
+    title: string;
+  }>;
+  alreadyClaimed: string[];
+  notFound: string[];
+}
+
+export interface ReleaseIssuesResult {
+  releasedIssues: Array<{
+    id: string;
+    shortId: string;
+    title: string;
+  }>;
+  notOwned: string[];
+  notFound: string[];
+}
+
+export interface GetNextBlockResult {
+  issues: Issue[];
+  claimedCount: number;
+  agentId: string;
+}
+
+export interface CreateBatchResult {
+  issues: Array<{
+    id: string;
+    shortId: string;
+    title: string;
+    index: number;
+  }>;
+  dependencies: Array<{
+    issueShortId: string;
+    dependsOnShortId: string;
+    dependencyType: DependencyType;
+  }>;
+  count: number;
+  dependencyCount: number;
+}
+
+export interface ListIssuesResult {
+  issues: Issue[];
+  count: number;
+  total?: number;
+  filters_applied?: Record<string, unknown>;
+}
+
+export interface IssueDependencyInfo {
+  id: string;
+  shortId: string;
+  title: string;
+  status: IssueStatus;
+  dependencyType: DependencyType;
+}
+
+export interface GetReadyIssuesResult {
+  issues: Issue[];
+  count: number;
 }
 
 // ====================
@@ -435,6 +655,57 @@ export class SessionError extends SaveContextError {
 }
 
 // ====================
+// Plan Types
+// ====================
+
+export type PlanStatus = 'draft' | 'active' | 'completed' | 'archived';
+
+export interface Plan {
+  id: string;
+  short_id: string | null;
+  project_path: string;
+  project_id: string;
+  title: string;
+  status: PlanStatus;
+  success_criteria: string | null;
+  epic_count: number;
+  linked_issue_count: number;
+  linked_issue_completed_count: number;
+  created_in_session: string | null;
+  completed_in_session: string | null;
+  created_at: number;
+  updated_at: number;
+  completed_at: number | null;
+}
+
+export interface ListPlansArgs {
+  project_path?: string;
+  status?: PlanStatus | 'all';
+  limit?: number;
+}
+
+export interface GetPlanArgs {
+  plan_id: string;
+}
+
+export interface CreatePlanArgs {
+  title: string;
+  content: string;
+  status?: PlanStatus;
+  successCriteria?: string;
+  project_path?: string;
+}
+
+export interface UpdatePlanArgs {
+  id: string;
+  title?: string;
+  content?: string;
+  status?: PlanStatus;
+  successCriteria?: string;
+  project_path?: string;  // Changing this cascades to all linked issues
+}
+
+// ====================
 // Cloud Client Types
 // ====================
 
@@ -486,10 +757,10 @@ export interface ContextItemUpdate {
   channel?: string;
 }
 
-export interface TaskUpdate {
+export interface IssueUpdate {
   title?: string;
   description?: string;
-  status?: 'todo' | 'done';
+  status?: 'open' | 'closed';
 }
 
 // ====================
@@ -516,6 +787,17 @@ export interface CheckpointRow {
 }
 
 // ====================
+// Database Param Types
+// ====================
+
+/**
+ * SQLite binding parameter - the types that better-sqlite3 accepts.
+ * Note: booleans are NOT supported - convert to 0/1 before binding.
+ * @see https://github.com/WiseLibs/better-sqlite3/issues/209
+ */
+export type SqliteBindValue = string | number | bigint | Buffer | null;
+
+// ====================
 // Migration Types
 // ====================
 
@@ -525,7 +807,7 @@ export interface MigrationStats {
   checkpoints: number;
   checkpointItems: number;
   projectMemory: number;
-  tasks: number;
+  issues: number;
   sessionProjects: number;
   agentSessions: number;
 }
@@ -535,7 +817,7 @@ export interface MigrationStatusResponse {
   stats?: {
     sessions: number;
     projectMemory: number;
-    tasks: number;
+    issues: number;
   };
 }
 
@@ -547,7 +829,7 @@ export interface MigrationResult {
     contextItems: number;
     checkpoints: number;
     projectMemory: number;
-    tasks: number;
+    issues: number;
   };
 }
 
@@ -557,11 +839,113 @@ export interface MigrationResult {
 
 export type ConfigMode = 'local' | 'cloud';
 
+export type EmbeddingProviderType = 'ollama' | 'huggingface' | 'transformers';
+
+/**
+ * Embedding configuration settings
+ * Keys match environment variable names for consistency
+ */
+export interface EmbeddingSettings {
+  enabled?: boolean;
+  provider?: EmbeddingProviderType;
+  HF_TOKEN?: string;
+  HF_MODEL?: string;
+  HF_ENDPOINT?: string;
+  OLLAMA_ENDPOINT?: string;
+  OLLAMA_MODEL?: string;
+  TRANSFORMERS_MODEL?: string;
+}
+
+/**
+ * Embedding provider interface
+ * Abstraction for generating text embeddings for semantic search
+ */
+export interface EmbeddingProvider {
+  name: string;
+  model: string;
+  dimensions: number;
+  maxChars: number;
+  generateEmbedding(text: string): Promise<number[]>;
+  generateEmbeddings?(texts: string[]): Promise<number[][]>;
+  isAvailable(): Promise<boolean>;
+}
+
+/**
+ * Result from embedding generation
+ */
+export interface EmbeddingResult {
+  embedding: number[];
+  model: string;
+  dimensions: number;
+  provider: string;
+}
+
+/**
+ * Provider-specific configuration for embedding creation
+ */
+export interface EmbeddingConfig {
+  provider?: EmbeddingProviderType;
+  ollamaEndpoint?: string;
+  ollamaModel?: string;
+  transformersModel?: string;
+  huggingfaceToken?: string;
+  huggingfaceModel?: string;
+}
+
+/**
+ * HuggingFace provider configuration
+ */
+export interface HuggingFaceConfig {
+  /** HuggingFace API token (or set HF_TOKEN env var) */
+  apiToken?: string;
+  /** Model ID on HuggingFace Hub (default: sentence-transformers/all-MiniLM-L6-v2) */
+  model?: string;
+  /** API endpoint (default: https://router.huggingface.co/hf-inference) */
+  endpoint?: string;
+}
+
+/**
+ * Ollama provider configuration
+ */
+export interface OllamaConfig {
+  /** Ollama server URL (default: http://localhost:11434) */
+  endpoint?: string;
+  /** Model to use (default: nomic-embed-text) */
+  model?: string;
+}
+
+/**
+ * Transformers.js provider configuration
+ */
+export interface TransformersConfig {
+  /** Model to use (default: Xenova/all-MiniLM-L6-v2) */
+  model?: string;
+}
+
+/**
+ * Text chunking configuration for large content
+ */
+export interface ChunkConfig {
+  maxChars: number;
+  overlapChars: number;
+}
+
+/**
+ * Result of text chunking
+ */
+export interface TextChunk {
+  index: number;
+  text: string;
+  startChar: number;
+  endChar: number;
+}
+
 export interface SaveContextLocalConfig {
   mode: ConfigMode;
   cloudMcpUrl?: string;
   migrated?: boolean;  // True after local data migrated to cloud
   migratedAt?: string;  // ISO 8601 timestamp of migration
+  embeddings?: EmbeddingSettings;  // Embedding provider configuration
 }
 
 export interface SaveContextCredentials {
@@ -709,27 +1093,95 @@ export interface SetupStatusLineResult {
 }
 
 // ====================
-// Skill Types
+// Skills
 // ====================
 
+/**
+ * Setup skill result
+ */
 export interface SetupSkillResult {
   success: boolean;
   skillPath: string;
   error?: string;
 }
 
+/**
+ * Skill installation record for sync config
+ */
 export interface SkillInstallation {
   tool: string;
   path: string;
   installedAt: number;
 }
 
+/**
+ * Skill sync configuration stored in ~/.savecontext/skill-sync.json
+ */
 export interface SkillSyncConfig {
   installations: SkillInstallation[];
 }
 
+/**
+ * Options for setupSkill function
+ */
 export interface SetupSkillOptions {
   tool?: string;
   path?: string;
   sync?: boolean;
+}
+
+// ====================
+// Project CRUD Types
+// ====================
+
+/**
+ * Project entity representing a codebase/repository
+ */
+export interface Project {
+  id: string;
+  project_path: string;
+  name: string;
+  description: string | null;
+  issue_prefix: string | null;
+  next_issue_number: number;
+  plan_prefix: string | null;
+  next_plan_number: number;
+  created_at: number;
+  updated_at: number;
+}
+
+/**
+ * Arguments for creating a new project
+ */
+export interface CreateProjectArgs {
+  project_path: string;
+  name?: string;
+  description?: string;
+  issue_prefix?: string;
+}
+
+/**
+ * Arguments for updating a project
+ */
+export interface UpdateProjectArgs {
+  project_path: string;
+  name?: string;
+  description?: string;
+  issue_prefix?: string;
+}
+
+/**
+ * Arguments for listing projects
+ */
+export interface ListProjectsArgs {
+  limit?: number;
+  include_session_count?: boolean;
+}
+
+/**
+ * Arguments for deleting a project
+ */
+export interface DeleteProjectArgs {
+  project_path: string;
+  confirm: boolean;
 }
