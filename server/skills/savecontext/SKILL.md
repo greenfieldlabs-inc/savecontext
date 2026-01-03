@@ -868,6 +868,63 @@ context_issue_list planId="PLAN-abc123"
 context_issue_list planId="PLAN-abc123" status="in_progress"
 ```
 
+### Plan-Issue Synchronization
+
+**Critical workflow:** When you modify epics or tasks under a plan, always update the plan to reflect those changes. Plans and issues must stay in sync.
+
+**When to update the plan:**
+- Completing an epic/phase → Update plan to show completion
+- Adding/removing tasks → Update plan's execution order
+- Scope changes → Update plan's content and success criteria
+- Restructuring dependencies → Update plan's stages
+
+**Synchronization workflow:**
+
+1. **After completing a phase/epic:**
+   ```
+   # Complete the epic
+   context_issue_complete id="EPIC-ID" issue_title="Phase A: ..."
+
+   # Update plan to reflect completion
+   context_plan_update id="PLAN-ID"
+     content="... Phase A: ✅ COMPLETE ..."
+   ```
+
+2. **After restructuring tasks:**
+   ```
+   # Delete old tasks, create new ones with proper dependencies
+   context_issue_delete id="..." issue_title="..."
+   context_issue_create_batch issues=[...] dependencies=[...]
+
+   # Update plan with new structure
+   context_plan_update id="PLAN-ID"
+     content="... updated execution order ..."
+     successCriteria="... updated criteria ..."
+   ```
+
+3. **Before starting a phase:**
+   ```
+   # Verify plan matches current issue structure
+   context_plan_get plan_id="PLAN-ID"
+   context_issue_list parentId="EPIC-ID"
+
+   # Update plan if needed, then claim and start
+   context_issue_update id="EPIC-ID" issue_title="..." status="in_progress"
+   context_issue_claim issue_ids=["FIRST-TASK-ID"]
+   ```
+
+**The loop:**
+```
+Audit → Update Issues → Update Plan → Claim → Execute → Complete → Update Plan
+        ↑___________________________________________________|
+```
+
+**Why this matters:**
+- Plans become the single source of truth for project state
+- Future agents can resume by reading the plan
+- Progress is visible at both plan and issue level
+- No drift between documentation and actual work
+
 ## Semantic Search
 
 Find context by meaning, not just exact match:
