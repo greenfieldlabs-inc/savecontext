@@ -22,7 +22,7 @@ import {
   CONTEXT_ITEMS_MAX_LIMIT,
 } from './constants.js';
 
-const VALID_CATEGORIES: ItemCategory[] = ['task', 'decision', 'progress', 'note'];
+const VALID_CATEGORIES: ItemCategory[] = ['reminder', 'decision', 'progress', 'note'];
 const VALID_PRIORITIES: ItemPriority[] = ['high', 'normal', 'low'];
 
 /**
@@ -33,7 +33,7 @@ export function validateCreateSession(args: any): CreateSessionArgs {
     throw new ValidationError('Invalid arguments: must be an object');
   }
 
-  const { name, description, branch, channel, force_new } = args;
+  const { name, description, branch, channel, project_path, force_new } = args;
 
   // Name is required
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -72,6 +72,7 @@ export function validateCreateSession(args: any): CreateSessionArgs {
     description: description?.trim(),
     branch: branch?.trim(),
     channel: channel?.trim(),
+    project_path: project_path?.trim(),
     force_new: force_new === true,
   };
 }
