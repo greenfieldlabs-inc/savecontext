@@ -133,7 +133,10 @@ export async function setupStatusLine(): Promise<SetupStatusLineResult> {
     if (!existsSync(CLAUDE_DIR)) {
       claudeSpinner.fail('Claude Code not found');
       console.log(chalk.yellow('\n  Claude Code directory (~/.claude) not found.'));
-      console.log(chalk.dim('  Install Claude Code first: https://claude.ai/download\n'));
+      console.log(chalk.dim('  Status line setup currently only supports Claude Code.\n'));
+      console.log(chalk.white('  Using a different tool? Let us know:'));
+      console.log(chalk.cyan('  https://github.com/greenfieldlabs-inc/savecontext/issues/new'));
+      console.log(chalk.dim('  Tell us what tool you use and what you want the status line for.\n'));
       result.error = 'Claude Code not installed';
       return result;
     }
