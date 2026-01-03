@@ -28,10 +28,19 @@ import {
   GetMemoryArgs,
   ListMemoryArgs,
   DeleteMemoryArgs,
-  CreateTaskArgs,
-  UpdateTaskArgs,
-  ListTasksArgs,
-  CompleteTaskArgs,
+  CreateIssueArgs,
+  UpdateIssueArgs,
+  ListIssuesArgs,
+  CompleteIssueArgs,
+  AddDependencyArgs,
+  RemoveDependencyArgs,
+  AddLabelsArgs,
+  RemoveLabelsArgs,
+  ClaimIssuesArgs,
+  GetNextBlockArgs,
+  ReleaseIssuesArgs,
+  GetReadyIssuesArgs,
+  CreateBatchArgs,
   CreateCheckpointArgs,
   RestoreCheckpointArgs,
   TagContextItemsArgs,
@@ -40,6 +49,10 @@ import {
   DeleteCheckpointArgs,
   ListCheckpointsArgs,
   GetCheckpointArgs,
+  ListPlansArgs,
+  GetPlanArgs,
+  CreatePlanArgs,
+  UpdatePlanArgs,
   CloudConfig,
   AgentMetadata,
   ErrorResponse,
@@ -266,23 +279,59 @@ export class CloudClient {
   }
 
   // ====================
-  // Task Methods
+  // Issue Methods
   // ====================
 
-  async createTask(args: CreateTaskArgs): Promise<ToolResponse> {
-    return this.makeRequest('/task/create', 'POST', args);
+  async createIssue(args: CreateIssueArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/create', 'POST', args);
   }
 
-  async updateTask(args: UpdateTaskArgs): Promise<ToolResponse> {
-    return this.makeRequest('/task/update', 'POST', args);
+  async updateIssue(args: UpdateIssueArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/update', 'POST', args);
   }
 
-  async listTasks(args: ListTasksArgs): Promise<ToolResponse> {
-    return this.makeRequest('/task/list', 'POST', args);
+  async listIssues(args: ListIssuesArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/list', 'POST', args);
   }
 
-  async completeTask(args: CompleteTaskArgs): Promise<ToolResponse> {
-    return this.makeRequest('/task/complete', 'POST', args);
+  async completeIssue(args: CompleteIssueArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/complete', 'POST', args);
+  }
+
+  async addDependency(args: AddDependencyArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/add-dependency', 'POST', args);
+  }
+
+  async removeDependency(args: RemoveDependencyArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/remove-dependency', 'POST', args);
+  }
+
+  async addLabels(args: AddLabelsArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/add-labels', 'POST', args);
+  }
+
+  async removeLabels(args: RemoveLabelsArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/remove-labels', 'POST', args);
+  }
+
+  async claimIssues(args: ClaimIssuesArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/claim', 'POST', args);
+  }
+
+  async getNextBlock(args: GetNextBlockArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/get-next-block', 'POST', args);
+  }
+
+  async releaseIssues(args: ReleaseIssuesArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/release', 'POST', args);
+  }
+
+  async getReadyIssues(args: GetReadyIssuesArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/get-ready', 'POST', args);
+  }
+
+  async createBatch(args: CreateBatchArgs): Promise<ToolResponse> {
+    return this.makeRequest('/issue/create-batch', 'POST', args);
   }
 
   // ====================
@@ -378,5 +427,26 @@ export class CloudClient {
     action?: 'move' | 'add' | 'remove';
   }): Promise<ToolResponse> {
     return this.makeRequest('/session/move', 'POST', args);
+  }
+
+  // ====================
+  // Plan Methods
+  // ====================
+
+  async listPlans(args: ListPlansArgs): Promise<ToolResponse> {
+    return this.makeRequest('/plan/list', 'POST', args);
+  }
+
+  async getPlan(args: GetPlanArgs): Promise<ToolResponse> {
+    // Transform plan_id to id for Lambda compatibility
+    return this.makeRequest('/plan/get', 'POST', { id: args.plan_id });
+  }
+
+  async createPlan(args: CreatePlanArgs): Promise<ToolResponse> {
+    return this.makeRequest('/plan/create', 'POST', args);
+  }
+
+  async updatePlan(args: UpdatePlanArgs): Promise<ToolResponse> {
+    return this.makeRequest('/plan/update', 'POST', args);
   }
 }

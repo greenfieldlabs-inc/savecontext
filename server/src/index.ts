@@ -2,7 +2,7 @@
 
 /**
  * SaveContext MCP Server
- * Dual-mode context management: Local (SQLite) or Cloud (API)
+ * Local context management with SQLite
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -25,7 +25,7 @@ import {
   COMPACTION_THRESHOLD_MAX,
   COMPACTION_HIGH_PRIORITY_LIMIT,
   COMPACTION_DECISION_LIMIT,
-  COMPACTION_TASK_LIMIT,
+  COMPACTION_REMINDER_LIMIT,
   COMPACTION_PROGRESS_LIMIT,
   COMPACTION_ITEM_COUNT_THRESHOLD,
   SESSION_NAME_MAX_LENGTH,
@@ -42,8 +42,7 @@ const program = new Command();
 program
   .name('savecontext')
   .version(VERSION)
-  .description('SaveContext MCP Server - Local or Cloud mode')
-  .option('--api-key <key>', 'API key for cloud mode')
+  .description('SaveContext MCP Server - Local SQLite mode')
   .option('--setup-statusline', 'Configure Claude Code status line (run this first)')
   .option('--setup-skill', 'Install SaveContext skill for AI coding tools')
   .option('--tool <name>', 'Target tool for skill install (claude, codex, gemini, etc.)')
@@ -61,7 +60,7 @@ if (options.setupStatusline) {
 }
 
 // Handle --setup-skill
-if (options.setupSkill) {
+if (options.setupSkill || options.sync) {
   const { setupSkill } = await import('./cli/setup.js');
   await setupSkill({
     tool: options.tool,
@@ -72,41 +71,12 @@ if (options.setupSkill) {
 }
 
 // ====================
-// Mode Detection
+// Local Mode Initialization
 // ====================
 
-// Load saved configuration and credentials
-const savedConfig = loadConfig();
-const savedCreds = loadCredentials();
-
-// Check for API key from CLI flag, environment variable, or saved credentials
-const apiKey = options.apiKey || process.env.SAVECONTEXT_API_KEY || savedCreds?.apiKey;
-
-// Determine mode: use cloud only if we have valid credentials
-// If user configured cloud mode but has no credentials, fall back to local
-const mode = apiKey ? 'cloud' : 'local';
-const baseUrl = process.env.SAVECONTEXT_BASE_URL || getCloudMcpUrl();
-
-// Warn if cloud mode was configured but credentials are missing
-if (savedConfig.mode === 'cloud' && !apiKey) {
-  console.error('[SaveContext] Warning: Cloud mode configured but no API key found.');
-  console.error('[SaveContext] Run "savecontext-auth login" to authenticate, falling back to local mode.');
-}
-
-console.error(`[SaveContext] Mode: ${mode}`);
-if (mode === 'cloud') {
-  console.error(`[SaveContext] Cloud API: ${baseUrl}`);
-}
-
-// Show cloud notice for local mode users (once per 24h)
-if (mode === 'local' && shouldShowCloudPrompt()) {
-  console.error('[SaveContext] Unlock cross-device sync, semantic search, and dashboard.');
-  console.error('[SaveContext] Run: savecontext-auth login');
-  markCloudPromptShown();
-}
+console.error('[SaveContext] Mode: local');
 
 import { DatabaseManager } from './database/index.js';
-import { CloudClient } from './cloud-client.js';
 import { deriveDefaultChannel, normalizeChannel } from './utils/channels.js';
 import { getCurrentBranch, getGitStatus, formatGitStatus } from './utils/git.js';
 import { getCurrentProjectPath, normalizeProjectPath } from './utils/project.js';
@@ -137,26 +107,59 @@ import {
   ClientInfo,
   ConnectionState,
   ContextItemUpdate,
-  TaskUpdate,
+  IssueUpdate,
+  Issue,
+  IssueStatus,
+  IssueType,
+  DependencyType,
+  CreateIssueArgs,
+  UpdateIssueArgs,
+  ListIssuesArgs,
+  AddDependencyArgs,
+  RemoveDependencyArgs,
+  AddLabelsArgs,
+  RemoveLabelsArgs,
+  ClaimIssuesArgs,
+  GetNextBlockArgs,
+  ReleaseIssuesArgs,
+  GetReadyIssuesArgs,
+  CreateBatchArgs,
 } from './types/index.js';
-import { loadConfig, loadCredentials, getCloudMcpUrl, shouldShowCloudPrompt, markCloudPromptShown } from './utils/config.js';
+import { loadConfig } from './utils/config.js';
 import { updateStatusLine, refreshStatusCache } from './utils/status-cache.js';
+import { createEmbeddingProvider, getProviderInfo } from './lib/embeddings/factory.js';
+import { chunkText } from './lib/embeddings/chunker.js';
+import type { EmbeddingProvider } from './lib/embeddings/index.js';
 
-// Initialize backend (local or cloud)
-let db: DatabaseManager | null = null;
-let cloud: CloudClient | null = null;
+// Initialize local SQLite database
+const db = new DatabaseManager();
 
-if (mode === 'local') {
-  db = new DatabaseManager();
-} else {
-  cloud = new CloudClient(apiKey!, baseUrl);
+// Initialize embedding provider (for local semantic search)
+let embeddingProvider: EmbeddingProvider | null = null;
+
+async function initializeEmbeddings(): Promise<void> {
+  embeddingProvider = await createEmbeddingProvider();
+  const info = getProviderInfo(embeddingProvider);
+
+  if (info.enabled && info.dimensions) {
+    // Ensure vec table has correct dimensions for this provider
+    const recreated = db.ensureVecDimensions(info.dimensions);
+    if (recreated) {
+      console.error('[SaveContext] Embeddings will be regenerated with new provider dimensions');
+    }
+    console.error(`[SaveContext] Semantic search: enabled (${info.provider}/${info.model}, ${info.dimensions}d)`);
+  } else {
+    console.error('[SaveContext] Semantic search: disabled (install Ollama for local embeddings)');
+  }
 }
 
-// Helper to get db in local mode (TypeScript guard)
+// Initialize embeddings on startup
+initializeEmbeddings().catch((err) => {
+  console.error('[SaveContext] Failed to initialize embeddings:', err);
+});
+
+// Helper to get db (for consistency with existing code)
 function getDb(): DatabaseManager {
-  if (!db) {
-    throw new Error('Database not initialized - should only be called in local mode');
-  }
   return db;
 }
 
@@ -379,22 +382,6 @@ async function handleSessionStart(args: any) {
     const provider = getCurrentProvider();
     const agentId = getAgentId(projectPath, branch || 'main', provider);
 
-    // Cloud mode: set agent metadata and proxy to API
-    if (mode === 'cloud') {
-      cloud!.setAgentMetadata(agentId, projectPath, branch || 'main', provider);
-      const result = await cloud!.startSession(args);
-      // Update status line with cloud session info
-      if (result.success && result.data) {
-        const data = result.data as SessionResponse & { item_count?: number };
-        updateStatusLine(
-          { id: data.id, name: data.name, project_path: projectPath, status: 'active' },
-          { itemCount: data.item_count, provider, projectPath }
-        );
-      }
-      return result;
-    }
-
-    // Local mode: use SQLite
     // If force_new, pause any existing active session and clear agent link
     if (validated.force_new) {
       const existingAgentSession = getDb().getCurrentSessionForAgent(agentId);
@@ -415,6 +402,14 @@ async function handleSessionStart(args: any) {
 
       // If current path not in session, add it (multi-path support)
       if (!pathAlreadyExists) {
+        // Check if project exists
+        const project = getDb().getProject(projectPath);
+        if (!project) {
+          return error(
+            'Project not found',
+            new Error(`No project exists at ${projectPath}. Create one first with context_project_create.`)
+          );
+        }
         getDb().addProjectPath(agentSession.id, projectPath);
       }
 
@@ -427,6 +422,12 @@ async function handleSessionStart(args: any) {
 
       // Update status line for Claude Code
       updateStatusLine(agentSession, { itemCount: stats?.total_items, provider, projectPath });
+
+      // Check if provided name differs from existing session name
+      const nameIgnored = validated.name !== agentSession.name;
+      const warning = nameIgnored
+        ? `Provided name '${validated.name}' ignored - resumed existing session. Use force_new=true to create new session.`
+        : undefined;
 
       return success(
         {
@@ -441,6 +442,7 @@ async function handleSessionStart(args: any) {
           path_added: !pathAlreadyExists,
           agent_id: agentId,
           provider,
+          ...(warning && { warning }),
         },
         pathAlreadyExists
           ? `Resumed session '${agentSession.name}' for agent '${agentId}' (${stats?.total_items || 0} items)`
@@ -453,6 +455,15 @@ async function handleSessionStart(args: any) {
     const channel = normalizeChannel(
       validated.channel || deriveDefaultChannel(branch || undefined, validated.name)
     );
+
+    // Require project exists - user must create project first
+    const project = getDb().getProject(projectPath);
+    if (!project) {
+      return error(
+        'Project not found',
+        new Error(`No project exists at ${projectPath}. Create one first with context_project_create.`)
+      );
+    }
 
     // Create new session
     const session = getDb().createSession({
@@ -498,12 +509,6 @@ async function handleSessionStart(args: any) {
  */
 async function handleSaveContext(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.saveContext(args);
-    }
-
-    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateSaveContext(args);
 
@@ -530,6 +535,13 @@ async function handleSaveContext(args: any) {
     // Update agent activity timestamp
     await updateAgentActivity();
 
+    // Generate embedding async (fire-and-forget for performance)
+    if (embeddingProvider) {
+      generateEmbeddingAsync(item.id, validated.value).catch((err) => {
+        console.error(`[SaveContext] Embedding generation failed for ${item.key}:`, err);
+      });
+    }
+
     const response: SaveContextResponse = {
       id: item.id,
       key: item.key,
@@ -544,22 +556,61 @@ async function handleSaveContext(args: any) {
 }
 
 /**
- * Get context from current session
+ * Generate embedding for a context item (async helper)
+ * Chunks large text to handle model token limits
+ */
+async function generateEmbeddingAsync(itemId: string, text: string): Promise<void> {
+  if (!embeddingProvider) return;
+
+  // Verify provider is actually ready (not still initializing)
+  const isReady = await embeddingProvider.isAvailable().catch(() => false);
+  if (!isReady) {
+    // Provider not ready yet - leave as 'none', backfill will handle later
+    return;
+  }
+
+  try {
+    // Mark as pending
+    getDb().updateEmbeddingStatus(itemId, 'pending');
+
+    // Chunk text based on provider's maxChars limit
+    const chunks = chunkText(text, {
+      maxChars: embeddingProvider.maxChars,
+      overlapChars: Math.floor(embeddingProvider.maxChars * 0.1), // 10% overlap
+    });
+
+    // Generate embeddings for each chunk
+    const chunkEmbeddings: Array<{ index: number; embedding: number[] }> = [];
+    for (const chunk of chunks) {
+      const embedding = await embeddingProvider.generateEmbedding(chunk.text);
+      chunkEmbeddings.push({ index: chunk.index, embedding });
+    }
+
+    // Save all chunks to vector table
+    getDb().saveChunkEmbeddings(itemId, chunkEmbeddings, embeddingProvider.name, embeddingProvider.model);
+  } catch (err) {
+    // Only mark as error if generation genuinely failed (provider was ready)
+    getDb().updateEmbeddingStatus(itemId, 'error');
+    throw err;
+  }
+}
+
+/**
+ * Get context from current session (or all sessions if search_all_sessions=true)
  */
 async function handleGetContext(args: any) {
   try {
-    // Cloud mode: proxy to API (supports full semantic search)
-    if (mode === 'cloud') {
-      return await cloud!.getContext(args);
-    }
-
-    // Local mode: use SQLite
-    const sessionId = ensureSession();
     const validated = validateGetContext(args);
+    const searchAllSessions = args?.search_all_sessions === true;
 
-    // If key is provided, get single item
+    // For semantic search across all sessions with a query, session is optional
+    // For all other operations, session is required
+    const needsSession = !searchAllSessions || !args?.query || validated.key;
+    const sessionId = needsSession ? ensureSession() : currentSessionId;
+
+    // If key is provided, get single item (requires session)
     if (validated.key) {
-      const item = getDb().getContextItem(sessionId, validated.key);
+      const item = getDb().getContextItem(sessionId!, validated.key);
       if (!item) {
         return success(
           { items: [], total: 0, session_id: sessionId },
@@ -570,16 +621,56 @@ async function handleGetContext(args: any) {
       const response: GetContextResponse = {
         items: [item],
         total: 1,
-        session_id: sessionId,
+        session_id: sessionId!,
       };
 
       return success(response);
     }
 
-    // If query is provided, perform keyword search (fallback for local mode)
+    // If query is provided, perform semantic search (or keyword fallback)
     if (args?.query) {
-      const query = String(args.query).toLowerCase();
-      const keywords = query.split(/\s+/).filter((k: string) => k.length > 2);
+      const query = String(args.query);
+      const limit = validated.limit || CONTEXT_ITEMS_DEFAULT_LIMIT;
+      const threshold = typeof args.threshold === 'number' ? args.threshold : 0.5;
+
+      // Try semantic search first if provider available
+      if (embeddingProvider) {
+        try {
+          const queryEmbedding = await embeddingProvider.generateEmbedding(query);
+          const searchSessionId = searchAllSessions ? null : sessionId;
+          const semanticResults = getDb().semanticSearch(queryEmbedding, searchSessionId, {
+            threshold,
+            limit,
+            category: validated.category,
+            priority: validated.priority,
+          });
+
+          if (semanticResults.length > 0) {
+            const response = {
+              items: semanticResults,
+              total: semanticResults.length,
+              session_id: sessionId,
+              search_mode: searchAllSessions ? 'semantic_all_sessions' : 'semantic',
+            };
+
+            return success(response, `Found ${semanticResults.length} items (semantic search${searchAllSessions ? ', all sessions' : ''})`);
+          }
+          // Fall through to keyword search if no semantic results
+        } catch (err) {
+          console.error('[SaveContext] Semantic search failed, falling back to keyword:', err);
+        }
+      }
+
+      // Keyword search fallback (requires active session)
+      if (!sessionId) {
+        return success(
+          { items: [], total: 0, session_id: null, search_mode: 'semantic_all_sessions' },
+          'No results found (semantic search across all sessions)'
+        );
+      }
+
+      const queryLower = query.toLowerCase();
+      const keywords = queryLower.split(/\s+/).filter((k: string) => k.length > 2);
 
       // Get all items from session, then filter by keyword match
       const allItems = getDb().getContextItems(sessionId, {
@@ -604,7 +695,7 @@ async function handleGetContext(args: any) {
         })
         .filter((s) => s.score > 0)
         .sort((a, b) => b.score - a.score)
-        .slice(0, validated.limit || CONTEXT_ITEMS_DEFAULT_LIMIT);
+        .slice(0, limit);
 
       const items = scoredItems.map((s) => s.item);
 
@@ -613,14 +704,14 @@ async function handleGetContext(args: any) {
         total: items.length,
         session_id: sessionId,
         search_mode: 'keyword',
-        tip: 'Upgrade to SaveContext Cloud for AI-powered semantic search: https://savecontext.dev',
+        tip: embeddingProvider ? undefined : 'Install Ollama for AI-powered semantic search',
       };
 
       return success(response, `Found ${items.length} items (keyword search)`);
     }
 
-    // Otherwise, get filtered items
-    const items = getDb().getContextItems(sessionId, {
+    // Otherwise, get filtered items (requires session since no query)
+    const items = getDb().getContextItems(sessionId!, {
       category: validated.category,
       priority: validated.priority,
       channel: validated.channel,
@@ -631,7 +722,7 @@ async function handleGetContext(args: any) {
     const response: GetContextResponse = {
       items,
       total: items.length,
-      session_id: sessionId,
+      session_id: sessionId!,
     };
 
     return success(response, `Found ${items.length} items`);
@@ -645,12 +736,6 @@ async function handleGetContext(args: any) {
  */
 async function handleDeleteContext(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.deleteContext(args);
-    }
-
-    // Local mode: use SQLite
     const sessionId = ensureSession();
 
     if (!args?.key) {
@@ -683,12 +768,6 @@ async function handleDeleteContext(args: any) {
  */
 async function handleUpdateContext(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.updateContext(args);
-    }
-
-    // Local mode: use SQLite
     const sessionId = ensureSession();
 
     if (!args?.key) {
@@ -740,12 +819,6 @@ async function handleUpdateContext(args: any) {
  */
 async function handleMemorySave(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.saveMemory(args);
-    }
-
-    // Local mode: use SQLite
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
 
     if (!args?.key) {
@@ -784,12 +857,6 @@ async function handleMemorySave(args: any) {
  */
 async function handleMemoryGet(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.getMemory(args);
-    }
-
-    // Local mode: use SQLite
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
 
     if (!args?.key) {
@@ -824,12 +891,6 @@ async function handleMemoryGet(args: any) {
  */
 async function handleMemoryList(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.listMemory(args);
-    }
-
-    // Local mode: use SQLite
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
     const category = args?.category;
 
@@ -853,12 +914,6 @@ async function handleMemoryList(args: any) {
  */
 async function handleMemoryDelete(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.deleteMemory(args);
-    }
-
-    // Local mode: use SQLite
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
 
     if (!args?.key) {
@@ -885,188 +940,867 @@ async function handleMemoryDelete(args: any) {
   }
 }
 
+// ================
+// Project Handlers
+// ================
+
 /**
- * Create a new task
+ * Create a new project
+ */
+async function handleProjectCreate(args: any) {
+  try {
+    if (!args?.project_path) {
+      throw new ValidationError('project_path is required');
+    }
+
+    const projectPath = normalizeProjectPath(args.project_path);
+
+    // Check if project already exists
+    const existing = getDb().getProject(projectPath);
+    if (existing) {
+      return error('Project already exists', new Error(`A project already exists at ${projectPath}`));
+    }
+
+    const project = getDb().createProject({
+      project_path: projectPath,
+      name: args.name,
+      description: args.description,
+      issue_prefix: args.issue_prefix,
+    });
+
+    if (!project) {
+      return error('Failed to create project', new Error('Unknown error'));
+    }
+
+    return success(
+      { project },
+      `Created project '${project.name}' at ${projectPath}`
+    );
+  } catch (err) {
+    return error('Failed to create project', err);
+  }
+}
+
+/**
+ * List all projects
+ */
+async function handleProjectList(args: any) {
+  try {
+    const result = getDb().listProjects({
+      limit: args?.limit,
+      includeSessionCount: args?.include_session_count,
+    });
+
+    return success(
+      { projects: result.projects, total: result.count },
+      `Found ${result.count} project(s)`
+    );
+  } catch (err) {
+    return error('Failed to list projects', err);
+  }
+}
+
+/**
+ * Get a project by path
+ */
+async function handleProjectGet(args: any) {
+  try {
+    if (!args?.project_path) {
+      throw new ValidationError('project_path is required');
+    }
+
+    const projectPath = normalizeProjectPath(args.project_path);
+    const project = getDb().getProject(projectPath);
+
+    if (!project) {
+      return error('Project not found', new Error(`No project found at ${projectPath}`));
+    }
+
+    return success(
+      { project },
+      `Found project '${project.name}'`
+    );
+  } catch (err) {
+    return error('Failed to get project', err);
+  }
+}
+
+/**
+ * Update a project
+ */
+async function handleProjectUpdate(args: any) {
+  try {
+    if (!args?.project_path) {
+      throw new ValidationError('project_path is required');
+    }
+
+    const projectPath = normalizeProjectPath(args.project_path);
+
+    // Check if any update fields are provided
+    if (!args.name && args.description === undefined && !args.issue_prefix) {
+      throw new ValidationError('At least one of name, description, or issue_prefix must be provided');
+    }
+
+    const project = getDb().updateProject(projectPath, {
+      name: args.name,
+      description: args.description,
+      issue_prefix: args.issue_prefix,
+    });
+
+    if (!project) {
+      return error('Project not found', new Error(`No project found at ${projectPath}`));
+    }
+
+    return success(
+      { project },
+      `Updated project '${project.name}'`
+    );
+  } catch (err) {
+    return error('Failed to update project', err);
+  }
+}
+
+/**
+ * Delete a project
+ */
+async function handleProjectDelete(args: any) {
+  try {
+    if (!args?.project_path) {
+      throw new ValidationError('project_path is required');
+    }
+
+    if (!args?.confirm) {
+      throw new ValidationError('confirm must be true to delete a project');
+    }
+
+    const projectPath = normalizeProjectPath(args.project_path);
+    const result = getDb().deleteProjectByPath(projectPath, args.confirm);
+
+    if (!result.success) {
+      return error('Failed to delete project', new Error(result.error || 'Unknown error'));
+    }
+
+    return success(
+      { deleted: true, ...result.deleted },
+      `Deleted project at ${projectPath}. Removed ${result.deleted?.issues || 0} issues, ${result.deleted?.plans || 0} plans, ${result.deleted?.memory || 0} memory items. Unlinked ${result.deleted?.sessionsUnlinked || 0} sessions.`
+    );
+  } catch (err) {
+    return error('Failed to delete project', err);
+  }
+}
+
+/**
+ * Create a new issue
  */
 async function handleTaskCreate(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.createTask(args);
-    }
-
-    // Local mode: use SQLite
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
 
     if (!args?.title) {
       throw new ValidationError('title is required');
     }
 
-    const result = getDb().createTask(projectPath, args.title, args.description);
+    // Validate optional fields
+    if (args.priority !== undefined && (args.priority < 0 || args.priority > 4)) {
+      throw new ValidationError('priority must be between 0 and 4');
+    }
+    if (args.issueType && !['task', 'bug', 'feature', 'epic', 'chore'].includes(args.issueType)) {
+      throw new ValidationError('issueType must be one of: task, bug, feature, epic, chore');
+    }
+    if (args.status && !['open', 'in_progress', 'blocked', 'closed', 'deferred'].includes(args.status)) {
+      throw new ValidationError('status must be one of: open, in_progress, blocked, closed, deferred');
+    }
+
+    const issueArgs: CreateIssueArgs = {
+      title: args.title,
+      description: args.description,
+      details: args.details,
+      priority: args.priority,
+      issueType: args.issueType,
+      parentId: args.parentId,
+      planId: args.planId,
+      labels: args.labels,
+      status: args.status,
+    };
+
+    const agentId = getCurrentProvider();
+    const result = getDb().createIssue(projectPath, issueArgs, agentId, currentSessionId || undefined);
 
     await updateAgentActivity();
 
     return success(
       {
         id: result.id,
+        shortId: result.shortId,
         title: result.title,
-        description: args.description || null,
-        status: 'todo',
+        description: result.description || null,
+        details: result.details || null,
+        status: result.status,
+        priority: result.priority,
+        issueType: result.issueType,
+        parentId: result.parentId || null,
+        planId: result.planId || null,
+        labels: result.labels || [],
         project_path: projectPath,
+        created_at: result.createdAt,
       },
-      `Created task '${args.title}'`
+      `Created issue ${result.shortId || result.id}: '${args.title}'`
     );
   } catch (err) {
-    return error('Failed to create task', err);
+    return error('Failed to create issue', err);
   }
 }
 
 /**
- * Update an existing task
+ * Update an existing issue
  */
 async function handleTaskUpdate(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.updateTask(args);
-    }
-
-    // Local mode: use SQLite
     if (!args?.id) {
       throw new ValidationError('id is required');
     }
 
-    if (!args?.task_title) {
-      throw new ValidationError('task_title is required');
+    if (!args?.issue_title) {
+      throw new ValidationError('issue_title is required');
     }
 
-    // Fetch task to get title before updating
-    const task = db!.getTask(args.id);
-    if (!task) {
+    // Fetch issue to get title before updating
+    const issue = getDb().getIssue(args.id);
+    if (!issue) {
       return success(
         { updated: false, id: args.id },
-        `No task found with id '${args.id}'`
+        `No issue found with id '${args.id}'`
       );
     }
 
     // Validate title matches
-    if (task.title !== args.task_title) {
-      throw new ValidationError(`Task title mismatch: expected '${task.title}' but got '${args.task_title}'`);
+    if (issue.title !== args.issue_title) {
+      throw new ValidationError(`Issue title mismatch: expected '${issue.title}' but got '${args.issue_title}'`);
     }
 
-    const updates: TaskUpdate = {};
+    // Validate optional fields
+    if (args.priority !== undefined && (args.priority < 0 || args.priority > 4)) {
+      throw new ValidationError('priority must be between 0 and 4');
+    }
+    if (args.issueType && !['task', 'bug', 'feature', 'epic', 'chore'].includes(args.issueType)) {
+      throw new ValidationError('issueType must be one of: task, bug, feature, epic, chore');
+    }
+    if (args.status && !['open', 'in_progress', 'blocked', 'closed', 'deferred'].includes(args.status)) {
+      throw new ValidationError('status must be one of: open, in_progress, blocked, closed, deferred');
+    }
+
+    const updates: UpdateIssueArgs = {
+      id: args.id,
+      issue_title: args.issue_title,
+    };
     if (args.title !== undefined) updates.title = args.title;
     if (args.description !== undefined) updates.description = args.description;
-    if (args.status !== undefined) {
-      if (!['todo', 'done'].includes(args.status)) {
-        throw new ValidationError('status must be todo or done');
+    if (args.details !== undefined) updates.details = args.details;
+    if (args.status !== undefined) updates.status = args.status;
+    if (args.priority !== undefined) updates.priority = args.priority;
+    if (args.issueType !== undefined) updates.issueType = args.issueType;
+    if (args.parentId !== undefined) updates.parentId = args.parentId;
+    if (args.planId !== undefined) updates.planId = args.planId;
+
+    const hasFieldUpdates = Object.keys(updates).some(k => !['id', 'issue_title'].includes(k));
+    const hasAddProjectPath = args.add_project_path !== undefined;
+    const hasRemoveProjectPath = args.remove_project_path !== undefined;
+
+    if (!hasFieldUpdates && !hasAddProjectPath && !hasRemoveProjectPath) {
+      throw new ValidationError('At least one field to update is required');
+    }
+
+    // Apply field updates if any
+    let result = issue;
+    if (hasFieldUpdates) {
+      const updated = getDb().updateIssue(args.id, updates);
+      if (!updated) {
+        return success(
+          { updated: false, id: args.id },
+          `No issue found with id '${args.id}'`
+        );
       }
-      updates.status = args.status;
+      result = updated;
     }
 
-    if (Object.keys(updates).length === 0) {
-      throw new ValidationError('At least one field to update is required (title, description, or status)');
+    // Handle add_project_path - add issue to additional project
+    let addProjectPathResult: { added: boolean; alreadyExists?: boolean } | undefined;
+    if (hasAddProjectPath) {
+      addProjectPathResult = getDb().addIssueProject(args.id, args.add_project_path);
     }
 
-    const updated = getDb().updateTask(args.id, updates);
+    // Handle remove_project_path - remove issue from additional project
+    let removeProjectPathResult: { removed: boolean; error?: string } | undefined;
+    if (hasRemoveProjectPath) {
+      removeProjectPathResult = getDb().removeIssueProject(args.id, args.remove_project_path);
+    }
+
+    // Get all project paths for the response
+    const projectPaths = getDb().getIssueProjects(args.id);
 
     await updateAgentActivity();
 
     return success(
       {
         updated: true,
-        id: args.id,
-        title: updates.title || task.title,
-        ...updates
+        id: result.id,
+        shortId: result.shortId,
+        title: result.title,
+        description: result.description,
+        details: result.details,
+        status: result.status,
+        priority: result.priority,
+        issueType: result.issueType,
+        parentId: result.parentId,
+        labels: result.labels,
+        updated_at: result.updatedAt,
+        project_paths: projectPaths,
+        add_project_path_result: addProjectPathResult,
+        remove_project_path_result: removeProjectPathResult,
       },
-      `Updated task "${updates.title || task.title}"`
+      `Updated issue ${result.shortId || result.id}: "${result.title}"`
     );
   } catch (err) {
-    return error('Failed to update task', err);
+    return error('Failed to update issue', err);
   }
 }
 
 /**
- * List tasks for current project
+ * List issues for current project
  */
 async function handleTaskList(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.listTasks(args);
+    // Support all_projects flag to query across all projects
+    const allProjects = args?.all_projects === true;
+    const projectPath = allProjects ? null : normalizeProjectPath(getCurrentProjectPath());
+
+    // Validate optional fields
+    if (args?.status && !['open', 'in_progress', 'blocked', 'closed', 'deferred'].includes(args.status)) {
+      throw new ValidationError('status must be one of: open, in_progress, blocked, closed, deferred');
+    }
+    if (args?.issueType && !['task', 'bug', 'feature', 'epic', 'chore'].includes(args.issueType)) {
+      throw new ValidationError('issueType must be one of: task, bug, feature, epic, chore');
+    }
+    if (args?.sortBy && !['priority', 'createdAt', 'updatedAt'].includes(args.sortBy)) {
+      throw new ValidationError('sortBy must be one of: priority, createdAt, updatedAt');
+    }
+    if (args?.sortOrder && !['asc', 'desc'].includes(args.sortOrder)) {
+      throw new ValidationError('sortOrder must be one of: asc, desc');
     }
 
-    // Local mode: use SQLite
-    const projectPath = normalizeProjectPath(getCurrentProjectPath());
-    const status = args?.status;
+    const listArgs: ListIssuesArgs = {
+      status: args?.status,
+      priority: args?.priority,
+      priorityMin: args?.priority_min,
+      priorityMax: args?.priority_max,
+      issueType: args?.issueType,
+      labels: args?.labels,
+      labelsAny: args?.labels_any,
+      parentId: args?.parentId,
+      planId: args?.planId,
+      hasSubtasks: args?.has_subtasks,
+      hasDependencies: args?.has_dependencies,
+      sortBy: args?.sortBy,
+      sortOrder: args?.sortOrder,
+      limit: args?.limit,
+    };
 
-    if (status && !['todo', 'done'].includes(status)) {
-      throw new ValidationError('status must be todo or done');
-    }
-
-    const tasks = getDb().listTasks(projectPath, status);
+    const result = getDb().listIssues(projectPath, listArgs);
 
     return success(
       {
-        tasks,
-        count: tasks.length,
-        project_path: projectPath,
+        issues: result.issues.map((t: Issue) => ({
+          id: t.id,
+          shortId: t.shortId,
+          title: t.title,
+          description: t.description,
+          status: t.status,
+          priority: t.priority,
+          issueType: t.issueType,
+          parentId: t.parentId,
+          labels: t.labels,
+          dependencyCount: t.dependencyCount,
+          subtaskCount: t.subtaskCount,
+          created_at: t.createdAt,
+          updated_at: t.updatedAt,
+        })),
+        count: result.issues.length,
+        project_path: result.queriedProjectPath,
       },
-      `Found ${tasks.length} tasks`
+      `Found ${result.issues.length} issue(s)`
     );
   } catch (err) {
-    return error('Failed to list tasks', err);
+    return error('Failed to list issues', err);
   }
 }
 
 /**
- * Mark a task as complete
+ * Mark an issue as complete
  */
 async function handleTaskComplete(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.completeTask(args);
-    }
-
-    // Local mode: use SQLite
     if (!args?.id) {
       throw new ValidationError('id is required');
     }
 
-    if (!args?.task_title) {
-      throw new ValidationError('task_title is required');
+    if (!args?.issue_title) {
+      throw new ValidationError('issue_title is required');
     }
 
-    // Fetch task to get title before completing
-    const task = db!.getTask(args.id);
-    if (!task) {
+    // Fetch issue to get title before completing
+    const issue = getDb().getIssue(args.id);
+    if (!issue) {
       return success(
         { completed: false, id: args.id },
-        `No task found with id '${args.id}'`
+        `No issue found with id '${args.id}'`
       );
     }
 
     // Validate title matches
-    if (task.title !== args.task_title) {
-      throw new ValidationError(`Task title mismatch: expected '${task.title}' but got '${args.task_title}'`);
+    if (issue.title !== args.issue_title) {
+      throw new ValidationError(`Issue title mismatch: expected '${issue.title}' but got '${args.issue_title}'`);
     }
 
-    const completed = getDb().completeTask(args.id);
+    const agentId = getCurrentProvider();
+    const result = getDb().completeIssue(args.id, agentId, currentSessionId || undefined);
+    if (!result) {
+      return success(
+        { completed: false, id: args.id },
+        `No issue found with id '${args.id}'`
+      );
+    }
+
+    await updateAgentActivity();
+
+    const { issue: completedIssue, unblockedIssues, completedPlanId } = result;
+
+    // Build message parts
+    let message = `Completed issue ${completedIssue.shortId || completedIssue.id}: "${completedIssue.title}"`;
+    if (unblockedIssues?.length) message += ` (unblocked ${unblockedIssues.length} issue(s))`;
+    if (completedPlanId) message += ` [Plan auto-completed: all epics closed]`;
+
+    return success(
+      {
+        completed: true,
+        id: completedIssue.id,
+        shortId: completedIssue.shortId,
+        title: completedIssue.title,
+        status: completedIssue.status,
+        closedByAgent: completedIssue.closedByAgent,
+        closedAt: completedIssue.closedAt,
+        unblocked_issues: unblockedIssues || [],
+        completed_plan_id: completedPlanId,
+      },
+      message
+    );
+  } catch (err) {
+    return error('Failed to complete issue', err);
+  }
+}
+
+/**
+ * Delete an issue permanently
+ */
+async function handleTaskDelete(args: any) {
+  try {
+    if (!args?.id) {
+      throw new ValidationError('id is required');
+    }
+
+    if (!args?.issue_title) {
+      throw new ValidationError('issue_title is required');
+    }
+
+    // Fetch issue to verify it exists and validate title
+    const issue = getDb().getIssue(args.id);
+    if (!issue) {
+      return success(
+        { deleted: false, id: args.id },
+        `No issue found with id '${args.id}'`
+      );
+    }
+
+    // Validate title matches
+    if (issue.title !== args.issue_title) {
+      throw new ValidationError(`Issue title mismatch: expected '${issue.title}' but got '${args.issue_title}'`);
+    }
+
+    const deleted = getDb().deleteIssue(args.id);
+    if (!deleted) {
+      return success(
+        { deleted: false, id: args.id },
+        `Failed to delete issue with id '${args.id}'`
+      );
+    }
 
     await updateAgentActivity();
 
     return success(
       {
-        completed: true,
-        id: args.id,
-        title: task.title,
-        status: 'done'
+        deleted: true,
+        id: issue.id,
+        shortId: issue.shortId,
+        title: issue.title,
       },
-      `Marked task "${task.title}" as done`
+      `Deleted issue ${issue.shortId || issue.id}: "${issue.title}"`
     );
   } catch (err) {
-    return error('Failed to complete task', err);
+    return error('Failed to delete issue', err);
+  }
+}
+
+/**
+ * Add a dependency between issues
+ */
+async function handleTaskAddDependency(args: any) {
+  try {
+    if (!args?.issueId) {
+      throw new ValidationError('issueId is required');
+    }
+    if (!args?.dependsOnId) {
+      throw new ValidationError('dependsOnId is required');
+    }
+    if (args.dependencyType && !['blocks', 'related', 'parent-child', 'discovered-from'].includes(args.dependencyType)) {
+      throw new ValidationError('dependencyType must be one of: blocks, related, parent-child, discovered-from');
+    }
+
+    const result = getDb().addDependency(
+      args.issueId,
+      args.dependsOnId,
+      args.dependencyType || 'blocks'
+    );
+
+    if (!result) {
+      return success(
+        { created: false, issueId: args.issueId, dependsOnId: args.dependsOnId },
+        'Failed to add dependency - one or both issues not found'
+      );
+    }
+
+    await updateAgentActivity();
+
+    return success(
+      {
+        created: result.created,
+        issueId: result.issueId,
+        dependsOnId: result.dependsOnId,
+        dependencyType: result.dependencyType,
+        issueBlocked: result.issueBlocked,
+      },
+      `Added ${result.dependencyType} dependency: ${result.issueShortId} depends on ${result.dependsOnShortId}${result.issueBlocked ? ' (issue now blocked)' : ''}`
+    );
+  } catch (err) {
+    return error('Failed to add dependency', err);
+  }
+}
+
+/**
+ * Remove a dependency between issues
+ */
+async function handleTaskRemoveDependency(args: any) {
+  try {
+    if (!args?.issueId) {
+      throw new ValidationError('issueId is required');
+    }
+    if (!args?.dependsOnId) {
+      throw new ValidationError('dependsOnId is required');
+    }
+
+    const result = getDb().removeDependency(args.issueId, args.dependsOnId);
+
+    await updateAgentActivity();
+
+    return success(
+      {
+        removed: result.removed,
+        issueId: result.issueId,
+        dependsOnId: result.dependsOnId,
+        issueUnblocked: result.issueUnblocked,
+      },
+      result.removed
+        ? `Removed dependency${result.issueUnblocked ? ' (issue now unblocked)' : ''}`
+        : 'Dependency not found'
+    );
+  } catch (err) {
+    return error('Failed to remove dependency', err);
+  }
+}
+
+/**
+ * Add labels to an issue
+ */
+async function handleTaskAddLabels(args: any) {
+  try {
+    if (!args?.id) {
+      throw new ValidationError('id is required');
+    }
+    if (!args?.labels || !Array.isArray(args.labels) || args.labels.length === 0) {
+      throw new ValidationError('labels must be a non-empty array');
+    }
+
+    const result = getDb().addLabels(args.id, args.labels);
+
+    if (!result) {
+      return success(
+        { issueId: args.id, added: 0 },
+        `Issue not found with id '${args.id}'`
+      );
+    }
+
+    await updateAgentActivity();
+
+    return success(
+      {
+        issueId: result.issueId,
+        shortId: result.shortId,
+        labels: result.labels,
+        added: result.addedCount,
+      },
+      `Added ${result.addedCount} label(s) to ${result.shortId}`
+    );
+  } catch (err) {
+    return error('Failed to add labels', err);
+  }
+}
+
+/**
+ * Remove labels from an issue
+ */
+async function handleTaskRemoveLabels(args: any) {
+  try {
+    if (!args?.id) {
+      throw new ValidationError('id is required');
+    }
+    if (!args?.labels || !Array.isArray(args.labels) || args.labels.length === 0) {
+      throw new ValidationError('labels must be a non-empty array');
+    }
+
+    const result = getDb().removeLabels(args.id, args.labels);
+
+    if (!result) {
+      return success(
+        { issueId: args.id, removed: 0 },
+        `Issue not found with id '${args.id}'`
+      );
+    }
+
+    await updateAgentActivity();
+
+    return success(
+      {
+        issueId: result.issueId,
+        shortId: result.shortId,
+        labels: result.labels,
+        removed: result.removedCount,
+      },
+      `Removed ${result.removedCount} label(s) from ${result.shortId}`
+    );
+  } catch (err) {
+    return error('Failed to remove labels', err);
+  }
+}
+
+/**
+ * Claim issues for the current agent
+ */
+async function handleTaskClaim(args: any) {
+  try {
+    if (!args?.issue_ids || !Array.isArray(args.issue_ids) || args.issue_ids.length === 0) {
+      throw new ValidationError('issue_ids must be a non-empty array');
+    }
+
+    const agentId = getCurrentProvider();
+    const result = getDb().claimIssues(args.issue_ids, agentId, currentSessionId || undefined);
+
+    await updateAgentActivity();
+
+    return success(
+      {
+        claimed: result.claimedIssues,
+        already_claimed: result.alreadyClaimed,
+        not_found: result.notFound,
+        your_agent_id: agentId,
+      },
+      `Claimed ${result.claimedIssues.length} issue(s)`
+    );
+  } catch (err) {
+    return error('Failed to claim issues', err);
+  }
+}
+
+/**
+ * Release issues back to the pool
+ */
+async function handleTaskRelease(args: any) {
+  try {
+    if (!args?.issue_ids || !Array.isArray(args.issue_ids) || args.issue_ids.length === 0) {
+      throw new ValidationError('issue_ids must be a non-empty array');
+    }
+
+    const agentId = getCurrentProvider();
+    const result = getDb().releaseIssues(args.issue_ids, agentId);
+
+    await updateAgentActivity();
+
+    return success(
+      {
+        released: result.releasedIssues,
+        not_owned: result.notOwned,
+        not_found: result.notFound,
+      },
+      `Released ${result.releasedIssues.length} issue(s)`
+    );
+  } catch (err) {
+    return error('Failed to release issues', err);
+  }
+}
+
+/**
+ * Get issues that are ready to work on (no blocking dependencies)
+ */
+async function handleTaskGetReady(args: any) {
+  try {
+    const projectPath = normalizeProjectPath(getCurrentProjectPath());
+    const issues = getDb().getReadyIssues(projectPath, args?.limit);
+
+    return success(
+      {
+        issues: issues.map((t: Issue) => ({
+          id: t.id,
+          shortId: t.shortId,
+          title: t.title,
+          description: t.description,
+          priority: t.priority,
+          issueType: t.issueType,
+          labels: t.labels,
+          assignedToAgent: t.assignedToAgent,
+          created_at: t.createdAt,
+        })),
+        count: issues.length,
+        project_path: projectPath,
+      },
+      `Found ${issues.length} ready issue(s)`
+    );
+  } catch (err) {
+    return error('Failed to get ready issues', err);
+  }
+}
+
+/**
+ * Get next block of issues and claim them
+ */
+async function handleTaskGetNextBlock(args: any) {
+  try {
+    const projectPath = normalizeProjectPath(getCurrentProjectPath());
+    const agentId = getCurrentProvider();
+    const count = args?.count || 3;
+    const result = getDb().getNextBlock(projectPath, count, agentId, currentSessionId || undefined);
+
+    await updateAgentActivity();
+
+    return success(
+      {
+        issues: result.issues.map((t: Issue) => ({
+          id: t.id,
+          shortId: t.shortId,
+          title: t.title,
+          description: t.description,
+          details: t.details,
+          priority: t.priority,
+          issueType: t.issueType,
+          parentId: t.parentId,
+          labels: t.labels,
+          status: 'in_progress',
+          assignedToAgent: agentId,
+          created_at: t.createdAt,
+        })),
+        claimed_count: result.claimedCount,
+        your_agent_id: result.agentId,
+      },
+      result.claimedCount > 0
+        ? `Claimed ${result.claimedCount} issue(s): ${result.issues.map((t: Issue) => t.shortId || t.id).join(', ')}`
+        : 'No ready issues available to claim'
+    );
+  } catch (err) {
+    return error('Failed to get next block', err);
+  }
+}
+
+/**
+ * Create multiple issues in a batch with dependencies
+ */
+async function handleTaskCreateBatch(args: any) {
+  try {
+    if (!args?.issues || !Array.isArray(args.issues) || args.issues.length === 0) {
+      throw new ValidationError('issues must be a non-empty array');
+    }
+
+    // Validate issues
+    for (let i = 0; i < args.issues.length; i++) {
+      const issue = args.issues[i];
+      if (!issue.title) {
+        throw new ValidationError(`Issue at index ${i} missing required field: title`);
+      }
+      if (issue.priority !== undefined && (issue.priority < 0 || issue.priority > 4)) {
+        throw new ValidationError(`Issue at index ${i} has invalid priority: ${issue.priority}`);
+      }
+      if (issue.issueType && !['task', 'bug', 'feature', 'epic', 'chore'].includes(issue.issueType)) {
+        throw new ValidationError(`Issue at index ${i} has invalid issueType: ${issue.issueType}`);
+      }
+    }
+
+    // Validate dependencies
+    if (args.dependencies && Array.isArray(args.dependencies)) {
+      for (let i = 0; i < args.dependencies.length; i++) {
+        const dep = args.dependencies[i];
+        if (dep.issueIndex === undefined || dep.dependsOnIndex === undefined) {
+          throw new ValidationError(`Dependency at index ${i} missing issueIndex or dependsOnIndex`);
+        }
+        if (dep.issueIndex < 0 || dep.issueIndex >= args.issues.length) {
+          throw new ValidationError(`Dependency at index ${i} has invalid issueIndex: ${dep.issueIndex}`);
+        }
+        if (dep.dependsOnIndex < 0 || dep.dependsOnIndex >= args.issues.length) {
+          throw new ValidationError(`Dependency at index ${i} has invalid dependsOnIndex: ${dep.dependsOnIndex}`);
+        }
+        if (dep.issueIndex === dep.dependsOnIndex) {
+          throw new ValidationError(`Dependency at index ${i}: issue cannot depend on itself`);
+        }
+        if (dep.dependencyType && !['blocks', 'related', 'parent-child', 'discovered-from'].includes(dep.dependencyType)) {
+          throw new ValidationError(`Dependency at index ${i} has invalid dependencyType: ${dep.dependencyType}`);
+        }
+      }
+    }
+
+    const projectPath = normalizeProjectPath(getCurrentProjectPath());
+    const agentId = getCurrentProvider();
+
+    const batchArgs: CreateBatchArgs = {
+      issues: args.issues,
+      dependencies: args.dependencies,
+      planId: args.planId,
+    };
+
+    const result = getDb().createBatch(projectPath, batchArgs, agentId, currentSessionId || undefined);
+
+    await updateAgentActivity();
+
+    return success(
+      {
+        issues: result.issues.map((t: { id: string; shortId: string; title: string; index: number }) => ({
+          id: t.id,
+          shortId: t.shortId,
+          title: t.title,
+          index: t.index,
+        })),
+        dependencies: result.dependencies,
+        count: result.count,
+        dependency_count: result.dependencyCount,
+        project_path: projectPath,
+      },
+      `Created ${result.count} issue(s): ${result.issues.map((t: { shortId: string }) => t.shortId).join(', ')}`
+    );
+  } catch (err) {
+    return error('Failed to create batch', err);
   }
 }
 
@@ -1075,12 +1809,6 @@ async function handleTaskComplete(args: any) {
  */
 async function handleCreateCheckpoint(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.createCheckpoint(args);
-    }
-
-    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateCreateCheckpoint(args);
 
@@ -1137,12 +1865,6 @@ async function handleCreateCheckpoint(args: any) {
  */
 async function handlePrepareCompaction() {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.prepareCompaction();
-    }
-
-    // Local mode: use SQLite
     const sessionId = ensureSession();
 
     // Generate auto-checkpoint name
@@ -1174,9 +1896,9 @@ async function handlePrepareCompaction() {
       limit: COMPACTION_HIGH_PRIORITY_LIMIT,
     });
 
-    const tasks = getDb().getContextItems(sessionId, {
-      category: 'task',
-      limit: COMPACTION_TASK_LIMIT,
+    const reminders = getDb().getContextItems(sessionId, {
+      category: 'reminder',
+      limit: COMPACTION_REMINDER_LIMIT,
     });
 
     const decisions = getDb().getContextItems(sessionId, {
@@ -1189,8 +1911,8 @@ async function handlePrepareCompaction() {
       limit: COMPACTION_PROGRESS_LIMIT,
     });
 
-    // Identify unfinished tasks
-    const nextSteps = tasks.filter(
+    // Identify unfinished reminders
+    const nextSteps = reminders.filter(
       (t) =>
         !t.value.toLowerCase().includes('completed') &&
         !t.value.toLowerCase().includes('done') &&
@@ -1288,12 +2010,6 @@ async function handlePrepareCompaction() {
  */
 async function handleRestoreCheckpoint(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.restoreCheckpoint(args);
-    }
-
-    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateRestoreCheckpoint(args);
 
@@ -1328,12 +2044,6 @@ async function handleRestoreCheckpoint(args: any) {
  */
 async function handleTagContextItems(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.tagContextItems(args);
-    }
-
-    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateTagContextItems(args);
 
@@ -1366,12 +2076,6 @@ async function handleTagContextItems(args: any) {
  */
 async function handleAddItemsToCheckpoint(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.addItemsToCheckpoint(args);
-    }
-
-    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateCheckpointItemManagement(args);
 
@@ -1405,12 +2109,6 @@ async function handleAddItemsToCheckpoint(args: any) {
  */
 async function handleRemoveItemsFromCheckpoint(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.removeItemsFromCheckpoint(args);
-    }
-
-    // Local mode: use SQLite
     const sessionId = ensureSession();
     const validated = validateCheckpointItemManagement(args);
 
@@ -1444,12 +2142,6 @@ async function handleRemoveItemsFromCheckpoint(args: any) {
  */
 async function handleSplitCheckpoint(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.splitCheckpoint(args);
-    }
-
-    // Local mode: use SQLite
     ensureSession();
     const validated = validateCheckpointSplit(args);
 
@@ -1517,12 +2209,6 @@ async function handleSplitCheckpoint(args: any) {
 
 async function handleDeleteCheckpoint(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.deleteCheckpoint(args);
-    }
-
-    // Local mode: use SQLite
     ensureSession();
     const validated = validateDeleteCheckpoint(args);
 
@@ -1558,12 +2244,6 @@ async function handleDeleteCheckpoint(args: any) {
  */
 async function handleListCheckpoints(args?: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.listCheckpoints(args || {});
-    }
-
-    // Local mode: use SQLite
     const search = args?.search;
     const sessionId = args?.session_id;
     const includeAllProjects = args?.include_all_projects || false;
@@ -1648,12 +2328,6 @@ async function handleListCheckpoints(args?: any) {
  */
 async function handleGetCheckpoint(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.getCheckpoint(args);
-    }
-
-    // Local mode: use SQLite
     const { checkpoint_id } = args;
 
     if (!checkpoint_id || typeof checkpoint_id !== 'string') {
@@ -1714,12 +2388,6 @@ async function handleGetCheckpoint(args: any) {
  */
 async function handleSessionStatus() {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.getSessionStatus();
-    }
-
-    // Local mode: use SQLite
     if (!currentSessionId) {
       return success({ current_session_id: null }, 'No active session');
     }
@@ -1769,12 +2437,6 @@ async function handleSessionStatus() {
  */
 async function handleSessionRename(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.renameSession(args);
-    }
-
-    // Local mode: use SQLite
     const sessionId = ensureSession();
     const { current_name, new_name } = args;
 
@@ -1825,16 +2487,11 @@ async function handleSessionRename(args: any) {
  */
 async function handleListSessions(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.listSessions(args);
-    }
-
-    // Local mode: use SQLite
     const limit = args?.limit || 10;
     const projectPath = args?.project_path || getCurrentProjectPath();
     const status = args?.status;
     const includeCompleted = args?.include_completed || false;
+    const search = args?.search;
 
     // Use listSessionsByPaths to properly check session_projects junction table
     // This ensures multi-path sessions appear in all their associated projects
@@ -1844,6 +2501,7 @@ async function handleListSessions(args: any) {
       {
         status,
         include_completed: includeCompleted,
+        search,
       }
     );
 
@@ -1861,16 +2519,6 @@ async function handleListSessions(args: any) {
  */
 async function handleSessionEnd() {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      const result = await cloud!.endSession();
-      if (result.success) {
-        updateStatusLine(null);
-      }
-      return result;
-    }
-
-    // Local mode: use SQLite
     const sessionId = ensureSession();
     const session = db!.getSession(sessionId);
 
@@ -1923,16 +2571,6 @@ async function handleSessionEnd() {
  */
 async function handleSessionPause() {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      const result = await cloud!.pauseSession();
-      if (result.success) {
-        updateStatusLine(null);
-      }
-      return result;
-    }
-
-    // Local mode: use SQLite
     const sessionId = ensureSession();
     const session = db!.getSession(sessionId);
 
@@ -1974,25 +2612,6 @@ async function handleSessionPause() {
  */
 async function handleSessionResume(args: any) {
   try {
-    // Cloud mode: set agent metadata and proxy to API
-    if (mode === 'cloud') {
-      const branch = await getCurrentBranch();
-      const projectPath = normalizeProjectPath(getCurrentProjectPath());
-      const provider = getCurrentProvider();
-      const agentId = getAgentId(projectPath, branch || 'main', provider);
-      cloud!.setAgentMetadata(agentId, projectPath, branch || 'main', provider);
-      const result = await cloud!.resumeSession(args);
-      if (result.success && result.data) {
-        const data = result.data as { session_id: string; session_name: string; item_count?: number };
-        updateStatusLine(
-          { id: data.session_id, name: data.session_name, project_path: projectPath, status: 'active' },
-          { itemCount: data.item_count, provider, projectPath }
-        );
-      }
-      return result;
-    }
-
-    // Local mode: use SQLite
     const { session_id, session_name } = args;
 
     if (!session_id || typeof session_id !== 'string') {
@@ -2052,22 +2671,6 @@ async function handleSessionResume(args: any) {
  */
 async function handleSessionSwitch(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      const result = await cloud!.switchSession(args);
-      if (result.success && result.data) {
-        const data = result.data as { session_id: string; current_session: string; item_count?: number };
-        const projectPath = normalizeProjectPath(getCurrentProjectPath());
-        const provider = getCurrentProvider();
-        updateStatusLine(
-          { id: data.session_id, name: data.current_session, project_path: projectPath, status: 'active' },
-          { itemCount: data.item_count, provider, projectPath }
-        );
-      }
-      return result;
-    }
-
-    // Local mode: use SQLite
     const { session_id, session_name } = args;
 
     if (!session_id || typeof session_id !== 'string') {
@@ -2135,12 +2738,6 @@ async function handleSessionSwitch(args: any) {
  */
 async function handleSessionDelete(args: any) {
   try {
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.deleteSession(args);
-    }
-
-    // Local mode: use SQLite
     const { session_id, session_name } = args;
 
     if (!session_id || typeof session_id !== 'string') {
@@ -2197,12 +2794,6 @@ async function handleSessionAddPath(args: any) {
       throw new ValidationError('session_name is required');
     }
 
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.addSessionPath(args);
-    }
-
-    // Local mode: use SQLite
     const sessionId = typedArgs.session_id;
 
     // Get project path (default to current directory if not provided)
@@ -2280,16 +2871,6 @@ async function handleSessionRemovePath(args: unknown) {
       throw new ValidationError('session_name is required');
     }
 
-    // Cloud mode: proxy to API
-    if (mode === 'cloud') {
-      return await cloud!.removeSessionPath({
-        session_id: typedArgs.session_id,
-        session_name: typedArgs.session_name,
-        project_path: typedArgs.project_path,
-      });
-    }
-
-    // Local mode: use SQLite
     const sessionId = typedArgs.session_id;
     const projectPath = normalizeProjectPath(typedArgs.project_path);
 
@@ -2346,6 +2927,111 @@ async function handleSessionRemovePath(args: unknown) {
       return error('Cannot remove the last path from a session. Sessions must have at least one project path.');
     }
     return error('Failed to remove path from session', err);
+  }
+}
+
+// ====================
+// Plan Handlers
+// ====================
+
+async function handlePlanCreate(args: any) {
+  try {
+
+    const projectPath = normalizeProjectPath(args?.project_path || getCurrentProjectPath());
+
+    if (!args?.title) {
+      throw new ValidationError('title is required');
+    }
+    if (!args?.content) {
+      throw new ValidationError('content is required');
+    }
+    if (args.status && !['draft', 'active', 'completed'].includes(args.status)) {
+      throw new ValidationError('status must be one of: draft, active, completed');
+    }
+
+    const plan = db!.createPlan(projectPath, {
+      title: args.title,
+      content: args.content,
+      status: args.status,
+      successCriteria: args.successCriteria,
+    }, currentSessionId || undefined);
+
+    return success(
+      { plan },
+      `Created plan '${plan.title}' (${plan.short_id})`
+    );
+  } catch (err) {
+    return error('Failed to create plan', err);
+  }
+}
+
+async function handlePlanList(args: any) {
+  try {
+
+    const projectPath = normalizeProjectPath(args?.project_path || getCurrentProjectPath());
+
+    const plans = db!.listPlans(projectPath, {
+      status: args?.status,
+      limit: args?.limit,
+    });
+
+    return success(
+      { plans, count: plans.length },
+      `Found ${plans.length} plan(s)`
+    );
+  } catch (err) {
+    return error('Failed to list plans', err);
+  }
+}
+
+async function handlePlanGet(args: any) {
+  try {
+
+    if (!args?.plan_id) {
+      throw new ValidationError('plan_id is required');
+    }
+
+    const plan = db!.getPlan(args.plan_id);
+    if (!plan) {
+      throw new ValidationError(`Plan '${args.plan_id}' not found`);
+    }
+
+    return success({ plan }, `Retrieved plan '${plan.title}'`);
+  } catch (err) {
+    return error('Failed to get plan', err);
+  }
+}
+
+async function handlePlanUpdate(args: any) {
+  try {
+
+    if (!args?.id) {
+      throw new ValidationError('id is required');
+    }
+    if (args.status && !['draft', 'active', 'completed'].includes(args.status)) {
+      throw new ValidationError('status must be one of: draft, active, completed');
+    }
+
+    const plan = db!.updatePlan(args.id, {
+      id: args.id,
+      title: args.title,
+      content: args.content,
+      status: args.status,
+      successCriteria: args.successCriteria,
+      project_path: args.project_path,
+    }, currentSessionId || undefined);
+
+    if (!plan) {
+      throw new ValidationError(`Plan '${args.id}' not found`);
+    }
+
+    const message = args.project_path
+      ? `Updated plan '${plan.title}' and cascaded project to linked issues`
+      : `Updated plan '${plan.title}'`;
+
+    return success({ plan }, message);
+  } catch (err) {
+    return error('Failed to update plan', err);
   }
 }
 
@@ -2458,7 +3144,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'context_save',
-        description: 'Save individual context items (decisions, tasks, notes, progress). Use frequently to capture important information. Supports categories (task/decision/progress/note) and priorities (high/normal/low).',
+        description: 'Save individual context items (decisions, reminders, notes, progress). Use frequently to capture important information. Supports categories (reminder/decision/progress/note) and priorities (high/normal/low).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -2473,7 +3159,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             category: {
               type: 'string',
-              enum: ['task', 'decision', 'progress', 'note'],
+              enum: ['reminder', 'decision', 'progress', 'note'],
               description: 'Category of this context item',
             },
             priority: {
@@ -2515,7 +3201,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             category: {
               type: 'string',
-              enum: ['task', 'decision', 'progress', 'note'],
+              enum: ['reminder', 'decision', 'progress', 'note'],
               description: 'Filter by category',
             },
             priority: {
@@ -2570,7 +3256,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             category: {
               type: 'string',
-              enum: ['task', 'decision', 'progress', 'note'],
+              enum: ['reminder', 'decision', 'progress', 'note'],
               description: 'New category',
             },
             priority: {
@@ -2651,85 +3337,524 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['key'],
         },
       },
+      // Project CRUD tools
       {
-        name: 'context_task_create',
-        description: 'Create a new task for the current project. Tasks persist across sessions.',
+        name: 'context_project_create',
+        description: 'Create a new project. Projects must be created before starting sessions. Use this to set up a new codebase with custom name, description, and issue prefix.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            project_path: {
+              type: 'string',
+              description: 'Absolute path to the project directory',
+            },
+            name: {
+              type: 'string',
+              description: 'Project display name (defaults to folder name)',
+            },
+            description: {
+              type: 'string',
+              description: 'Project description',
+            },
+            issue_prefix: {
+              type: 'string',
+              description: 'Prefix for issue IDs (e.g., "SC" creates SC-1, SC-2). Defaults to first 4 chars of name.',
+            },
+          },
+          required: ['project_path'],
+        },
+      },
+      {
+        name: 'context_project_list',
+        description: 'List all projects with optional session counts.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            limit: {
+              type: 'number',
+              description: 'Maximum projects to return (default: 50)',
+            },
+            include_session_count: {
+              type: 'boolean',
+              description: 'Include count of sessions per project (default: false)',
+            },
+          },
+        },
+      },
+      {
+        name: 'context_project_get',
+        description: 'Get details of a specific project by path.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            project_path: {
+              type: 'string',
+              description: 'Absolute path to the project directory',
+            },
+          },
+          required: ['project_path'],
+        },
+      },
+      {
+        name: 'context_project_update',
+        description: 'Update project settings (name, description, issue prefix).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            project_path: {
+              type: 'string',
+              description: 'Absolute path to the project directory',
+            },
+            name: {
+              type: 'string',
+              description: 'New project name',
+            },
+            description: {
+              type: 'string',
+              description: 'New project description',
+            },
+            issue_prefix: {
+              type: 'string',
+              description: 'New prefix for issue IDs',
+            },
+          },
+          required: ['project_path'],
+        },
+      },
+      {
+        name: 'context_project_delete',
+        description: 'Delete a project and all associated data (issues, plans, memory). Sessions are unlinked but not deleted. Requires confirmation.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            project_path: {
+              type: 'string',
+              description: 'Absolute path to the project directory',
+            },
+            confirm: {
+              type: 'boolean',
+              description: 'Must be true to confirm deletion',
+            },
+          },
+          required: ['project_path', 'confirm'],
+        },
+      },
+      {
+        name: 'context_issue_create',
+        description: 'Create a new issue for the current project. Can link to a Plan for tracking implementation of PRDs/specs. Issues persist across sessions.',
         inputSchema: {
           type: 'object',
           properties: {
             title: {
               type: 'string',
-              description: 'Task title',
+              description: 'Issue title',
             },
             description: {
               type: 'string',
-              description: 'Optional task description',
+              description: 'Optional issue description',
+            },
+            details: {
+              type: 'string',
+              description: 'Implementation details or notes',
+            },
+            priority: {
+              type: 'number',
+              minimum: 0,
+              maximum: 4,
+              description: 'Priority level: 0=lowest, 1=low, 2=medium (default), 3=high, 4=critical',
+            },
+            issueType: {
+              type: 'string',
+              enum: ['task', 'bug', 'feature', 'epic', 'chore'],
+              description: 'Type of issue (default: task)',
+            },
+            parentId: {
+              type: 'string',
+              description: 'Parent issue ID for subtasks',
+            },
+            planId: {
+              type: 'string',
+              description: 'Link issue to a Plan (PRD/spec). Use context_plan_list to find plan IDs.',
+            },
+            labels: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Labels/tags for categorization',
+            },
+            status: {
+              type: 'string',
+              enum: ['open', 'in_progress', 'blocked', 'closed', 'deferred'],
+              description: 'Initial status (default: open)',
             },
           },
           required: ['title'],
         },
       },
       {
-        name: 'context_task_update',
-        description: 'Update an existing task (title, description, or status).',
+        name: 'context_issue_update',
+        description: 'Update an existing issue (title, description, status, priority, etc.).',
         inputSchema: {
           type: 'object',
           properties: {
             id: {
               type: 'string',
-              description: 'Task ID to update',
+              description: 'Issue ID to update',
             },
-            task_title: {
+            issue_title: {
               type: 'string',
-              description: 'Current task title (for verification and display)',
+              description: 'Current issue title (for verification and display)',
             },
             title: {
               type: 'string',
-              description: 'New task title',
+              description: 'New issue title',
             },
             description: {
               type: 'string',
-              description: 'New task description',
+              description: 'New issue description',
+            },
+            details: {
+              type: 'string',
+              description: 'New implementation details',
             },
             status: {
               type: 'string',
-              enum: ['todo', 'done'],
-              description: 'New task status',
+              enum: ['open', 'in_progress', 'blocked', 'closed', 'deferred'],
+              description: 'New issue status',
+            },
+            priority: {
+              type: 'number',
+              minimum: 0,
+              maximum: 4,
+              description: 'New priority level (0-4)',
+            },
+            issueType: {
+              type: 'string',
+              enum: ['task', 'bug', 'feature', 'epic', 'chore'],
+              description: 'New issue type',
+            },
+            parentId: {
+              type: 'string',
+              description: 'New parent issue ID (or null to remove)',
+            },
+            planId: {
+              type: 'string',
+              description: 'Link issue to a Plan (or null to remove link)',
+            },
+            add_project_path: {
+              type: 'string',
+              description: 'Add issue to an additional project path (multi-project support). The issue will appear when querying from this project.',
+            },
+            remove_project_path: {
+              type: 'string',
+              description: 'Remove issue from an additional project path. Cannot remove the primary project path.',
             },
           },
-          required: ['id', 'task_title'],
+          required: ['id', 'issue_title'],
         },
       },
       {
-        name: 'context_task_list',
-        description: 'List all tasks for current project. Optionally filter by status.',
+        name: 'context_issue_list',
+        description: 'List issues for current project with advanced filtering and sorting.',
         inputSchema: {
           type: 'object',
           properties: {
             status: {
               type: 'string',
-              enum: ['todo', 'done'],
-              description: 'Optional: filter by status',
+              enum: ['open', 'in_progress', 'blocked', 'closed', 'deferred'],
+              description: 'Filter by status',
+            },
+            priority: {
+              type: 'number',
+              description: 'Filter by exact priority (0-4)',
+            },
+            priority_min: {
+              type: 'number',
+              description: 'Filter by minimum priority',
+            },
+            priority_max: {
+              type: 'number',
+              description: 'Filter by maximum priority',
+            },
+            issueType: {
+              type: 'string',
+              enum: ['task', 'bug', 'feature', 'epic', 'chore'],
+              description: 'Filter by issue type',
+            },
+            labels: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Filter by labels (all must match)',
+            },
+            labels_any: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Filter by labels (any must match)',
+            },
+            parentId: {
+              type: 'string',
+              description: 'Filter by parent issue ID',
+            },
+            planId: {
+              type: 'string',
+              description: 'Filter by plan ID (show issues linked to a plan)',
+            },
+            has_subtasks: {
+              type: 'boolean',
+              description: 'Filter issues with/without subtasks',
+            },
+            has_dependencies: {
+              type: 'boolean',
+              description: 'Filter issues with/without dependencies',
+            },
+            sortBy: {
+              type: 'string',
+              enum: ['priority', 'createdAt', 'updatedAt'],
+              description: 'Sort field (default: createdAt)',
+            },
+            sortOrder: {
+              type: 'string',
+              enum: ['asc', 'desc'],
+              description: 'Sort order (default: desc)',
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum issues to return',
+            },
+            all_projects: {
+              type: 'boolean',
+              description: 'Search across all projects instead of just current project (default: false)',
             },
           },
         },
       },
       {
-        name: 'context_task_complete',
-        description: 'Mark a task as complete (done).',
+        name: 'context_issue_complete',
+        description: 'Mark an issue as complete (closed). Automatically unblocks dependent issues.',
         inputSchema: {
           type: 'object',
           properties: {
             id: {
               type: 'string',
-              description: 'Task ID to mark as done',
+              description: 'Issue ID to mark as closed',
             },
-            task_title: {
+            issue_title: {
               type: 'string',
-              description: 'Task title (for verification and display)',
+              description: 'Issue title (for verification and display)',
             },
           },
-          required: ['id', 'task_title'],
+          required: ['id', 'issue_title'],
+        },
+      },
+      {
+        name: 'context_issue_delete',
+        description: 'Delete an issue permanently. Also removes all dependencies. Cannot be undone. Requires issue_id and issue_title.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              description: 'Issue ID to delete',
+            },
+            issue_title: {
+              type: 'string',
+              description: 'Issue title (for verification and display)',
+            },
+          },
+          required: ['id', 'issue_title'],
+        },
+      },
+      {
+        name: 'context_issue_add_dependency',
+        description: 'Add a dependency between issues. The issue will depend on another issue.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            issueId: {
+              type: 'string',
+              description: 'ID of the issue that will have the dependency',
+            },
+            dependsOnId: {
+              type: 'string',
+              description: 'ID of the issue it depends on',
+            },
+            dependencyType: {
+              type: 'string',
+              enum: ['blocks', 'related', 'parent-child', 'discovered-from'],
+              description: 'Type of dependency (default: blocks)',
+            },
+          },
+          required: ['issueId', 'dependsOnId'],
+        },
+      },
+      {
+        name: 'context_issue_remove_dependency',
+        description: 'Remove a dependency between issues.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            issueId: {
+              type: 'string',
+              description: 'ID of the issue with the dependency',
+            },
+            dependsOnId: {
+              type: 'string',
+              description: 'ID of the issue it depends on',
+            },
+          },
+          required: ['issueId', 'dependsOnId'],
+        },
+      },
+      {
+        name: 'context_issue_add_labels',
+        description: 'Add labels to an issue for categorization.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              description: 'Issue ID',
+            },
+            labels: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Labels to add',
+            },
+          },
+          required: ['id', 'labels'],
+        },
+      },
+      {
+        name: 'context_issue_remove_labels',
+        description: 'Remove labels from an issue.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              description: 'Issue ID',
+            },
+            labels: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Labels to remove',
+            },
+          },
+          required: ['id', 'labels'],
+        },
+      },
+      {
+        name: 'context_issue_claim',
+        description: 'Claim issues for the current agent. Marks them as in_progress and assigns to you.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            issue_ids: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Issue IDs to claim',
+            },
+          },
+          required: ['issue_ids'],
+        },
+      },
+      {
+        name: 'context_issue_release',
+        description: 'Release issues back to the pool. Unassigns and sets status to open.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            issue_ids: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Issue IDs to release',
+            },
+          },
+          required: ['issue_ids'],
+        },
+      },
+      {
+        name: 'context_issue_get_ready',
+        description: 'Get issues that are ready to work on (open, no blocking dependencies, not assigned).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            limit: {
+              type: 'number',
+              description: 'Maximum issues to return (default: 10)',
+            },
+            sortBy: {
+              type: 'string',
+              enum: ['priority', 'createdAt'],
+              description: 'Sort field (default: priority)',
+            },
+          },
+        },
+      },
+      {
+        name: 'context_issue_get_next_block',
+        description: 'Get next block of ready issues and claim them. Smart issue assignment for agents.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            count: {
+              type: 'number',
+              description: 'Number of issues to claim (default: 3)',
+            },
+            priority_min: {
+              type: 'number',
+              description: 'Minimum priority to consider',
+            },
+            labels: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Only consider issues with these labels',
+            },
+          },
+        },
+      },
+      {
+        name: 'context_issue_create_batch',
+        description: 'Create multiple issues at once with dependencies. Supports linking all issues to a Plan. Useful for creating issue hierarchies from plans.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            planId: {
+              type: 'string',
+              description: 'Link all issues in batch to a Plan (PRD/spec). Individual issues can override.',
+            },
+            issues: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string', description: 'Issue title' },
+                  description: { type: 'string', description: 'Issue description' },
+                  details: { type: 'string', description: 'Implementation details' },
+                  priority: { type: 'number', description: 'Priority 0-4' },
+                  issueType: { type: 'string', enum: ['task', 'bug', 'feature', 'epic', 'chore'] },
+                  parentId: { type: 'string', description: 'Parent ID or $N reference' },
+                  planId: { type: 'string', description: 'Override batch-level planId for this issue' },
+                  labels: { type: 'array', items: { type: 'string' } },
+                },
+                required: ['title'],
+              },
+              description: 'Array of issues to create',
+            },
+            dependencies: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  issueIndex: { type: 'number', description: 'Index of issue in array' },
+                  dependsOnIndex: { type: 'number', description: 'Index of dependency' },
+                  dependencyType: { type: 'string', enum: ['blocks', 'related', 'parent-child', 'discovered-from'] },
+                },
+                required: ['issueIndex', 'dependsOnIndex'],
+              },
+              description: 'Dependencies between issues (by array index)',
+            },
+          },
+          required: ['issues'],
         },
       },
       {
@@ -2764,7 +3889,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'array',
               items: {
                 type: 'string',
-                enum: ['task', 'decision', 'progress', 'note'],
+                enum: ['reminder', 'decision', 'progress', 'note'],
               },
               description: 'Only include items in these categories',
             },
@@ -2800,7 +3925,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'array',
               items: {
                 type: 'string',
-                enum: ['task', 'decision', 'progress', 'note'],
+                enum: ['reminder', 'decision', 'progress', 'note'],
               },
               description: 'Only restore items in these categories',
             },
@@ -2919,7 +4044,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: 'array',
                     items: {
                       type: 'string',
-                      enum: ['task', 'decision', 'progress', 'note'],
+                      enum: ['reminder', 'decision', 'progress', 'note'],
                     },
                     description: 'Only include items in these categories',
                   },
@@ -3175,6 +4300,111 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['project_path', 'session_id', 'session_name'],
         },
       },
+      // ====================
+      // Plan Tools
+      // ====================
+      {
+        name: 'context_plan_create',
+        description: 'Create a new plan (PRD/specification) for the current project. Plans organize work into epics and tasks.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            title: {
+              type: 'string',
+              description: 'Plan title (e.g., "User Authentication System", "API Redesign")',
+            },
+            content: {
+              type: 'string',
+              description: 'Full plan content in markdown format. Include requirements, goals, success criteria.',
+            },
+            status: {
+              type: 'string',
+              enum: ['draft', 'active', 'completed'],
+              description: 'Plan status (default: draft)',
+            },
+            successCriteria: {
+              type: 'string',
+              description: 'Optional success criteria for the plan',
+            },
+            project_path: {
+              type: 'string',
+              description: 'Project path (defaults to current directory)',
+            },
+          },
+          required: ['title', 'content'],
+        },
+      },
+      {
+        name: 'context_plan_list',
+        description: 'List plans for the current project. Returns plans with their status and epic counts.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            status: {
+              type: 'string',
+              enum: ['draft', 'active', 'completed', 'all'],
+              description: 'Filter by status (default: active plans only)',
+            },
+            project_path: {
+              type: 'string',
+              description: 'Project path to filter by',
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum number of plans to return (default: 50)',
+            },
+          },
+        },
+      },
+      {
+        name: 'context_plan_get',
+        description: 'Get details of a specific plan including its linked epics.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            plan_id: {
+              type: 'string',
+              description: 'ID of the plan to retrieve',
+            },
+          },
+          required: ['plan_id'],
+        },
+      },
+      {
+        name: 'context_plan_update',
+        description: 'Update a plan\'s title, content, status, project, or success criteria. Changing project_path cascades to all linked issues.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              description: 'ID of the plan to update',
+            },
+            title: {
+              type: 'string',
+              description: 'New plan title',
+            },
+            content: {
+              type: 'string',
+              description: 'New plan content',
+            },
+            status: {
+              type: 'string',
+              enum: ['draft', 'active', 'completed'],
+              description: 'New plan status',
+            },
+            successCriteria: {
+              type: 'string',
+              description: 'New success criteria',
+            },
+            project_path: {
+              type: 'string',
+              description: 'New project path. Cascades to all linked issues.',
+            },
+          },
+          required: ['id'],
+        },
+      },
     ],
   };
 });
@@ -3183,38 +4413,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     const { name, arguments: args } = request.params;
 
-    // Update agent metadata for cloud mode on every request
-    if (mode === 'cloud') {
-      try {
-        const branch = await getCurrentBranch();
-        const projectPath = normalizeProjectPath(getCurrentProjectPath());
-        const provider = getCurrentProvider();
-        const agentId = getAgentId(projectPath, branch || 'main', provider);
-        cloud!.setAgentMetadata(agentId, projectPath, branch || 'main', provider);
-      } catch (err) {
-        // Don't fail requests if agent metadata update fails
-        console.error('Failed to update agent metadata:', err);
-      }
-    }
-
     // Refresh status cache on every tool call to keep it fresh
     try {
       const projectPath = normalizeProjectPath(getCurrentProjectPath());
       const provider = getCurrentProvider();
-      if (mode === 'cloud') {
-        // Cloud mode: get status which includes session info
-        const statusResult = await cloud!.getSessionStatus();
-        if (statusResult.success && statusResult.data?.current_session_id) {
-          refreshStatusCache({
-            id: statusResult.data.current_session_id,
-            name: statusResult.data.session_name,
-            project_path: statusResult.data.project_path,
-            status: statusResult.data.status,
-          }, { itemCount: statusResult.data.item_count, provider, projectPath });
-        }
-      } else if (currentSessionId) {
-        // Local mode: use module-level currentSessionId
-        const session = db!.getSession(currentSessionId);
+      if (currentSessionId) {
+        const session = db.getSession(currentSessionId);
         if (session) {
           const stats = getDb().getSessionStats(currentSessionId);
           refreshStatusCache(session, { itemCount: stats?.total_items || 0, provider, projectPath });
@@ -3243,14 +4447,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: JSON.stringify(await handleMemoryList(args), null, 2) }] };
       case 'context_memory_delete':
         return { content: [{ type: 'text', text: JSON.stringify(await handleMemoryDelete(args), null, 2) }] };
-      case 'context_task_create':
+      case 'context_project_create':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleProjectCreate(args), null, 2) }] };
+      case 'context_project_list':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleProjectList(args), null, 2) }] };
+      case 'context_project_get':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleProjectGet(args), null, 2) }] };
+      case 'context_project_update':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleProjectUpdate(args), null, 2) }] };
+      case 'context_project_delete':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleProjectDelete(args), null, 2) }] };
+      case 'context_issue_create':
         return { content: [{ type: 'text', text: JSON.stringify(await handleTaskCreate(args), null, 2) }] };
-      case 'context_task_update':
+      case 'context_issue_update':
         return { content: [{ type: 'text', text: JSON.stringify(await handleTaskUpdate(args), null, 2) }] };
-      case 'context_task_list':
+      case 'context_issue_list':
         return { content: [{ type: 'text', text: JSON.stringify(await handleTaskList(args), null, 2) }] };
-      case 'context_task_complete':
+      case 'context_issue_complete':
         return { content: [{ type: 'text', text: JSON.stringify(await handleTaskComplete(args), null, 2) }] };
+      case 'context_issue_delete':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskDelete(args), null, 2) }] };
+      case 'context_issue_add_dependency':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskAddDependency(args), null, 2) }] };
+      case 'context_issue_remove_dependency':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskRemoveDependency(args), null, 2) }] };
+      case 'context_issue_add_labels':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskAddLabels(args), null, 2) }] };
+      case 'context_issue_remove_labels':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskRemoveLabels(args), null, 2) }] };
+      case 'context_issue_claim':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskClaim(args), null, 2) }] };
+      case 'context_issue_release':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskRelease(args), null, 2) }] };
+      case 'context_issue_get_ready':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskGetReady(args), null, 2) }] };
+      case 'context_issue_get_next_block':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskGetNextBlock(args), null, 2) }] };
+      case 'context_issue_create_batch':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskCreateBatch(args), null, 2) }] };
       case 'context_checkpoint':
         return { content: [{ type: 'text', text: JSON.stringify(await handleCreateCheckpoint(args), null, 2) }] };
       case 'context_prepare_compaction':
@@ -3291,6 +4525,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: JSON.stringify(await handleSessionAddPath(args), null, 2) }] };
       case 'context_session_remove_path':
         return { content: [{ type: 'text', text: JSON.stringify(await handleSessionRemovePath(args), null, 2) }] };
+      case 'context_plan_create':
+        return { content: [{ type: 'text', text: JSON.stringify(await handlePlanCreate(args), null, 2) }] };
+      case 'context_plan_list':
+        return { content: [{ type: 'text', text: JSON.stringify(await handlePlanList(args), null, 2) }] };
+      case 'context_plan_get':
+        return { content: [{ type: 'text', text: JSON.stringify(await handlePlanGet(args), null, 2) }] };
+      case 'context_plan_update':
+        return { content: [{ type: 'text', text: JSON.stringify(await handlePlanUpdate(args), null, 2) }] };
       default:
         return {
           content: [{ type: 'text', text: JSON.stringify(error(`Unknown tool: ${name}`)) }],
