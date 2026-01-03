@@ -1,25 +1,18 @@
 {
   "name": "@savecontext/dashboard",
-  "version": "0.1.19",
-  "description": "SaveContext Dashboard - View your local AI coding sessions",
+  "version": "0.1.20",
+  "description": "SaveContext Dashboard - The OS for AI coding agents",
   "bin": {
     "savecontext-dashboard": "./bin/savecontext-dashboard.js"
   },
   "files": [
-    ".next",
-    "bin",
-    "lib",
-    "components",
-    "app",
-    "public",
-    "next.config.ts",
-    "tsconfig.json",
-    "tailwind.config.ts",
-    "postcss.config.mjs"
+    ".next/standalone",
+    "bin"
   ],
   "scripts": {
     "dev": "next dev -p 3333",
-    "build": "next build",
+    "build": "next build --webpack && npm run postbuild",
+    "postbuild": "cp -r .next/static .next/standalone/dashboard/.next/ && cp -r public .next/standalone/dashboard/ 2>/dev/null || true && node ../server/scripts/npm/fix-pnpm-modules.cjs",
     "start": "next start -p 3333",
     "prepublishOnly": "npm run build"
   },
@@ -53,7 +46,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "lucide-react": "^0.552.0",
-    "next": "16.0.7",
+    "next": "16.1.1",
     "next-themes": "^0.4.6",
     "react": "19.2.1",
     "react-dom": "19.2.1",

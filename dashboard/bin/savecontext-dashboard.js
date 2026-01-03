@@ -3,19 +3,54 @@
 const { spawn } = require('child_process');
 const path = require('path');
 
-const dashboardDir = path.join(__dirname, '..');
+// Parse arguments
+const args = process.argv.slice(2);
+let port = 3333;
 
-// Run next start
-const nextBin = path.join(dashboardDir, 'node_modules', '.bin', 'next');
-const child = spawn(nextBin, ['start', '-p', '3333'], {
-  cwd: dashboardDir,
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '-p' || args[i] === '--port') {
+    const portArg = args[i + 1];
+    if (portArg && !isNaN(parseInt(portArg, 10))) {
+      port = parseInt(portArg, 10);
+      i++;
+    }
+  } else if (args[i] === '-h' || args[i] === '--help') {
+    console.log(`
+SaveContext Dashboard
+
+Usage: npx @savecontext/dashboard [options]
+
+Options:
+  -p, --port <port>  Port to run on (default: 3333)
+  -h, --help         Show this help message
+
+Examples:
+  npx @savecontext/dashboard
+  npx @savecontext/dashboard -p 4000
+`);
+    process.exit(0);
+  }
+}
+
+const dashboardDir = path.join(__dirname, '..');
+const standaloneDir = path.join(dashboardDir, '.next', 'standalone', 'dashboard');
+const serverPath = path.join(standaloneDir, 'server.js');
+
+console.log(`Starting SaveContext Dashboard on http://localhost:${port}`);
+
+const child = spawn('node', [serverPath], {
+  cwd: standaloneDir,
   stdio: 'inherit',
-  env: { ...process.env, NODE_ENV: 'production' }
+  env: {
+    ...process.env,
+    NODE_ENV: 'production',
+    PORT: String(port),
+    HOSTNAME: '0.0.0.0'
+  }
 });
 
 child.on('error', (err) => {
   console.error('Failed to start dashboard:', err.message);
-  console.error('Make sure you have built the dashboard first: pnpm build');
   process.exit(1);
 });
 
