@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import { join, basename } from 'path';
 import { homedir } from 'os';
 
@@ -8,7 +8,7 @@ function getWriteDb() {
   return new Database(dbPath);
 }
 
-function getProject(db: Database.Database, projectPath: string): { id: string } | null {
+function getProject(db: Database, projectPath: string): { id: string } | null {
   const existing = db.prepare(
     'SELECT id FROM projects WHERE project_path = ?'
   ).get(projectPath) as { id: string } | undefined;
@@ -16,7 +16,7 @@ function getProject(db: Database.Database, projectPath: string): { id: string } 
   return existing || null;
 }
 
-function generateShortId(db: Database.Database, projectId: string): string {
+function generateShortId(db: Database, projectId: string): string {
   // Get and increment the next plan number for this project
   const project = db.prepare(
     'SELECT next_plan_number FROM projects WHERE id = ?'

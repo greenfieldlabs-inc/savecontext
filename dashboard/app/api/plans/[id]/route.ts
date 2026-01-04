@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import { join } from 'path';
 import { homedir } from 'os';
 

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -28,17 +28,18 @@ export async function GET(request: Request) {
 
     // Add child_count and completed_count for each subtask (3-level hierarchy: Epic -> Task -> Subtask)
     const issuesWithCounts = issues.map((issue) => {
+      const issueId = issue.id as string;
       const childCount = db.prepare(`
         SELECT COUNT(*) as count FROM issue_dependencies
         WHERE depends_on_id = ? AND dependency_type = 'parent-child'
-      `).get(issue.id) as { count: number };
+      `).get(issueId) as { count: number };
 
       // Count closed children for progress indicator
       const completedCount = db.prepare(`
         SELECT COUNT(*) as count FROM issue_dependencies dep
         JOIN issues i ON i.id = dep.issue_id
         WHERE dep.depends_on_id = ? AND dep.dependency_type = 'parent-child' AND i.status = 'closed'
-      `).get(issue.id) as { count: number };
+      `).get(issueId) as { count: number };
 
       return { ...issue, child_count: childCount.count, completed_count: completedCount.count };
     });

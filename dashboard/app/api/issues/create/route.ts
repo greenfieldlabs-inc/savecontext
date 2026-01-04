@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import { join } from 'path';
 import { homedir } from 'os';
 
@@ -8,7 +8,7 @@ function getWriteDb() {
   return new Database(dbPath);
 }
 
-function generateShortId(db: Database.Database, projectPath: string, parentId?: string): string {
+function generateShortId(db: Database, projectPath: string, parentId?: string): string {
   if (parentId) {
     // Get parent's short_id and count existing children via dependencies
     const parent = db.prepare('SELECT short_id FROM issues WHERE id = ?').get(parentId) as { short_id: string } | undefined;
