@@ -5,21 +5,19 @@ Local web UI for SaveContext - view sessions, context, issues, and plans.
 ## Usage
 
 ```bash
-npx @savecontext/dashboard
+bunx @savecontext/dashboard
 ```
 
 Custom port:
 ```bash
-npx @savecontext/dashboard -p 4000
+bunx @savecontext/dashboard -p 4000
 ```
 
 ## Requirements
 
-- Node.js 20.x (native module compatibility)
+- [Bun](https://bun.sh) runtime (install: `curl -fsSL https://bun.sh/install | bash`)
 - SaveContext MCP server must be installed and have created data
 - Reads from `~/.savecontext/data/savecontext.db`
-
-> Note: Next release will use Bun for cross-platform compatibility.
 
 ## Links
 

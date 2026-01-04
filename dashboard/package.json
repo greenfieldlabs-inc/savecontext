@@ -1,6 +1,6 @@
 {
   "name": "@savecontext/dashboard",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "SaveContext Dashboard - The OS for AI coding agents",
   "bin": {
     "savecontext-dashboard": "./bin/savecontext-dashboard.js"
@@ -10,11 +10,11 @@
     "bin"
   ],
   "scripts": {
-    "dev": "next dev -p 3333",
-    "build": "next build --webpack && npm run postbuild",
-    "postbuild": "cp -r .next/static .next/standalone/dashboard/.next/ && cp -r public .next/standalone/dashboard/ 2>/dev/null || true && node ../server/scripts/npm/fix-pnpm-modules.cjs",
-    "start": "next start -p 3333",
-    "prepublishOnly": "npm run build"
+    "dev": "bun --bun next dev -p 3333",
+    "build": "bun --bun next build --webpack && bun run postbuild",
+    "postbuild": "cp -r .next/static .next/standalone/dashboard/.next/ && cp -r public .next/standalone/dashboard/ 2>/dev/null || true && bun ../server/scripts/npm/fix-pnpm-modules.cjs",
+    "start": "bun --bun next start -p 3333",
+    "prepublishOnly": "bun run build"
   },
   "repository": {
     "type": "git",
@@ -41,7 +41,6 @@
     "@radix-ui/react-separator": "^1.1.7",
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-tabs": "^1.1.13",
-    "better-sqlite3": "^12.4.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
@@ -58,7 +57,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@tailwindcss/typography": "^0.5.16",
-    "@types/better-sqlite3": "^7.6.13",
+    "@types/bun": "^1.2.4",
     "@types/node": "^20.19.24",
     "@types/react": "^19",
     "@types/react-dom": "^19",

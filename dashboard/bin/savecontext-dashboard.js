@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 const { spawn } = require('child_process');
 const path = require('path');
@@ -18,15 +18,15 @@ for (let i = 0; i < args.length; i++) {
     console.log(`
 SaveContext Dashboard
 
-Usage: npx @savecontext/dashboard [options]
+Usage: bunx @savecontext/dashboard [options]
 
 Options:
   -p, --port <port>  Port to run on (default: 3333)
   -h, --help         Show this help message
 
 Examples:
-  npx @savecontext/dashboard
-  npx @savecontext/dashboard -p 4000
+  bunx @savecontext/dashboard
+  bunx @savecontext/dashboard -p 4000
 `);
     process.exit(0);
   }
@@ -38,7 +38,7 @@ const serverPath = path.join(standaloneDir, 'server.js');
 
 console.log(`Starting SaveContext Dashboard on http://localhost:${port}`);
 
-const child = spawn('node', [serverPath], {
+const child = spawn('bun', [serverPath], {
   cwd: standaloneDir,
   stdio: 'inherit',
   env: {
@@ -51,6 +51,7 @@ const child = spawn('node', [serverPath], {
 
 child.on('error', (err) => {
   console.error('Failed to start dashboard:', err.message);
+  console.error('Make sure Bun is installed: https://bun.sh');
   process.exit(1);
 });
 

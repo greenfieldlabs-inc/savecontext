@@ -1,6 +1,7 @@
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import { join } from 'path';
 import { homedir } from 'os';
+import { existsSync } from 'fs';
 import type {
   Session,
   SessionWithProjects,
@@ -21,8 +22,8 @@ import type {
 } from './types';
 
 // Database connection singletons
-let db: Database.Database | null = null;
-let writeDb: Database.Database | null = null;
+let db: Database | null = null;
+let writeDb: Database | null = null;
 
 /**
  * Get database path - auto-detect or use config
@@ -39,21 +40,28 @@ export function getDatabasePath(): string {
 /**
  * Get database connection (singleton)
  */
-export function getDatabase(): Database.Database {
+export function getDatabase(): Database {
   if (!db) {
     const dbPath = getDatabasePath();
 
+    // Check if database exists (bun:sqlite doesn't have fileMustExist option)
+    if (!existsSync(dbPath)) {
+      throw new Error(
+        `SaveContext database not found at ${dbPath}. ` +
+        `Make sure the MCP server has been run at least once.`
+      );
+    }
+
     try {
-      db = new Database(dbPath, { readonly: true, fileMustExist: true });
+      db = new Database(dbPath, { readonly: true });
 
       // Enable WAL mode for better concurrent reads
-      db.pragma('journal_mode = WAL');
+      db.exec('PRAGMA journal_mode = WAL');
 
       console.log(`Connected to database at: ${dbPath}`);
     } catch (error) {
       throw new Error(
         `Failed to connect to savecontext database at ${dbPath}. ` +
-        `Make sure the MCP server has been run at least once. ` +
         `Error: ${error instanceof Error ? error.message : String(error)}`
       );
     }
@@ -66,21 +74,28 @@ export function getDatabase(): Database.Database {
  * Get writable database connection (singleton)
  * Use this for mutations (INSERT, UPDATE, DELETE)
  */
-export function getWriteDatabase(): Database.Database {
+export function getWriteDatabase(): Database {
   if (!writeDb) {
     const dbPath = getDatabasePath();
 
+    // Check if database exists (bun:sqlite doesn't have fileMustExist option)
+    if (!existsSync(dbPath)) {
+      throw new Error(
+        `SaveContext database not found at ${dbPath}. ` +
+        `Make sure the MCP server has been run at least once.`
+      );
+    }
+
     try {
-      writeDb = new Database(dbPath, { fileMustExist: true });
+      writeDb = new Database(dbPath);
 
       // Enable WAL mode for better concurrent access
-      writeDb.pragma('journal_mode = WAL');
+      writeDb.exec('PRAGMA journal_mode = WAL');
 
       console.log(`Connected to writable database at: ${dbPath}`);
     } catch (error) {
       throw new Error(
         `Failed to connect to savecontext database at ${dbPath}. ` +
-        `Make sure the MCP server has been run at least once. ` +
         `Error: ${error instanceof Error ? error.message : String(error)}`
       );
     }
@@ -772,7 +787,7 @@ export const getTaskStats = (projectPath?: string) => {
 };
 
 // Helper to check if a table exists
-function tableExists(db: Database.Database, tableName: string): boolean {
+function tableExists(db: Database, tableName: string): boolean {
   const result = db.prepare(
     "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
   ).get(tableName);
