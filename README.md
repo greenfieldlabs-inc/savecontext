@@ -250,7 +250,7 @@ We provide starter templates you can copy to your project to guide AI agents on 
 | [`AGENTS.md`](./AGENTS.md) | Generic template - copy to any project |
 | [`CLAUDE.md`](./CLAUDE.md) | Example with project-specific context |
 
-**Usage:** Copy `AGENTS.md` to your project root. AI coding tools (Claude Code, Cursor, etc.) will read it automatically and follow the SaveContext workflows.
+**Usage:** Copy `AGENTS.md` to your project root. AI coding tools will read it automatically and follow the SaveContext workflows. For Claude Code copy and rename to CLAUDE.md. 
 
 The templates include:
 - Session management (start, resume, rename, pause)
