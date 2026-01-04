@@ -1,6 +1,6 @@
 {
   "name": "savecontext",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "The OS for AI coding agents",
   "private": true,
   "workspaces": [

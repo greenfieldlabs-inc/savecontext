@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.23] - 2026-01-03
+
+### Changed
+- **Dashboard migrated to Bun runtime** - Eliminates Node version compatibility issues
+  - Replaced `better-sqlite3` with `bun:sqlite` (built into Bun, no native modules)
+  - No more NODE_MODULE_VERSION mismatch errors
+  - Usage: `bunx @savecontext/dashboard` (requires [Bun](https://bun.sh))
+
+### Note
+- MCP server remains on Node.js - native modules compile at install time on user's machine, so no version mismatch issues
+
 ## [0.1.22] - 2026-01-03
 
 ### Fixed
