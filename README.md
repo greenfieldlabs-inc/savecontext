@@ -109,13 +109,13 @@ A local web interface for visual session, context, memory, plan, and issue manag
 
 ```bash
 # Run the dashboard (starts on port 3333)
-npx @savecontext/dashboard
+bunx @savecontext/dashboard
 
 # Or specify a custom port
-npx @savecontext/dashboard -p 4000
+bunx @savecontext/dashboard -p 4000
 ```
 
-> **Note:** Dashboard currently requires Node.js 20.x for native module compatibility. Next release will use Bun for cross-platform support.
+> **Requires [Bun](https://bun.sh):** Install with `curl -fsSL https://bun.sh/install | bash`
 
 **Features:**
 - **Projects View**: See all projects with session counts
@@ -132,9 +132,9 @@ npx @savecontext/dashboard -p 4000
 ```bash
 git clone https://github.com/greenfieldlabs-inc/savecontext.git
 cd savecontext/dashboard
-pnpm install
-pnpm dev          # runs on port 3333
-pnpm dev -p 4000  # or specify a custom port
+bun install
+bun dev          # runs on port 3333
+bun dev -p 4000  # or specify a custom port
 ```
 
 </details>
@@ -238,6 +238,27 @@ Other tools like `context_save`, `context_get`, checkpoints, etc. don't change t
 | PostToolUse hook | `~/.savecontext/hooks/update-status-cache.py` | Intercepts MCP responses, updates cache |
 
 Source available at [`server/scripts/`](https://github.com/greenfieldlabs-inc/savecontext/blob/main/server/scripts/).
+
+---
+
+## Agent Templates
+
+We provide starter templates you can copy to your project to guide AI agents on using SaveContext:
+
+| File | Purpose |
+|------|---------|
+| [`AGENTS.md`](./AGENTS.md) | Generic template - copy to any project |
+| [`CLAUDE.md`](./CLAUDE.md) | Example with project-specific context |
+
+**Usage:** Copy `AGENTS.md` to your project root. AI coding tools (Claude Code, Cursor, etc.) will read it automatically and follow the SaveContext workflows.
+
+The templates include:
+- Session management (start, resume, rename, pause)
+- Issue tracking (create, claim, complete)
+- Context saving (decisions, progress, reminders, notes)
+- Semantic search and retrieval
+- Checkpoints and restoration
+- Project memory
 
 ---
 
