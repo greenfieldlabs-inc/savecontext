@@ -4,14 +4,12 @@ export interface ProjectSummary {
   id: string;
   name: string;
   description: string | null;
-  source_path: string | null;
+  project_path: string;
   session_count: number;
   active_sessions: number;
   total_items: number;
   created_at: number;
   updated_at: number;
-  // Legacy field for backwards compatibility during transition
-  project_path: string;
 }
 
 export interface AffectedSessionRow {

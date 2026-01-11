@@ -43,12 +43,18 @@ export type {
   IssuePriority,
   IssueType,
   IssueLabel,
+  LabelInfo,
+  LabelSelectProps,
+  LabelDisplayProps,
   IssueDependency,
   IssueDependent,
   IssueStats,
   IssueProgressProps,
   DependencyType,
   ParentInfo,
+  IssueActionMenuProps,
+  InlineIssueFormData,
+  InlineIssueFormProps,
 } from './issues';
 
 // Plans

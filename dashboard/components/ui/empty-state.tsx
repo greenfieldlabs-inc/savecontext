@@ -14,7 +14,7 @@ interface EmptyStateProps {
 
 export function EmptyState({ icon, heading, description, action }: EmptyStateProps) {
   return (
-    <div className="rounded-2xl border-2 border-dashed border-zinc-300 bg-zinc-50 p-8 text-center dark:border-zinc-700 dark:bg-zinc-900/50">
+    <div className="rounded-lg border-2 border-dashed border-zinc-300 bg-zinc-50 p-8 text-center dark:border-zinc-700 dark:bg-zinc-900/50">
       <div className="mx-auto max-w-lg space-y-4">
         <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900">
           {React.isValidElement(icon)

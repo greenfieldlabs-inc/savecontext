@@ -1,8 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
-import { AlertTriangle, Loader2, X } from 'lucide-react';
+import { AlertTriangle, Loader2 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface DeleteProjectDialogProps {
   open: boolean;
@@ -21,7 +28,6 @@ export function DeleteProjectDialog({
   sessionCount,
   onDelete,
 }: DeleteProjectDialogProps) {
-  const [mounted, setMounted] = useState(false);
   const [confirmText, setConfirmText] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,31 +35,9 @@ export function DeleteProjectDialog({
   const isConfirmValid = confirmText === 'DELETE';
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
     if (open) {
       setConfirmText('');
       setError(null);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !loading) onOpenChange(false);
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [open, loading, onOpenChange]);
-
-  useEffect(() => {
-    if (open) {
-      document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = 'unset';
-      };
     }
   }, [open]);
 
@@ -83,44 +67,32 @@ export function DeleteProjectDialog({
     }
   };
 
-  if (!open || !mounted) return null;
+  const handleClose = () => {
+    if (!loading) {
+      onOpenChange(false);
+    }
+  };
 
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={() => !loading && onOpenChange(false)}
-      />
-
-      <div
-        className="relative z-10 mx-4 w-full max-w-md overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between border-b border-zinc-200 p-6 dark:border-zinc-800">
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-md bg-white dark:bg-zinc-900">
+        <DialogHeader>
           <div className="flex gap-4">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-red-100 dark:bg-red-950/50">
               <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+              <DialogTitle className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
                 Delete Project
-              </h2>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              </DialogTitle>
+              <DialogDescription className="text-sm text-zinc-500 dark:text-zinc-400">
                 This action cannot be undone
-              </p>
+              </DialogDescription>
             </div>
           </div>
-          <button
-            onClick={() => !loading && onOpenChange(false)}
-            disabled={loading}
-            className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-800"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
+        </DialogHeader>
 
-        <div className="p-6 space-y-4">
+        <div className="space-y-4">
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
             You are about to permanently delete{' '}
             <span className="font-semibold text-zinc-900 dark:text-zinc-100">{projectName}</span>
@@ -163,10 +135,10 @@ export function DeleteProjectDialog({
           )}
         </div>
 
-        <div className="flex justify-end gap-3 border-t border-zinc-200 p-4 dark:border-zinc-800">
+        <DialogFooter>
           <button
             type="button"
-            onClick={() => onOpenChange(false)}
+            onClick={handleClose}
             disabled={loading}
             className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
           >
@@ -191,9 +163,8 @@ export function DeleteProjectDialog({
               'Delete Project'
             )}
           </button>
-        </div>
-      </div>
-    </div>,
-    document.body
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

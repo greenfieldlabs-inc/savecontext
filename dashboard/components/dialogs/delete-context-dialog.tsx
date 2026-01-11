@@ -2,7 +2,16 @@
 
 import { useState } from 'react';
 import type { ContextItem } from '@/lib/types';
-import { X, AlertTriangle } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface DeleteContextDialogProps {
   item: ContextItem;
@@ -19,45 +28,32 @@ export function DeleteContextDialog({ item, onConfirm, onCancel }: DeleteContext
       await onConfirm(item);
     } catch (error) {
       console.error('Failed to delete context item:', error);
+      toast.error('Failed to delete context item');
       setIsDeleting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onCancel}
-      />
-
-      {/* Dialog */}
-      <div className="relative z-10 mx-4 w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl dark:border-zinc-800 dark:bg-zinc-900">
-        {/* Header */}
-        <div className="mb-4 flex items-start justify-between">
-          <div className="flex gap-3">
+    <Dialog open={true} onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent className="max-w-md bg-white dark:bg-zinc-900">
+        <DialogHeader>
+          <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-500/10">
               <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+              <DialogTitle className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
                 Delete Context Item
-              </h2>
-              <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+              </DialogTitle>
+              <DialogDescription className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
                 This action cannot be undone.
-              </p>
+              </DialogDescription>
             </div>
           </div>
-          <button
-            onClick={onCancel}
-            className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        </DialogHeader>
 
         {/* Content */}
-        <div className="mb-6 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/50">
+        <div className="mb-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900/50">
           {item.key && (
             <div className="mb-1 text-sm font-medium text-zinc-900 dark:text-zinc-50">
               {item.key}
@@ -68,8 +64,7 @@ export function DeleteContextDialog({ item, onConfirm, onCancel }: DeleteContext
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex gap-3">
+        <DialogFooter>
           <button
             onClick={onCancel}
             disabled={isDeleting}
@@ -84,8 +79,8 @@ export function DeleteContextDialog({ item, onConfirm, onCancel }: DeleteContext
           >
             {isDeleting ? 'Deleting...' : 'Delete'}
           </button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

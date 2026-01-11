@@ -5,18 +5,10 @@ import { FolderKanban, Activity, Eye, EyeOff } from 'lucide-react';
 import Link from 'next/link';
 import { ProjectActions } from './project-actions';
 import { StatusPill } from '@/components/ui/status-pill';
+import type { ProjectSummary } from '@/lib/types';
 
 interface ProjectCardProps {
-  project: {
-    id: string;
-    name: string;
-    description: string | null;
-    source_path: string | null;
-    project_path: string;
-    session_count: number;
-    total_items: number;
-    active_sessions: number;
-  };
+  project: ProjectSummary;
 }
 
 export function ProjectCard({ project }: ProjectCardProps) {
@@ -70,9 +62,9 @@ export function ProjectCard({ project }: ProjectCardProps) {
               <h3 className="font-semibold text-zinc-900 transition-colors dark:text-zinc-50">
                 {projectName}
               </h3>
-              {project.source_path && (
+              {project.project_path && (
                 <p className="mt-1 line-clamp-1 text-xs text-zinc-500 dark:text-zinc-500">
-                  {project.source_path}
+                  {project.project_path}
                 </p>
               )}
             </div>

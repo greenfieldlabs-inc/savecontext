@@ -2,8 +2,7 @@
 
 import { CirclePause, CircleCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-type SessionStatus = 'active' | 'paused' | 'completed';
+import type { SessionStatus } from '@/lib/types';
 
 interface StatusPillProps {
   status: SessionStatus;

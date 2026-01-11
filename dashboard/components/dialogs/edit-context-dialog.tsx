@@ -1,8 +1,17 @@
 'use client';
 
 import { useState } from 'react';
-import type { ContextItem } from '@/lib/types';
-import { X, Save } from 'lucide-react';
+import type { ContextItem, ContextCategory, ContextPriority } from '@/lib/types';
+import { Save } from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface EditContextDialogProps {
   item: ContextItem;
@@ -23,47 +32,36 @@ export function EditContextDialog({ item, onSave, onCancel }: EditContextDialogP
     setIsSaving(true);
     try {
       await onSave(item, formData);
+      // Parent handles closing dialog on success
     } catch (error) {
       console.error('Failed to save context item:', error);
+      toast.error('Failed to save context item');
+    } finally {
       setIsSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={onCancel}
-      />
-
-      {/* Dialog */}
-      <div className="relative z-10 mx-4 w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-200 p-6 dark:border-zinc-800">
+    <Dialog open={true} onOpenChange={(open) => !open && onCancel()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden bg-white dark:bg-zinc-900">
+        <DialogHeader>
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-teal-500/10">
               <Save className="h-5 w-5 text-teal-600 dark:text-teal-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+              <DialogTitle className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
                 Edit Context Item
-              </h2>
-              {item.key && (
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">{item.key}</p>
-              )}
+              </DialogTitle>
+              <DialogDescription className="text-sm text-zinc-600 dark:text-zinc-400">
+                {item.key || 'Modify context item properties'}
+              </DialogDescription>
             </div>
           </div>
-          <button
-            onClick={onCancel}
-            className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        </DialogHeader>
 
         {/* Form */}
-        <div className="max-h-[calc(90vh-12rem)] overflow-y-auto p-6">
+        <div className="max-h-[calc(90vh-16rem)] overflow-y-auto">
           <div className="space-y-4">
             {/* Value */}
             <div>
@@ -86,7 +84,7 @@ export function EditContextDialog({ item, onSave, onCancel }: EditContextDialogP
               </label>
               <select
                 value={formData.category}
-                onChange={(e) => setFormData({ ...formData, category: e.target.value as any })}
+                onChange={(e) => setFormData({ ...formData, category: e.target.value as ContextCategory })}
                 className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50"
               >
                 <option value="task">Task</option>
@@ -103,7 +101,7 @@ export function EditContextDialog({ item, onSave, onCancel }: EditContextDialogP
               </label>
               <select
                 value={formData.priority}
-                onChange={(e) => setFormData({ ...formData, priority: e.target.value as any })}
+                onChange={(e) => setFormData({ ...formData, priority: e.target.value as ContextPriority })}
                 className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-50"
               >
                 <option value="high">High</option>
@@ -128,8 +126,7 @@ export function EditContextDialog({ item, onSave, onCancel }: EditContextDialogP
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="flex gap-3 border-t border-zinc-200 p-6 dark:border-zinc-800">
+        <DialogFooter>
           <button
             onClick={onCancel}
             disabled={isSaving}
@@ -144,8 +141,8 @@ export function EditContextDialog({ item, onSave, onCancel }: EditContextDialogP
           >
             {isSaving ? 'Saving...' : 'Save Changes'}
           </button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

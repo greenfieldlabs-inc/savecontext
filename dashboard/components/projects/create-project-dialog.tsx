@@ -1,8 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
-import { FolderPlus, Loader2, X } from 'lucide-react';
+import { FolderPlus, Loader2 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface CreateProjectDialogProps {
   open: boolean;
@@ -15,39 +22,16 @@ export function CreateProjectDialog({
   onOpenChange,
   onSuccess,
 }: CreateProjectDialogProps) {
-  const [mounted, setMounted] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
     if (open) {
       setName('');
       setDescription('');
       setError(null);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onOpenChange(false);
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [open, onOpenChange]);
-
-  useEffect(() => {
-    if (open) {
-      document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = 'unset';
-      };
     }
   }, [open]);
 
@@ -87,41 +71,33 @@ export function CreateProjectDialog({
     }
   };
 
-  if (!open || !mounted) return null;
+  const handleClose = () => {
+    if (!loading) {
+      onOpenChange(false);
+    }
+  };
 
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={() => onOpenChange(false)}
-      />
-
-      <div
-        className="relative z-10 mx-4 w-full max-w-lg overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900"
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-700">
-          <div className="flex items-center gap-2 text-sm">
-            <span className="px-2 py-0.5 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 text-xs font-medium">
-              PROJECTS
-            </span>
-            <span className="text-zinc-400">›</span>
-            <span className="text-zinc-700 dark:text-zinc-300">New project</span>
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-lg bg-white dark:bg-zinc-900">
+        <DialogHeader>
+          <div className="flex gap-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
+              <FolderPlus className="h-5 w-5 text-zinc-600 dark:text-zinc-400" />
+            </div>
+            <div>
+              <DialogTitle className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+                Create Project
+              </DialogTitle>
+              <DialogDescription className="text-sm text-zinc-500 dark:text-zinc-400">
+                Add a new project to organize your sessions
+              </DialogDescription>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => onOpenChange(false)}
-            className="rounded p-1 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 dark:hover:text-zinc-300 dark:hover:bg-zinc-800"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        </DialogHeader>
 
         <form onSubmit={handleSubmit}>
-          {/* Body */}
-          <div className="p-4 space-y-4">
+          <div className="space-y-4">
             <div>
               <label
                 htmlFor="project-name"
@@ -136,7 +112,8 @@ export function CreateProjectDialog({
                 onChange={(e) => setName(e.target.value)}
                 placeholder="My Project"
                 autoFocus
-                className="w-full rounded-lg border border-zinc-300 bg-white px-4 py-3 text-base text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-zinc-500"
+                disabled={loading}
+                className="w-full rounded-lg border border-zinc-300 bg-white px-4 py-3 text-base text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-zinc-500"
               />
             </div>
 
@@ -153,7 +130,8 @@ export function CreateProjectDialog({
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="A brief description of your project..."
                 rows={3}
-                className="w-full rounded-lg border border-zinc-300 bg-white px-4 py-3 text-base text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-zinc-500 resize-none"
+                disabled={loading}
+                className="w-full rounded-lg border border-zinc-300 bg-white px-4 py-3 text-base text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-500 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-zinc-500 resize-none"
               />
             </div>
 
@@ -162,11 +140,12 @@ export function CreateProjectDialog({
             )}
           </div>
 
-          <div className="flex justify-end gap-3 border-t border-zinc-200 p-4 dark:border-zinc-800">
+          <DialogFooter className="mt-6">
             <button
               type="button"
-              onClick={() => onOpenChange(false)}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              onClick={handleClose}
+              disabled={loading}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               Cancel
             </button>
@@ -188,10 +167,9 @@ export function CreateProjectDialog({
                 'Create Project'
               )}
             </button>
-          </div>
+          </DialogFooter>
         </form>
-      </div>
-    </div>,
-    document.body
+      </DialogContent>
+    </Dialog>
   );
 }

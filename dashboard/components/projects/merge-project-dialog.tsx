@@ -1,13 +1,20 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
-import { GitMerge, Loader2, AlertTriangle, X, Check } from 'lucide-react';
+import { GitMerge, Loader2, AlertTriangle, Check } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface Project {
   id: string;
   name: string;
-  source_path: string | null;
+  project_path: string;
   session_count: number;
 }
 
@@ -28,7 +35,6 @@ export function MergeProjectDialog({
   sessionCount,
   onSuccess,
 }: MergeProjectDialogProps) {
-  const [mounted, setMounted] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingProjects, setLoadingProjects] = useState(false);
@@ -36,34 +42,12 @@ export function MergeProjectDialog({
   const [selectedTargetId, setSelectedTargetId] = useState<string>('');
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
     if (open) {
       setError(null);
       setSelectedTargetId('');
       fetchProjects();
     }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onOpenChange(false);
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [open, onOpenChange]);
-
-  useEffect(() => {
-    if (open) {
-      document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = 'unset';
-      };
-    }
-  }, [open]);
+  }, [open, projectId]);
 
   const fetchProjects = async () => {
     setLoadingProjects(true);
@@ -114,43 +98,26 @@ export function MergeProjectDialog({
     }
   };
 
-  if (!open || !mounted) return null;
-
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={() => onOpenChange(false)}
-      />
-
-      <div
-        className="relative z-10 mx-4 w-full max-w-lg max-h-[90vh] overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900"
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between border-b border-zinc-200 p-6 dark:border-zinc-800">
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-hidden bg-white dark:bg-zinc-900">
+        <DialogHeader>
           <div className="flex gap-4">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
               <GitMerge className="h-5 w-5 text-zinc-600 dark:text-zinc-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+              <DialogTitle className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
                 Merge Project
-              </h2>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              </DialogTitle>
+              <DialogDescription className="text-sm text-zinc-500 dark:text-zinc-400">
                 Move sessions to another project
-              </p>
+              </DialogDescription>
             </div>
           </div>
-          <button
-            onClick={() => onOpenChange(false)}
-            className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
+        </DialogHeader>
 
-        <div className="max-h-[calc(90vh-14rem)] overflow-y-auto p-6">
+        <div className="max-h-[calc(90vh-14rem)] overflow-y-auto">
           <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
             Merge <span className="font-medium text-zinc-900 dark:text-zinc-100">{projectName}</span> into:
           </p>
@@ -183,7 +150,7 @@ export function MergeProjectDialog({
                     </div>
                     <div className="text-sm text-zinc-500 dark:text-zinc-400 truncate">
                       {project.session_count} sessions
-                      {project.source_path && ` · ${project.source_path}`}
+                      {project.project_path && ` · ${project.project_path}`}
                     </div>
                   </div>
                   {selectedTargetId === project.id && (
@@ -218,7 +185,7 @@ export function MergeProjectDialog({
           )}
         </div>
 
-        <div className="flex justify-end gap-3 border-t border-zinc-200 p-4 dark:border-zinc-800">
+        <DialogFooter>
           <button
             type="button"
             onClick={() => onOpenChange(false)}
@@ -238,9 +205,8 @@ export function MergeProjectDialog({
           >
             {loading ? 'Merging...' : 'Merge Projects'}
           </button>
-        </div>
-      </div>
-    </div>,
-    document.body
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
