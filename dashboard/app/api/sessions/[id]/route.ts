@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
 import { getSessionById, updateSession, deleteSession } from '@/lib/db';
+import { emitSessionEvent } from '@/lib/events';
+import { apiSuccess, apiError, apiNotFound, apiServerError } from '@/lib/api-utils';
 
 type Params = Promise<{ id: string }>;
 
@@ -11,13 +12,13 @@ export async function PATCH(request: Request, { params }: { params: Params }) {
 
     // Validate at least one field to update
     if (name === undefined && description === undefined) {
-      return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
+      return apiError('No fields to update');
     }
 
     // Check session exists
     const session = getSessionById(id);
     if (!session) {
-      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+      return apiNotFound('Session');
     }
 
     // Build updates object
@@ -28,13 +29,14 @@ export async function PATCH(request: Request, { params }: { params: Params }) {
     const changes = updateSession(id, updates);
 
     if (changes === 0) {
-      return NextResponse.json({ error: 'Failed to update session' }, { status: 500 });
+      return apiServerError('Failed to update session');
     }
 
-    return NextResponse.json({ success: true });
+    emitSessionEvent('updated', id);
+    return apiSuccess({ updated: true });
   } catch (error) {
     console.error('Error updating session:', error);
-    return NextResponse.json({ error: 'Failed to update session' }, { status: 500 });
+    return apiServerError('Failed to update session');
   }
 }
 
@@ -45,22 +47,22 @@ export async function DELETE(request: Request, { params }: { params: Params }) {
     // Check session exists
     const session = getSessionById(id);
     if (!session) {
-      return NextResponse.json({ error: 'Session not found' }, { status: 404 });
+      return apiNotFound('Session');
     }
 
     // Cannot delete active sessions
     if (session.status === 'active') {
-      return NextResponse.json({ error: 'Cannot delete an active session' }, { status: 400 });
+      return apiError('Cannot delete an active session');
     }
 
     const result = deleteSession(id);
 
     if (result.sessionDeleted === 0) {
-      return NextResponse.json({ error: 'Failed to delete session' }, { status: 500 });
+      return apiServerError('Failed to delete session');
     }
 
-    return NextResponse.json({
-      success: true,
+    emitSessionEvent('deleted', id);
+    return apiSuccess({
       deletedSessionId: id,
       deletedSessionName: session.name,
       itemsDeleted: result.itemsDeleted,
@@ -68,6 +70,6 @@ export async function DELETE(request: Request, { params }: { params: Params }) {
     });
   } catch (error) {
     console.error('Error deleting session:', error);
-    return NextResponse.json({ error: 'Failed to delete session' }, { status: 500 });
+    return apiServerError('Failed to delete session');
   }
 }

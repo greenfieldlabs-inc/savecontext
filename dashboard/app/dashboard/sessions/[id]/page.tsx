@@ -2,10 +2,11 @@ import { getSessionById, getContextItemsBySession, getCheckpointsBySession, getA
 import { notFound } from 'next/navigation';
 import { ChevronRight, Bookmark } from 'lucide-react';
 import Link from 'next/link';
-import { SessionDetailHeader } from '@/components/dashboard/session-detail-header';
-import { ContextItemsSection } from '@/components/dashboard/context-items-section';
-import { CheckpointList } from '@/components/dashboard/checkpoint-list';
-import { ActiveAgentsSection } from '@/components/dashboard/active-agents-section';
+import { SessionDetailHeader } from '@/components/dashboard/sessions/detail/session-detail-header';
+import { ContextItemsSection } from '@/components/dashboard/context/list/context-items-section';
+import { CheckpointList } from '@/components/dashboard/checkpoints/list/checkpoint-list';
+import { ActiveAgentsSection } from '@/components/dashboard/shared/active-agents-section';
+import { SessionEvents } from '@/components/dashboard/sessions/session-events';
 import type { SessionStatus } from '@/lib/types';
 import { LocalDate } from '@/components/ui/local-date';
 
@@ -33,6 +34,7 @@ export default async function SessionDetailPage(props: { params: Params; searchP
 
   return (
     <div className="space-y-8">
+      <SessionEvents />
       {/* Breadcrumb Navigation */}
       <nav className="flex items-center gap-1.5 sm:gap-2 text-sm sm:text-base text-zinc-600 dark:text-zinc-400 overflow-x-auto">
         <Link

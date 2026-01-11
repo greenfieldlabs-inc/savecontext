@@ -1,5 +1,5 @@
 import { getAllProjects } from '@/lib/db-adapter';
-import { PlansClient } from '@/components/dashboard/plans-client';
+import { PlansClient } from '@/components/dashboard/plans/list/plans-client';
 
 export const dynamic = 'force-dynamic';
 

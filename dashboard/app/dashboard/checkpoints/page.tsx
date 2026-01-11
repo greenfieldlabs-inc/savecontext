@@ -1,6 +1,6 @@
 import { getAllCheckpoints, getCheckpointsByProject, getAllProjects } from '@/lib/db-adapter';
 import { Bookmark } from 'lucide-react';
-import { SessionFilters } from '@/components/dashboard/session-filters';
+import { SessionFilters } from '@/components/dashboard/sessions/list/session-filters';
 import Link from 'next/link';
 import { LocalDate } from '@/components/ui/local-date';
 
@@ -15,7 +15,7 @@ export default async function CheckpointsPage(props: { searchParams: SearchParam
   const projects = await getAllProjects();
 
   const selectedProject = projectIdFilter ? projects.find(p => p.id === projectIdFilter) : undefined;
-  const projectPath = selectedProject?.source_path || selectedProject?.project_path;
+  const projectPath = selectedProject?.project_path;
 
   const checkpoints = projectPath
     ? await getCheckpointsByProject(projectPath)

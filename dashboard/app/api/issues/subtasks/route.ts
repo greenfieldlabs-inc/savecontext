@@ -1,12 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Database } from 'bun:sqlite';
-import { join } from 'path';
-import { homedir } from 'os';
-
-function getDb() {
-  const dbPath = join(homedir(), '.savecontext', 'data', 'savecontext.db');
-  return new Database(dbPath, { readonly: true });
-}
+import { getDatabase } from '@/lib/db';
 
 export async function GET(request: Request) {
   try {
@@ -17,34 +10,20 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Missing parentId' }, { status: 400 });
     }
 
-    const db = getDb();
-    // Query children via issue_dependencies table (parent-child relationship)
-    const issues = db.prepare(`
-      SELECT i.* FROM issues i
+    const db = getDatabase();
+    // Single query with child counts using correlated subqueries
+    const issuesWithCounts = db.prepare(`
+      SELECT i.*,
+        (SELECT COUNT(*) FROM issue_dependencies
+         WHERE depends_on_id = i.id AND dependency_type = 'parent-child') as child_count,
+        (SELECT COUNT(*) FROM issue_dependencies dep2
+         JOIN issues i2 ON i2.id = dep2.issue_id
+         WHERE dep2.depends_on_id = i.id AND dep2.dependency_type = 'parent-child' AND i2.status = 'closed') as completed_count
+      FROM issues i
       JOIN issue_dependencies dep ON i.id = dep.issue_id
       WHERE dep.depends_on_id = ? AND dep.dependency_type = 'parent-child'
       ORDER BY i.created_at ASC
     `).all(parentId) as Array<Record<string, unknown>>;
-
-    // Add child_count and completed_count for each subtask (3-level hierarchy: Epic -> Task -> Subtask)
-    const issuesWithCounts = issues.map((issue) => {
-      const issueId = issue.id as string;
-      const childCount = db.prepare(`
-        SELECT COUNT(*) as count FROM issue_dependencies
-        WHERE depends_on_id = ? AND dependency_type = 'parent-child'
-      `).get(issueId) as { count: number };
-
-      // Count closed children for progress indicator
-      const completedCount = db.prepare(`
-        SELECT COUNT(*) as count FROM issue_dependencies dep
-        JOIN issues i ON i.id = dep.issue_id
-        WHERE dep.depends_on_id = ? AND dep.dependency_type = 'parent-child' AND i.status = 'closed'
-      `).get(issueId) as { count: number };
-
-      return { ...issue, child_count: childCount.count, completed_count: completedCount.count };
-    });
-
-    db.close();
 
     return NextResponse.json({ success: true, issues: issuesWithCounts });
   } catch (error) {

@@ -1,22 +1,22 @@
-import { NextResponse } from 'next/server';
-import { Database } from 'bun:sqlite';
-import { join } from 'path';
-import { homedir } from 'os';
-
-function getWriteDb() {
-  const dbPath = join(homedir(), '.savecontext', 'data', 'savecontext.db');
-  return new Database(dbPath);
-}
+import { getWriteDatabase } from '@/lib/db';
+import { emitMemoryEvent } from '@/lib/events';
+import { parseJsonBody, isJsonError, apiSuccess, apiError, apiServerError } from '@/lib/api-utils';
+import { SaveMemorySchema, validate } from '@/lib/validation/schemas';
 
 export async function POST(request: Request) {
+  const body = await parseJsonBody(request);
+  if (isJsonError(body)) return body;
+
+  // Validate request body
+  const validation = validate(SaveMemorySchema, body);
+  if (!validation.success) {
+    return apiError(validation.error);
+  }
+
+  const { projectPath, key, value, category } = validation.data;
+
+  const db = getWriteDatabase();
   try {
-    const { projectPath, key, value, category } = await request.json();
-
-    if (!projectPath || !key || !value) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
-
-    const db = getWriteDb();
     const now = Date.now();
 
     // Check if exists
@@ -35,10 +35,10 @@ export async function POST(request: Request) {
       ).run(id, projectPath, key, value, category || 'note', now, now);
     }
 
-    db.close();
-    return NextResponse.json({ success: true });
+    emitMemoryEvent('saved', projectPath, key);
+    return apiSuccess({ saved: true });
   } catch (error) {
     console.error('Error saving memory:', error);
-    return NextResponse.json({ error: 'Failed to save memory' }, { status: 500 });
+    return apiServerError('Failed to save memory');
   }
 }

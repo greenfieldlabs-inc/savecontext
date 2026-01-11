@@ -1,5 +1,5 @@
 import { getAllProjects } from '@/lib/db-adapter';
-import { MemoryClient } from '@/components/dashboard/memory-client';
+import { MemoryClient } from '@/components/dashboard/memory/list/memory-client';
 
 export const dynamic = 'force-dynamic';
 

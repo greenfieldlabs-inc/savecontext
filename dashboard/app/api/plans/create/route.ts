@@ -1,12 +1,8 @@
-import { NextResponse } from 'next/server';
-import { Database } from 'bun:sqlite';
-import { join, basename } from 'path';
-import { homedir } from 'os';
-
-function getWriteDb() {
-  const dbPath = join(homedir(), '.savecontext', 'data', 'savecontext.db');
-  return new Database(dbPath);
-}
+import { getWriteDatabase } from '@/lib/db';
+import type { Database } from 'bun:sqlite';
+import { emitPlanEvent } from '@/lib/events';
+import { parseJsonBody, isJsonError, apiSuccess, apiError, apiNotFound, apiServerError } from '@/lib/api-utils';
+import { CreatePlanSchema, validate } from '@/lib/validation/schemas';
 
 function getProject(db: Database, projectPath: string): { id: string } | null {
   const existing = db.prepare(
@@ -33,22 +29,26 @@ function generateShortId(db: Database, projectId: string): string {
 }
 
 export async function POST(request: Request) {
+  const body = await parseJsonBody(request);
+  if (isJsonError(body)) return body;
+
+  // Validate request body
+  const validation = validate(CreatePlanSchema, body);
+  if (!validation.success) {
+    return apiError(validation.error);
+  }
+
+  const { projectPath, title, content, status, successCriteria } = validation.data;
+
+  const db = getWriteDatabase();
   try {
-    const { projectPath, title, content, status, successCriteria } = await request.json();
-
-    if (!projectPath || !title) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
-
-    const db = getWriteDb();
     const now = Date.now();
     const id = crypto.randomUUID();
 
     // Get project - must exist
     const project = getProject(db, projectPath);
     if (!project) {
-      db.close();
-      return NextResponse.json({ error: 'Project not found. Create the project first using context_project_create.' }, { status: 404 });
+      return apiNotFound('Project. Create the project first using context_project_create');
     }
     const projectId = project.id;
     const shortId = generateShortId(db, projectId);
@@ -58,10 +58,10 @@ export async function POST(request: Request) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, shortId, projectId, projectPath, title, content || null, status || 'draft', successCriteria || null, now, now);
 
-    db.close();
-    return NextResponse.json({ success: true, id, short_id: shortId });
+    emitPlanEvent('created', id);
+    return apiSuccess({ id, short_id: shortId });
   } catch (error) {
     console.error('Error creating plan:', error);
-    return NextResponse.json({ error: 'Failed to create plan' }, { status: 500 });
+    return apiServerError('Failed to create plan');
   }
 }

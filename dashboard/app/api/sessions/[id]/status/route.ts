@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { getSessionById, updateSessionStatus } from '@/lib/db';
+import { emitSessionEvent } from '@/lib/events';
+import type { SessionStatus } from '@/lib/types';
 
 type Params = Promise<{ id: string }>;
 
-const VALID_STATUSES = ['active', 'paused', 'completed'] as const;
-type SessionStatus = (typeof VALID_STATUSES)[number];
+const VALID_STATUSES: SessionStatus[] = ['active', 'paused', 'completed'];
 
 export async function PATCH(request: Request, { params }: { params: Params }) {
   try {
@@ -32,6 +33,7 @@ export async function PATCH(request: Request, { params }: { params: Params }) {
       return NextResponse.json({ error: 'Failed to update session status' }, { status: 500 });
     }
 
+    emitSessionEvent('status_changed', id);
     return NextResponse.json({
       success: true,
       sessionId: id,

@@ -1,23 +1,17 @@
-import { NextResponse } from 'next/server';
-import { Database } from 'bun:sqlite';
-import { join } from 'path';
-import { homedir } from 'os';
-
-function getWriteDb() {
-  const dbPath = join(homedir(), '.savecontext', 'data', 'savecontext.db');
-  return new Database(dbPath);
-}
+import { getWriteDatabase } from '@/lib/db';
+import { emitIssueEvent } from '@/lib/events';
+import { apiSuccess, apiError, apiServerError } from '@/lib/api-utils';
 
 export async function DELETE(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get('id');
+
+  if (!id) {
+    return apiError('Missing issue id');
+  }
+
+  const db = getWriteDatabase();
   try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id) {
-      return NextResponse.json({ error: 'Missing issue id' }, { status: 400 });
-    }
-
-    const db = getWriteDb();
     // Delete subtasks first (children found via dependencies table)
     db.prepare(`
       DELETE FROM issues WHERE id IN (
@@ -27,11 +21,10 @@ export async function DELETE(request: Request) {
     `).run(id);
     // Delete issue (CASCADE will handle dependencies)
     db.prepare('DELETE FROM issues WHERE id = ?').run(id);
-    db.close();
-
-    return NextResponse.json({ success: true });
+    emitIssueEvent('deleted', id);
+    return apiSuccess({ deleted: true });
   } catch (error) {
     console.error('Error deleting issue:', error);
-    return NextResponse.json({ error: 'Failed to delete issue' }, { status: 500 });
+    return apiServerError('Failed to delete issue');
   }
 }

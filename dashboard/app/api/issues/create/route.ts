@@ -1,12 +1,8 @@
-import { NextResponse } from 'next/server';
-import { Database } from 'bun:sqlite';
-import { join } from 'path';
-import { homedir } from 'os';
-
-function getWriteDb() {
-  const dbPath = join(homedir(), '.savecontext', 'data', 'savecontext.db');
-  return new Database(dbPath);
-}
+import { getWriteDatabase } from '@/lib/db';
+import type { Database } from 'bun:sqlite';
+import { emitIssueEvent } from '@/lib/events';
+import { parseJsonBody, isJsonError, apiSuccess, apiError, apiServerError } from '@/lib/api-utils';
+import { CreateIssueSchema, validate } from '@/lib/validation/schemas';
 
 function generateShortId(db: Database, projectPath: string, parentId?: string): string {
   if (parentId) {
@@ -28,17 +24,27 @@ function generateShortId(db: Database, projectPath: string, parentId?: string): 
 }
 
 export async function POST(request: Request) {
+  const body = await parseJsonBody(request);
+  if (isJsonError(body)) return body;
+
+  // Validate request body
+  const validation = validate(CreateIssueSchema, body);
+  if (!validation.success) {
+    return apiError(validation.error);
+  }
+
+  const { projectPath, title, description, status, priority, issueType, parentId, labels } = validation.data;
+  const { dependsOn } = body as { dependsOn?: string[] };
+
+  if (!projectPath) {
+    return apiError('projectPath is required');
+  }
+
+  const db = getWriteDatabase();
   try {
-    const { projectPath, title, description, status, priority, issueType, parentId, dependsOn } = await request.json();
-
-    if (!projectPath || !title) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
-
-    const db = getWriteDb();
     const now = Date.now();
     const id = crypto.randomUUID();
-    const shortId = generateShortId(db, projectPath, parentId);
+    const shortId = generateShortId(db, projectPath, parentId ?? undefined);
 
     // Insert issue without parent_id column
     db.prepare(`
@@ -73,10 +79,10 @@ export async function POST(request: Request) {
       }
     }
 
-    db.close();
-    return NextResponse.json({ success: true, id, short_id: shortId });
+    emitIssueEvent('created', id, projectPath);
+    return apiSuccess({ id, short_id: shortId });
   } catch (error) {
     console.error('Error creating issue:', error);
-    return NextResponse.json({ error: 'Failed to create issue' }, { status: 500 });
+    return apiServerError('Failed to create issue');
   }
 }

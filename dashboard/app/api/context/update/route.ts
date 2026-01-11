@@ -1,5 +1,7 @@
-import { NextResponse } from 'next/server';
 import { updateContextItem, getSessionById } from '@/lib/db';
+import { emitContextEvent } from '@/lib/events';
+import { apiSuccess, apiError, apiNotFound, apiServerError } from '@/lib/api-utils';
+import { ContextCategorySchema, ContextPrioritySchema } from '@/lib/validation/schemas';
 
 export async function POST(request: Request) {
   try {
@@ -7,19 +9,29 @@ export async function POST(request: Request) {
     const { key, sessionId, value, category, priority, channel } = body;
 
     if (!key || !sessionId) {
-      return NextResponse.json(
-        { error: 'Missing required fields: key and sessionId' },
-        { status: 400 }
-      );
+      return apiError('Missing required fields: key and sessionId');
+    }
+
+    // Validate category if provided
+    if (category !== undefined) {
+      const categoryResult = ContextCategorySchema.safeParse(category);
+      if (!categoryResult.success) {
+        return apiError('Invalid category: must be one of reminder, decision, progress, note');
+      }
+    }
+
+    // Validate priority if provided
+    if (priority !== undefined) {
+      const priorityResult = ContextPrioritySchema.safeParse(priority);
+      if (!priorityResult.success) {
+        return apiError('Invalid priority: must be one of high, normal, low');
+      }
     }
 
     // Verify the session exists
     const session = getSessionById(sessionId);
     if (!session) {
-      return NextResponse.json(
-        { error: 'Session not found' },
-        { status: 404 }
-      );
+      return apiNotFound('Session');
     }
 
     // Build update data
@@ -34,21 +46,13 @@ export async function POST(request: Request) {
     const changes = updateContextItem(sessionId, key, updates);
 
     if (changes === 0) {
-      return NextResponse.json(
-        { error: 'Context item not found' },
-        { status: 404 }
-      );
+      return apiNotFound('Context item');
     }
 
-    return NextResponse.json({
-      success: true,
-      message: 'Context item updated successfully'
-    });
+    emitContextEvent('updated', sessionId, key);
+    return apiSuccess({ updated: true });
   } catch (error) {
     console.error('Error updating context item:', error);
-    return NextResponse.json(
-      { error: 'Failed to update context item' },
-      { status: 500 }
-    );
+    return apiServerError('Failed to update context item');
   }
 }

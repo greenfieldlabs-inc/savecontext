@@ -2,7 +2,7 @@ import { getCheckpointById, getCheckpointItems, getSessionById } from '@/lib/db-
 import { notFound } from 'next/navigation';
 import { ChevronRight, Bookmark } from 'lucide-react';
 import Link from 'next/link';
-import { ContextItemCard } from '@/components/dashboard/context-item-card';
+import { ContextItemCard } from '@/components/dashboard/context/shared/context-item-card';
 import { LocalDate } from '@/components/ui/local-date';
 
 export const dynamic = 'force-dynamic';

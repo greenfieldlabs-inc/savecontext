@@ -1,5 +1,5 @@
-import { NextResponse } from 'next/server';
 import { getPlans, getPlanStats } from '@/lib/db-adapter';
+import { apiSuccess, apiServerError } from '@/lib/api-utils';
 
 export async function GET(request: Request) {
   try {
@@ -10,17 +10,9 @@ export async function GET(request: Request) {
     const plans = await getPlans(projectPath, status);
     const stats = await getPlanStats(projectPath);
 
-    return NextResponse.json({
-      success: true,
-      plans,
-      stats,
-      count: plans.length
-    });
+    return apiSuccess({ plans, stats, count: plans.length });
   } catch (error) {
     console.error('Error fetching plans:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch plans' },
-      { status: 500 }
-    );
+    return apiServerError('Failed to fetch plans');
   }
 }

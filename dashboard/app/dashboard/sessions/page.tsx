@@ -1,7 +1,8 @@
 import { getAllSessionsWithAgents, getAllProjects, getSessionsByProjectWithAgents } from '@/lib/db-adapter';
 import { FolderKanban } from 'lucide-react';
-import { SessionFilters } from '@/components/dashboard/session-filters';
-import { SessionCardContent } from '@/components/dashboard/session-card-content';
+import { SessionFilters } from '@/components/dashboard/sessions/list/session-filters';
+import { SessionCardContent } from '@/components/dashboard/sessions/detail/session-card-content';
+import { SessionEvents } from '@/components/dashboard/sessions/session-events';
 import Link from 'next/link';
 import type { SessionStatus } from '@/lib/types';
 
@@ -19,7 +20,7 @@ export default async function SessionsPage(props: { searchParams: SearchParams }
 
   // Find project path from project ID filter
   const selectedProject = projectIdFilter ? projects.find(p => p.id === projectIdFilter) : undefined;
-  const projectPath = selectedProject?.source_path || selectedProject?.project_path;
+  const projectPath = selectedProject?.project_path;
 
   let filteredSessions = projectPath
     ? await getSessionsByProjectWithAgents(projectPath)
@@ -40,6 +41,7 @@ export default async function SessionsPage(props: { searchParams: SearchParams }
 
   return (
     <div className="space-y-8">
+      <SessionEvents />
       {/* Header */}
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">

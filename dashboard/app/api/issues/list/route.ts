@@ -1,7 +1,7 @@
-import { NextResponse } from 'next/server';
 import { getIssues, getIssueStats } from '@/lib/db-adapter';
-
-const VALID_STATUSES = ['open', 'in_progress', 'blocked', 'closed', 'deferred'];
+import { relativeToAbsoluteTime } from '@/lib/constants/time';
+import { VALID_STATUSES } from '@/lib/types/issues';
+import { apiSuccess, apiError, apiServerError } from '@/lib/api-utils';
 
 export async function GET(request: Request) {
   try {
@@ -12,14 +12,25 @@ export async function GET(request: Request) {
     const issueType = searchParams.get('issueType') || searchParams.get('taskType');
     const parentId = searchParams.get('parentId');
 
-    if (status && !VALID_STATUSES.includes(status)) {
-      return NextResponse.json(
-        { error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}` },
-        { status: 400 }
-      );
+    // Timestamp filters (relative time - converted to absolute)
+    const createdInLastDays = searchParams.get('createdInLastDays');
+    const createdInLastHours = searchParams.get('createdInLastHours');
+    const updatedInLastDays = searchParams.get('updatedInLastDays');
+    const updatedInLastHours = searchParams.get('updatedInLastHours');
+
+    // Convert relative time to absolute timestamps
+    const timeFilter = relativeToAbsoluteTime({
+      createdInLastDays: createdInLastDays ? parseInt(createdInLastDays, 10) : undefined,
+      createdInLastHours: createdInLastHours ? parseInt(createdInLastHours, 10) : undefined,
+      updatedInLastDays: updatedInLastDays ? parseInt(updatedInLastDays, 10) : undefined,
+      updatedInLastHours: updatedInLastHours ? parseInt(updatedInLastHours, 10) : undefined,
+    });
+
+    if (status && !(VALID_STATUSES as string[]).includes(status)) {
+      return apiError(`Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`);
     }
 
-    let issues = await getIssues(projectPath, status);
+    let issues = await getIssues(projectPath, status, timeFilter);
 
     // Additional client-side filtering for priority and issueType
     if (priority) {
@@ -46,17 +57,9 @@ export async function GET(request: Request) {
 
     const stats = await getIssueStats(projectPath);
 
-    return NextResponse.json({
-      success: true,
-      issues,
-      stats,
-      count: issues.length
-    });
+    return apiSuccess({ issues, stats, count: issues.length });
   } catch (error) {
     console.error('Error fetching issues:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch issues' },
-      { status: 500 }
-    );
+    return apiServerError('Failed to fetch issues');
   }
 }
