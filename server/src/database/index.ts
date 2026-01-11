@@ -4,7 +4,7 @@
  * Learned from Memory Keeper but simplified
  */
 
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import * as sqliteVec from 'sqlite-vec';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -58,20 +58,43 @@ function safeParseTagsJson(tagsJson: string | null | undefined): string[] {
   }
 }
 
+// Configure custom SQLite library for macOS to enable extension loading
+if (process.platform === 'darwin') {
+  const sqlitePaths = [
+    '/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib', // Apple Silicon Homebrew
+    '/usr/local/opt/sqlite3/lib/libsqlite3.dylib',   // Intel Homebrew
+    '/usr/local/opt/sqlite/lib/libsqlite3.dylib',    // Alternative Intel path
+  ];
+
+  for (const sqlitePath of sqlitePaths) {
+    if (fs.existsSync(sqlitePath)) {
+      Database.setCustomSQLite(sqlitePath);
+      break;
+    }
+  }
+}
+
 export class DatabaseManager {
-  private db: Database.Database;
+  private db: Database;
   private dataDir: string;
 
   constructor(config: DatabaseConfig = {}) {
-    // Default to ~/.savecontext/data
-    this.dataDir = config.dataDir || path.join(os.homedir(), '.savecontext', 'data');
+    let dbPath: string;
+
+    if (config.dbPath) {
+      // Direct path override (used for testing)
+      dbPath = config.dbPath;
+      this.dataDir = path.dirname(dbPath);
+    } else {
+      // Default to ~/.savecontext/data
+      this.dataDir = config.dataDir || path.join(os.homedir(), '.savecontext', 'data');
+      dbPath = path.join(this.dataDir, config.filename || 'savecontext.db');
+    }
 
     // Ensure data directory exists
     if (!fs.existsSync(this.dataDir)) {
       fs.mkdirSync(this.dataDir, { recursive: true });
     }
-
-    const dbPath = path.join(this.dataDir, config.filename || 'savecontext.db');
 
     try {
       this.db = new Database(dbPath);
@@ -89,13 +112,13 @@ export class DatabaseManager {
     sqliteVec.load(this.db);
 
     // Enable WAL mode for better concurrency
-    this.db.pragma('journal_mode = WAL');
+    this.db.exec('PRAGMA journal_mode = WAL');
 
     // Set busy timeout to handle concurrent access
-    this.db.pragma('busy_timeout = 5000'); // 5 seconds
+    this.db.exec('PRAGMA busy_timeout = 5000'); // 5 seconds
 
     // Enable foreign keys
-    this.db.pragma('foreign_keys = ON');
+    this.db.exec('PRAGMA foreign_keys = ON');
 
     // Create tables
     this.createTables();
@@ -116,6 +139,34 @@ export class DatabaseManager {
 
     if (result.changes > 0) {
       console.error(`[SaveContext] Cleaned up ${result.changes} stale agent sessions`);
+    }
+  }
+
+  /**
+   * Emit SSE event to the dashboard
+   * Events are stored in sse_events table and polled by the dashboard
+   */
+  private emitSSEEvent(event: string, data: Record<string, unknown>): void {
+    try {
+      // Ensure sse_events table exists
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS sse_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          event TEXT NOT NULL,
+          data TEXT,
+          timestamp INTEGER NOT NULL
+        )
+      `);
+
+      // Clean old events (keep last 5 minutes)
+      this.db.prepare('DELETE FROM sse_events WHERE timestamp < ?').run(Date.now() - 300000);
+
+      // Insert new event
+      this.db.prepare(
+        'INSERT INTO sse_events (event, data, timestamp) VALUES (?, ?, ?)'
+      ).run(event, JSON.stringify(data), Date.now());
+    } catch {
+      // Silently fail - SSE is non-critical
     }
   }
 
@@ -201,7 +252,7 @@ export class DatabaseManager {
    * Get the underlying database instance
    * Use for custom queries if needed
    */
-  getDatabase(): Database.Database {
+  getDatabase(): Database {
     return this.db;
   }
 
@@ -257,13 +308,17 @@ export class DatabaseManager {
         pathStmt.run(id, session.project_path, now);
       }
 
-      return {
+      const created = {
         id,
         ...session,
         status: session.status || 'active',
         created_at: now,
         updated_at: now,
       } as Session;
+
+      this.emitSSEEvent('session', { type: 'created', sessionId: id, projectPath: session.project_path });
+
+      return created;
     });
   }
 
@@ -326,6 +381,11 @@ export class DatabaseManager {
       WHERE id = ?
     `);
     const result = stmt.run(newName, Date.now(), sessionId);
+
+    if (result.changes > 0) {
+      this.emitSSEEvent('session', { type: 'updated', sessionId, projectPath: session.project_path });
+    }
+
     return result.changes > 0;
   }
 
@@ -348,6 +408,7 @@ export class DatabaseManager {
    * Sets status to 'completed' and records ended_at timestamp
    */
   endSession(sessionId: string): void {
+    const session = this.getSession(sessionId);
     const now = Date.now();
     const stmt = this.db.prepare(`
       UPDATE sessions
@@ -355,6 +416,8 @@ export class DatabaseManager {
       WHERE id = ?
     `);
     stmt.run(now, now, sessionId);
+
+    this.emitSSEEvent('session', { type: 'status_changed', sessionId, projectPath: session?.project_path });
   }
 
   /**
@@ -363,6 +426,7 @@ export class DatabaseManager {
    * Can be resumed later
    */
   pauseSession(sessionId: string): void {
+    const session = this.getSession(sessionId);
     const now = Date.now();
     const stmt = this.db.prepare(`
       UPDATE sessions
@@ -370,6 +434,8 @@ export class DatabaseManager {
       WHERE id = ?
     `);
     stmt.run(now, now, sessionId);
+
+    this.emitSSEEvent('session', { type: 'status_changed', sessionId, projectPath: session?.project_path });
   }
 
   /**
@@ -377,6 +443,7 @@ export class DatabaseManager {
    * Sets status to 'active' and clears ended_at
    */
   resumeSession(sessionId: string): void {
+    const session = this.getSession(sessionId);
     const now = Date.now();
     const stmt = this.db.prepare(`
       UPDATE sessions
@@ -384,6 +451,8 @@ export class DatabaseManager {
       WHERE id = ?
     `);
     stmt.run(now, sessionId);
+
+    this.emitSSEEvent('session', { type: 'status_changed', sessionId, projectPath: session?.project_path });
   }
 
   /**
@@ -407,6 +476,11 @@ export class DatabaseManager {
 
     const stmt = this.db.prepare('DELETE FROM sessions WHERE id = ?');
     const result = stmt.run(sessionId);
+
+    if (result.changes > 0) {
+      this.emitSSEEvent('session', { type: 'deleted', sessionId, projectPath: session.project_path });
+    }
+
     return result.changes > 0;
   }
 
@@ -659,6 +733,8 @@ export class DatabaseManager {
       now
     );
 
+    this.emitSSEEvent('context', { type: 'created', sessionId: item.session_id, key: item.key });
+
     return {
       id,
       ...item,
@@ -727,6 +803,9 @@ export class DatabaseManager {
       WHERE session_id = ? AND key = ?
     `);
     const result = stmt.run(sessionId, key);
+    if (result.changes > 0) {
+      this.emitSSEEvent('context', { type: 'deleted', sessionId, key });
+    }
     return result.changes > 0;
   }
 
@@ -793,6 +872,8 @@ export class DatabaseManager {
     `);
 
     stmt.run(...params);
+
+    this.emitSSEEvent('context', { type: 'updated', sessionId, key });
 
     // Return updated item
     return this.getContextItem(sessionId, key);
@@ -879,6 +960,9 @@ export class DatabaseManager {
     `);
 
     stmt.run(id, projectPath, key, value, category, now, now);
+
+    this.emitSSEEvent('memory', { type: 'saved', key, projectPath });
+
     return { id, key };
   }
 
@@ -913,6 +997,11 @@ export class DatabaseManager {
       DELETE FROM project_memory WHERE project_path = ? AND key = ?
     `);
     const result = stmt.run(projectPath, key);
+
+    if (result.changes > 0) {
+      this.emitSSEEvent('memory', { type: 'deleted', key, projectPath });
+    }
+
     return result.changes > 0;
   }
 
@@ -1416,6 +1505,9 @@ export class DatabaseManager {
       }
     }
 
+    // Emit SSE event for dashboard
+    this.emitSSEEvent('issue', { type: 'created', issueId: id, projectPath });
+
     return {
       id,
       shortId,
@@ -1556,10 +1648,22 @@ export class DatabaseManager {
     const stmt = this.db.prepare(`UPDATE issues SET ${fields.join(', ')} WHERE id = ?`);
     stmt.run(...params);
 
+    // Emit SSE event for dashboard
+    this.emitSSEEvent('issue', { type: 'updated', issueId: issue.id, projectPath: issue.projectPath });
+
     return this.getIssue(issueId);
   }
 
   listIssues(projectPath: string | null, args?: ListIssuesArgs): { issues: Issue[], queriedProjectPath: string | null } {
+    // If id provided, resolve it to UUID for query
+    let resolvedId: string | undefined;
+    if (args?.id) {
+      const issue = this.getIssue(args.id);
+      if (issue) {
+        resolvedId = issue.id;
+      }
+    }
+
     // If parentId provided, resolve it to UUID for query
     // Only use parent's project_path if not searching all projects (null means all)
     let queriedProjectPath = projectPath;
@@ -1583,9 +1687,13 @@ export class DatabaseManager {
     `;
     const params: SqliteBindValue[] = [];
 
-    // Support querying all projects (null projectPath) or specific project
-    // Check both primary project_path and issue_projects junction table
-    if (queriedProjectPath !== null) {
+    // If looking up by specific ID, bypass project filter (issue may have null project_path)
+    if (resolvedId) {
+      query += ' WHERE t.id = ?';
+      params.push(resolvedId);
+    } else if (queriedProjectPath !== null) {
+      // Support querying all projects (null projectPath) or specific project
+      // Check both primary project_path and issue_projects junction table
       query += ' WHERE (t.project_path = ? OR t.id IN (SELECT issue_id FROM issue_projects WHERE project_path = ?))';
       params.push(queriedProjectPath, queriedProjectPath);
     } else {
@@ -1642,6 +1750,37 @@ export class DatabaseManager {
         SELECT issue_id FROM issue_labels WHERE label IN (${args.labelsAny.map(() => '?').join(',')})
       )`;
       params.push(...args.labelsAny);
+    }
+
+    // Date filtering
+    if (args?.createdAfter !== undefined) {
+      query += ' AND t.created_at >= ?';
+      params.push(args.createdAfter);
+    }
+    if (args?.createdBefore !== undefined) {
+      query += ' AND t.created_at <= ?';
+      params.push(args.createdBefore);
+    }
+    if (args?.updatedAfter !== undefined) {
+      query += ' AND t.updated_at >= ?';
+      params.push(args.updatedAfter);
+    }
+    if (args?.updatedBefore !== undefined) {
+      query += ' AND t.updated_at <= ?';
+      params.push(args.updatedBefore);
+    }
+
+    // Text search (case-insensitive)
+    if (args?.search) {
+      query += ' AND (t.title LIKE ? OR t.description LIKE ?)';
+      const searchPattern = `%${args.search}%`;
+      params.push(searchPattern, searchPattern);
+    }
+
+    // Assignee filter
+    if (args?.assignee) {
+      query += ' AND t.assigned_to_agent = ?';
+      params.push(args.assignee);
     }
 
     query += ' GROUP BY t.id';
@@ -1847,13 +1986,135 @@ export class DatabaseManager {
       }
     }
 
+    // Emit SSE event for dashboard
+    this.emitSSEEvent('issue', { type: 'completed', issueId: closedIssue.id, projectPath: closedIssue.projectPath });
+
     return { issue: closedIssue, unblockedIssues, completedPlanId };
   }
 
   deleteIssue(issueId: string): boolean {
+    // Get issue before deletion for SSE event
+    const issue = this.getIssue(issueId);
+
     const stmt = this.db.prepare(`DELETE FROM issues WHERE id = ? OR short_id = ?`);
     const result = stmt.run(issueId, issueId);
+
+    if (result.changes > 0 && issue) {
+      // Emit SSE event for dashboard
+      this.emitSSEEvent('issue', { type: 'deleted', issueId: issue.id, projectPath: issue.projectPath });
+    }
+
     return result.changes > 0;
+  }
+
+  /**
+   * Mark an issue as a duplicate of another issue.
+   * Sets status to 'closed', creates 'duplicate-of' dependency, and sets closed_at.
+   * Note: "duplicate" is a relation type, not a status - tracked via the dependency.
+   */
+  markIssueAsDuplicate(
+    issueId: string,
+    duplicateOfId: string,
+    agentId?: string,
+    sessionId?: string
+  ): { issue: Issue; dependencyCreated: boolean } | null {
+    const issue = this.getIssue(issueId);
+    if (!issue) return null;
+
+    const canonicalIssue = this.getIssue(duplicateOfId);
+    if (!canonicalIssue) return null;
+
+    const now = Date.now();
+
+    // Update the issue status to closed and set closed fields
+    // Note: duplicate is tracked via the duplicate-of dependency, not the status
+    this.db.prepare(`
+      UPDATE issues SET status = 'closed', closed_at = ?, updated_at = ?,
+        closed_by_agent = ?, closed_in_session = ?
+      WHERE id = ?
+    `).run(now, now, agentId || null, sessionId || null, issue.id);
+
+    // Create the duplicate-of dependency
+    let dependencyCreated = false;
+    try {
+      this.db.prepare(`
+        INSERT INTO issue_dependencies (id, issue_id, depends_on_id, dependency_type, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(this.generateId(), issue.id, canonicalIssue.id, 'duplicate-of', now);
+      dependencyCreated = true;
+    } catch {
+      // Dependency may already exist, that's okay
+    }
+
+    // Emit SSE event for dashboard
+    this.emitSSEEvent('issue', { type: 'updated', issueId: issue.id, projectPath: issue.projectPath });
+
+    const updatedIssue = this.getIssue(issueId)!;
+    return { issue: updatedIssue, dependencyCreated };
+  }
+
+  /**
+   * Clone an issue, creating a new issue with the same (or overridden) properties.
+   * By default, copies title (with "Copy of" prefix), description, details, priority,
+   * issueType, parentId, planId, and labels.
+   */
+  cloneIssue(
+    issueId: string,
+    overrides: {
+      title?: string;
+      description?: string;
+      details?: string;
+      status?: IssueStatus;
+      priority?: number;
+      issueType?: IssueType;
+      parentId?: string;
+      planId?: string;
+      labels?: string[];
+      include_labels?: boolean;
+    } = {},
+    agentId?: string,
+    sessionId?: string
+  ): Issue | null {
+    const original = this.getIssue(issueId);
+    if (!original) return null;
+
+    // Determine final values (override or copy from original)
+    const newTitle = overrides.title || `Copy of ${original.title}`;
+    const newDescription = overrides.description !== undefined ? overrides.description : original.description;
+    const newDetails = overrides.details !== undefined ? overrides.details : original.details;
+    const newStatus = overrides.status || 'open';
+    const newPriority = overrides.priority !== undefined ? overrides.priority : original.priority;
+    const newIssueType = overrides.issueType || original.issueType;
+    const newParentId = overrides.parentId !== undefined ? overrides.parentId : original.parentId;
+    const newPlanId = overrides.planId !== undefined ? overrides.planId : original.planId;
+
+    // Labels: use override if provided, otherwise copy from original (if include_labels !== false)
+    let newLabels: string[] | undefined;
+    if (overrides.labels !== undefined) {
+      newLabels = overrides.labels;
+    } else if (overrides.include_labels !== false && original.labels && original.labels.length > 0) {
+      newLabels = [...original.labels];
+    }
+
+    // Create the new issue using the existing createIssue method
+    const clonedIssue = this.createIssue(
+      original.projectPath,
+      {
+        title: newTitle,
+        description: newDescription,
+        details: newDetails,
+        status: newStatus,
+        priority: newPriority,
+        issueType: newIssueType,
+        parentId: newParentId || undefined,
+        planId: newPlanId || undefined,
+        labels: newLabels,
+      },
+      agentId,
+      sessionId
+    );
+
+    return clonedIssue;
   }
 
   // Dependency Operations
@@ -1951,12 +2212,12 @@ export class DatabaseManager {
     const stmt = this.db.prepare(`INSERT OR IGNORE INTO issue_labels (id, issue_id, label) VALUES (?, ?, ?)`);
     let added = 0;
     for (const label of labels) {
-      const result = stmt.run(this.generateId(), issueId, label.trim().toLowerCase());
+      const result = stmt.run(this.generateId(), issue.id, label.trim().toLowerCase());
       added += result.changes;
     }
 
     // Get updated labels
-    const allLabels = this.db.prepare(`SELECT label FROM issue_labels WHERE issue_id = ?`).all(issueId) as { label: string }[];
+    const allLabels = this.db.prepare(`SELECT label FROM issue_labels WHERE issue_id = ?`).all(issue.id) as { label: string }[];
 
     return {
       issueId: issue.id,
@@ -1973,12 +2234,12 @@ export class DatabaseManager {
     const stmt = this.db.prepare(`DELETE FROM issue_labels WHERE issue_id = ? AND label = ?`);
     let removed = 0;
     for (const label of labels) {
-      const result = stmt.run(issueId, label.trim().toLowerCase());
+      const result = stmt.run(issue.id, label.trim().toLowerCase());
       removed += result.changes;
     }
 
     // Get remaining labels
-    const remainingLabels = this.db.prepare(`SELECT label FROM issue_labels WHERE issue_id = ?`).all(issueId) as { label: string }[];
+    const remainingLabels = this.db.prepare(`SELECT label FROM issue_labels WHERE issue_id = ?`).all(issue.id) as { label: string }[];
 
     return {
       issueId: issue.id,
@@ -2015,6 +2276,10 @@ export class DatabaseManager {
           status = 'in_progress', updated_at = ?
         WHERE id = ?
       `).run(agentId, now, sessionId || null, now, issue.id);
+
+      // Emit SSE event for dashboard
+      this.emitSSEEvent('issue', { type: 'updated', issueId: issue.id, projectPath: issue.projectPath });
+
       claimedIssues.push({
         id: issue.id,
         shortId: issue.shortId || issue.id,
@@ -2047,6 +2312,10 @@ export class DatabaseManager {
           status = 'open', updated_at = ?
         WHERE id = ?
       `).run(now, issue.id);
+
+      // Emit SSE event for dashboard
+      this.emitSSEEvent('issue', { type: 'updated', issueId: issue.id, projectPath: issue.projectPath });
+
       releasedIssues.push({
         id: issue.id,
         shortId: issue.shortId || issue.id,
@@ -2210,6 +2479,11 @@ export class DatabaseManager {
           this.db.prepare(`UPDATE issues SET status = 'blocked', updated_at = ? WHERE id = ?`).run(now, issue.id);
         }
       }
+    }
+
+    // Emit SSE events for all created issues
+    for (const issue of createdIssues) {
+      this.emitSSEEvent('issue', { type: 'created', issueId: issue.id, projectPath });
     }
 
     return {
@@ -2541,8 +2815,8 @@ export class DatabaseManager {
           sourceCheckpoint.session_id,
           split.name,
           split.description || null,
-          sourceCheckpoint.git_status,
-          sourceCheckpoint.git_branch,
+          sourceCheckpoint.git_status ?? null,
+          sourceCheckpoint.git_branch ?? null,
           item_count,
           total_size,
           now
@@ -2669,7 +2943,7 @@ export class DatabaseManager {
       status, args.successCriteria || null, sessionId || null, now, now
     );
 
-    return {
+    const plan = {
       id,
       short_id: shortId,
       project_path: projectPath,
@@ -2686,6 +2960,10 @@ export class DatabaseManager {
       updated_at: now,
       completed_at: null,
     };
+
+    this.emitSSEEvent('plan', { type: 'created', planId: id, projectPath });
+
+    return plan;
   }
 
   getPlan(planId: string): (Plan & { content?: string }) | null {
@@ -2788,12 +3066,20 @@ export class DatabaseManager {
       `).run(newProjectPath, Date.now(), plan.id);
     }
 
+    this.emitSSEEvent('plan', { type: 'updated', planId: plan.id, projectPath: newProjectPath || plan.project_path });
+
     return this.getPlan(plan.id);
   }
 
   deletePlan(planId: string): boolean {
+    const plan = this.getPlan(planId);
     const stmt = this.db.prepare('DELETE FROM plans WHERE id = ? OR short_id = ?');
     const result = stmt.run(planId, planId);
+
+    if (result.changes > 0 && plan) {
+      this.emitSSEEvent('plan', { type: 'deleted', planId, projectPath: plan.project_path });
+    }
+
     return result.changes > 0;
   }
 
