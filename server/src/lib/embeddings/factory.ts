@@ -51,7 +51,7 @@ export async function detectAvailableProvider(): Promise<{
     available.push('ollama');
   }
 
-  // Check HuggingFace (cloud option with custom models)
+  // Check HuggingFace (API option with custom models)
   const huggingface = new HuggingFaceEmbeddingProvider({
     apiToken: config.HF_TOKEN,
     model: config.HF_MODEL,

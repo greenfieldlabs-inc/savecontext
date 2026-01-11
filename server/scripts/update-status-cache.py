@@ -245,6 +245,29 @@ def extract_session_info(tool_name: str, data: dict, cwd: str) -> dict | None:
                 'provider': 'claude-code'
             }
 
+    # context_save - item saved, update item count
+    if tool_name == 'mcp__savecontext__context_save':
+        # Read existing cache to get session info, then increment item count
+        return {'update_item_count': 1}
+
+    # context_delete - item deleted, decrement item count
+    if tool_name == 'mcp__savecontext__context_delete':
+        # Read existing cache to get session info, then decrement item count
+        return {'update_item_count': -1}
+
+    # context_checkpoint - checkpoint created, has session info
+    if tool_name == 'mcp__savecontext__context_checkpoint':
+        session_id = data.get('session_id')
+        if session_id:
+            return {
+                'sessionId': session_id,
+                'sessionName': data.get('session_name', ''),
+                'projectPath': data.get('project_path', cwd),
+                'itemCount': data.get('item_count', 0),
+                'sessionStatus': 'active',
+                'provider': 'claude-code'
+            }
+
     return None
 
 
@@ -261,6 +284,21 @@ def update_cache(status_key: str, session_info: dict) -> bool:
         try:
             cache_file.unlink(missing_ok=True)
             return True
+        except Exception:
+            return False
+
+    # Handle item count update - read existing cache and modify
+    if 'update_item_count' in session_info:
+        try:
+            if cache_file.exists():
+                with open(cache_file, 'r') as f:
+                    existing = json.load(f)
+                existing['itemCount'] = max(0, existing.get('itemCount', 0) + session_info['update_item_count'])
+                existing['timestamp'] = int(time.time() * 1000)
+                session_info = existing
+            else:
+                # No existing cache, nothing to update
+                return True
         except Exception:
             return False
 

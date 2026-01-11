@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * SaveContext Embeddings CLI
  * Manage embeddings for semantic search: backfill, status, and configuration

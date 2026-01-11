@@ -40,13 +40,4 @@ export interface ClaudeCodeSettings {
   };
 }
 
-/**
- * Setup status line result
- */
-export interface SetupStatusLineResult {
-  success: boolean;
-  settingsPath: string;
-  scriptPath: string;
-  error?: string;
-}
 
