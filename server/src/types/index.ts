@@ -28,9 +28,6 @@ export * from './errors.js';
 // Plan Types
 export * from './plans.js';
 
-// Cloud Client Types
-export * from './cloud.js';
-
 // Server Config & Update Types
 export * from './server.js';
 
@@ -43,11 +40,14 @@ export * from './migration.js';
 // Config Types (including embeddings)
 export * from './config.js';
 
-// Device Auth Types
-export * from './auth.js';
+// Status Cache Types
+export * from './status-cache.js';
 
 // Claude Code Settings Types
 export * from './claude-code.js';
+
+// Statusline Setup Types (Multi-tool)
+export * from './statusline.js';
 
 // Skills Types
 export * from './skills.js';

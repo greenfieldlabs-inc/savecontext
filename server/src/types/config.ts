@@ -2,8 +2,6 @@
 // Config Types
 // ====================
 
-export type ConfigMode = 'local' | 'cloud';
-
 export type EmbeddingProviderType = 'ollama' | 'huggingface' | 'transformers';
 
 /**
@@ -105,45 +103,10 @@ export interface TextChunk {
   endChar: number;
 }
 
+/**
+ * SaveContext local configuration
+ * Stored in ~/.savecontext/config.json
+ */
 export interface SaveContextLocalConfig {
-  mode: ConfigMode;
-  cloudMcpUrl?: string;
-  migrated?: boolean;  // True after local data migrated to cloud
-  migratedAt?: string;  // ISO 8601 timestamp of migration
-  embeddings?: EmbeddingSettings;  // Embedding provider configuration
+  embeddings?: EmbeddingSettings;
 }
-
-export interface SaveContextCredentials {
-  apiKey: string;
-  email?: string;
-  provider?: string;  // OAuth provider (google, github)
-  createdAt: string;  // ISO 8601 timestamp
-}
-
-/**
- * Session metadata - stored separately from API key
- * Persists authentication identity even when --no-save is used
- */
-export interface SaveContextSession {
-  version: 1;
-  userId: string;
-  email?: string;
-  provider?: string;  // OAuth provider (google, github)
-  authenticatedAt: string;  // ISO 8601 timestamp
-  expiresAt?: string;  // ISO 8601 timestamp (optional, for future use)
-  hasStoredKey: boolean;  // Whether API key is saved to credentials.json
-}
-
-/**
- * Runtime state - notices, prompts, preferences
- * Stored in ~/.savecontext/state.json
- */
-export interface SaveContextState {
-  schemaVersion: number;
-  notices: {
-    cloudPrompt?: {
-      lastShownAt: string;  // ISO 8601 timestamp
-    };
-  };
-}
-

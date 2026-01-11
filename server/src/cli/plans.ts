@@ -1,10 +1,7 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * SaveContext Plans CLI
  * Dashboard-style terminal output for plans, epics, and tasks
- *
- * Supports both local (SQLite) and cloud modes.
- * Default: local mode. Cloud mode when API key is present.
  *
  * Commands:
  * - list: List all plans
@@ -21,17 +18,13 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import boxen from 'boxen';
-import { CloudClient } from '../cloud-client.js';
 import { DatabaseManager } from '../database/index.js';
-import {
-  loadCredentials,
-  getCloudApiUrl,
-} from '../utils/config.js';
 import type {
   Plan,
   Issue,
+  IssueStatus,
+  IssueType,
   ListPlansArgs,
-  CreatePlanArgs,
 } from '../types/index.js';
 
 // Read version from package.json
@@ -70,9 +63,9 @@ interface IssueItem {
   shortId?: string;
   title: string;
   description?: string;
-  status: 'open' | 'in_progress' | 'blocked' | 'closed' | 'deferred';
+  status: IssueStatus;
   priority: number;
-  issueType: 'task' | 'bug' | 'feature' | 'epic' | 'chore';
+  issueType: IssueType;
   parentId?: string;
   labels?: string[];
   dependencyCount?: number;
@@ -84,25 +77,8 @@ interface IssueListResponse {
   count?: number;
 }
 
-// Mode detection
-type Mode = 'local' | 'cloud';
-
-function getMode(): Mode {
-  const apiKey = process.env.SAVECONTEXT_API_KEY || loadCredentials()?.apiKey;
-  return apiKey ? 'cloud' : 'local';
-}
-
-// Singleton instances
-let cloudClient: CloudClient | null = null;
+// Singleton database manager
 let dbManager: DatabaseManager | null = null;
-
-function getCloudClient(): CloudClient | null {
-  if (cloudClient) return cloudClient;
-  const apiKey = process.env.SAVECONTEXT_API_KEY || loadCredentials()?.apiKey;
-  if (!apiKey) return null;
-  cloudClient = new CloudClient(apiKey, getCloudApiUrl());
-  return cloudClient;
-}
 
 function getDbManager(): DatabaseManager {
   if (!dbManager) {
@@ -140,6 +116,8 @@ function getStatusDisplay(status: string): { icon: string; color: typeof chalk }
       return { icon: '\u25CF', color: chalk.red };
     case 'deferred':
       return { icon: '\u25CB', color: chalk.dim };
+    case 'backlog':
+      return { icon: '\u25CC', color: chalk.dim };
     default:
       return { icon: '\u25CB', color: chalk.gray };
   }
@@ -188,7 +166,7 @@ function pad(str: string, width: number): string {
 }
 
 // ==================
-// Dual-mode helper functions
+// Helper functions
 // ==================
 
 /**
@@ -234,22 +212,6 @@ function issueToItem(issue: Issue): IssueItem {
 }
 
 async function fetchPlans(args: { project_path: string; status?: string; limit?: number }): Promise<PlanListResponse> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    const response = await client.listPlans({
-      project_path: args.project_path,
-      status: args.status as ListPlansArgs['status'],
-      limit: args.limit,
-    });
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to list plans');
-    }
-    return response.data as PlanListResponse;
-  }
-
-  // Local mode
   const db = getDbManager();
   const plans = db.listPlans(args.project_path, {
     status: args.status as ListPlansArgs['status'],
@@ -263,18 +225,6 @@ async function fetchPlans(args: { project_path: string; status?: string; limit?:
 }
 
 async function fetchPlan(planId: string): Promise<PlanListItem | null> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    const response = await client.getPlan({ plan_id: planId });
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to get plan');
-    }
-    return response.data as PlanListItem;
-  }
-
-  // Local mode
   const db = getDbManager();
   const plan = db.getPlan(planId);
   if (!plan) return null;
@@ -283,23 +233,6 @@ async function fetchPlan(planId: string): Promise<PlanListItem | null> {
 }
 
 async function fetchIssues(args: { project_path: string; issueType?: string; status?: string; limit?: number }): Promise<IssueListResponse> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    const response = await client.listIssues({
-      project_path: args.project_path,
-      issueType: args.issueType as 'task' | 'bug' | 'feature' | 'epic' | 'chore' | undefined,
-      status: args.status as 'open' | 'in_progress' | 'blocked' | 'closed' | 'deferred' | undefined,
-      limit: args.limit,
-    });
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to list issues');
-    }
-    return response.data as IssueListResponse;
-  }
-
-  // Local mode
   const db = getDbManager();
   const result = db.listIssues(args.project_path, {
     issueType: args.issueType as 'task' | 'bug' | 'feature' | 'epic' | 'chore' | undefined,
@@ -314,23 +247,6 @@ async function fetchIssues(args: { project_path: string; issueType?: string; sta
 }
 
 async function createPlan(args: { title: string; content: string; status: string; project_path: string }): Promise<{ id: string; short_id?: string; title: string }> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    const response = await client.createPlan({
-      title: args.title,
-      content: args.content,
-      status: args.status as 'draft' | 'active' | 'completed',
-      project_path: args.project_path,
-    });
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to create plan');
-    }
-    return response.data as { id: string; short_id?: string; title: string };
-  }
-
-  // Local mode
   const db = getDbManager();
   const plan = db.createPlan(args.project_path, {
     title: args.title,
@@ -473,7 +389,6 @@ program
   .option('-l, --limit <n>', 'Maximum plans to show', '20')
   .option('--json', 'Output as JSON')
   .action(async (options: { status?: string; project?: string; limit?: string; json?: boolean }) => {
-    const mode = getMode();
     const spinner = options.json ? null : ora(`Fetching plans...`).start();
 
     try {
@@ -524,7 +439,6 @@ program
   .option('--full', 'Show full plan content')
   .option('--json', 'Output as JSON')
   .action(async (planId: string, options: { full?: boolean; json?: boolean }) => {
-    const mode = getMode();
     const spinner = options.json ? null : ora(`Fetching plan...`).start();
 
     try {
@@ -590,7 +504,6 @@ program
   .option('-p, --project <path>', 'Project path (defaults to current directory)')
   .option('--json', 'Output as JSON')
   .action(async (options: { project?: string; json?: boolean }) => {
-    const mode = getMode();
     const spinner = options.json ? null : ora(`Loading roadmap...`).start();
 
     try {
@@ -760,7 +673,6 @@ program
   .option('-l, --limit <n>', 'Maximum issues to show', '50')
   .option('--json', 'Output as JSON')
   .action(async (options: { project?: string; type?: string; status?: string; limit?: string; json?: boolean }) => {
-    const mode = getMode();
     const spinner = options.json ? null : ora(`Fetching issues...`).start();
 
     try {
@@ -838,7 +750,6 @@ program
   .option('-s, --status <status>', 'Filter by status')
   .option('--json', 'Output as JSON')
   .action(async (options: { project?: string; status?: string; json?: boolean }) => {
-    const mode = getMode();
     const spinner = options.json ? null : ora(`Fetching epics...`).start();
 
     try {
@@ -1024,7 +935,6 @@ program
     }
 
     // Create the plan
-    const mode = getMode();
     const spinner = options.json ? null : ora(`Creating plan...`).start();
 
     try {

@@ -1,14 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * SaveContext Sessions CLI
  * User-focused session management: list, rename, delete, archive, paths
  *
  * This CLI is for USER operations (organizing sessions).
  * Agent lifecycle operations (start, resume, switch, pause) should be done via MCP tools.
- *
- * Supports both local (SQLite) and cloud modes:
- * - Local mode (default): Uses local SQLite database
- * - Cloud mode: When SAVECONTEXT_API_KEY is set
  */
 
 import { createInterface } from 'node:readline';
@@ -19,13 +15,8 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import boxen from 'boxen';
-import { CloudClient } from '../cloud-client.js';
 import { DatabaseManager } from '../database/index.js';
 import type { Session } from '../types/index.js';
-import {
-  loadCredentials,
-  getCloudApiUrl,
-} from '../utils/config.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -34,7 +25,7 @@ const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-
 
 const program = new Command();
 
-// Session list response type (unified for both modes)
+// Session list response type
 interface SessionListItem {
   id: string;
   name: string;
@@ -52,25 +43,8 @@ interface SessionListResponse {
   total?: number;
 }
 
-// Mode detection
-type Mode = 'local' | 'cloud';
-
-function getMode(): Mode {
-  const apiKey = process.env.SAVECONTEXT_API_KEY || loadCredentials()?.apiKey;
-  return apiKey ? 'cloud' : 'local';
-}
-
 /**
- * Get CloudClient instance (only for cloud mode)
- */
-function getCloudClient(): CloudClient | null {
-  const apiKey = process.env.SAVECONTEXT_API_KEY || loadCredentials()?.apiKey;
-  if (!apiKey) return null;
-  return new CloudClient(apiKey, getCloudApiUrl());
-}
-
-/**
- * Get DatabaseManager instance (for local mode)
+ * Get DatabaseManager instance
  */
 let _dbManager: DatabaseManager | null = null;
 function getDbManager(): DatabaseManager {
@@ -99,7 +73,7 @@ function sessionToListItem(session: Session, itemCount?: number): SessionListIte
 type SessionStatus = 'active' | 'paused' | 'completed' | 'all';
 
 /**
- * Session operations that work in both local and cloud modes
+ * Session operations
  */
 async function fetchSessions(options: {
   project_path?: string;
@@ -108,14 +82,6 @@ async function fetchSessions(options: {
   status?: SessionStatus;
   search?: string;
 }): Promise<{ success: boolean; message?: string; data?: SessionListResponse }> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    return client.listSessions(options);
-  }
-
-  // Local mode
   const db = getDbManager();
   const sessions = db.listSessions(options.limit || 50, {
     project_path: options.project_path,
@@ -156,21 +122,9 @@ async function fetchSessions(options: {
 
 async function renameSession(
   sessionId: string,
-  currentName: string,
+  _currentName: string,
   newName: string
 ): Promise<{ success: boolean; message?: string }> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    return client.renameSession({
-      session_id: sessionId,
-      current_name: currentName,
-      new_name: newName,
-    });
-  }
-
-  // Local mode
   const db = getDbManager();
   const success = db.renameSession(sessionId, newName);
   return {
@@ -181,19 +135,8 @@ async function renameSession(
 
 async function deleteSession(
   sessionId: string,
-  sessionName: string
+  _sessionName: string
 ): Promise<{ success: boolean; message?: string }> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    return client.deleteSession({
-      session_id: sessionId,
-      session_name: sessionName,
-    });
-  }
-
-  // Local mode
   const db = getDbManager();
   try {
     const success = db.deleteSession(sessionId);
@@ -213,17 +156,6 @@ async function endSession(
   sessionId: string,
   _sessionName: string
 ): Promise<{ success: boolean; message?: string }> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    return client.endSession({
-      session_id: sessionId,
-      session_name: _sessionName,
-    });
-  }
-
-  // Local mode
   const db = getDbManager();
   const session = db.getSession(sessionId);
   if (!session) {
@@ -239,18 +171,6 @@ async function addPath(
   _sessionName: string,
   projectPath: string
 ): Promise<{ success: boolean; message?: string }> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    return client.addSessionPath({
-      session_id: sessionId,
-      session_name: _sessionName,
-      project_path: projectPath,
-    });
-  }
-
-  // Local mode
   const db = getDbManager();
   const success = db.addProjectPath(sessionId, projectPath);
   return {
@@ -264,18 +184,6 @@ async function removePath(
   _sessionName: string,
   projectPath: string
 ): Promise<{ success: boolean; message?: string }> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    return client.removeSessionPath({
-      session_id: sessionId,
-      session_name: _sessionName,
-      project_path: projectPath,
-    });
-  }
-
-  // Local mode
   const db = getDbManager();
   try {
     const success = db.removeProjectPath(sessionId, projectPath);

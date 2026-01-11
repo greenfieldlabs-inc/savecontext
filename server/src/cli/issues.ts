@@ -1,10 +1,7 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * SaveContext Issues CLI
  * Issue management: list, ready, show, stats
- *
- * Supports both local (SQLite) and cloud modes.
- * Default: local mode. Cloud mode when API key is present.
  */
 
 import { createInterface } from 'node:readline';
@@ -15,9 +12,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import boxen from 'boxen';
-import { CloudClient } from '../cloud-client.js';
 import { DatabaseManager } from '../database/index.js';
-import { loadCredentials, getCloudApiUrl } from '../utils/config.js';
 import type {
   Issue,
   IssueStatus,
@@ -33,25 +28,8 @@ const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-
 
 const program = new Command();
 
-// Mode detection
-type Mode = 'local' | 'cloud';
-
-function getMode(): Mode {
-  const apiKey = process.env.SAVECONTEXT_API_KEY || loadCredentials()?.apiKey;
-  return apiKey ? 'cloud' : 'local';
-}
-
-// Singleton instances
-let cloudClient: CloudClient | null = null;
+// Singleton database manager
 let dbManager: DatabaseManager | null = null;
-
-function getCloudClient(): CloudClient | null {
-  if (cloudClient) return cloudClient;
-  const apiKey = process.env.SAVECONTEXT_API_KEY || loadCredentials()?.apiKey;
-  if (!apiKey) return null;
-  cloudClient = new CloudClient(apiKey, getCloudApiUrl());
-  return cloudClient;
-}
 
 function getDbManager(): DatabaseManager {
   if (!dbManager) {
@@ -65,7 +43,9 @@ const PRIORITY_LABELS = ['lowest', 'low', 'medium', 'high', 'critical'] as const
 const PRIORITY_COLORS = [chalk.dim, chalk.blue, chalk.white, chalk.yellow, chalk.red] as const;
 
 // Status display config
+// Note: "duplicate" is not a status - it's a relation type (duplicate-of dependency)
 const STATUS_DISPLAY: Record<IssueStatus, { icon: string; color: typeof chalk }> = {
+  backlog: { icon: '◌', color: chalk.dim },
   open: { icon: '○', color: chalk.white },
   in_progress: { icon: '●', color: chalk.cyan },
   blocked: { icon: '○', color: chalk.red },
@@ -83,7 +63,7 @@ const TYPE_DISPLAY: Record<IssueType, { label: string; color: typeof chalk }> = 
 };
 
 // ==================
-// Helper functions for both modes
+// Helper functions
 // ==================
 
 /**
@@ -101,18 +81,6 @@ function normalizeIssue(issue: Issue): Issue {
 }
 
 async function fetchIssues(args: ListIssuesArgs & { project_path: string }): Promise<ListIssuesResult> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    const response = await client.listIssues(args);
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to list issues');
-    }
-    return response.data as ListIssuesResult;
-  }
-
-  // Local mode
   const db = getDbManager();
   const result = db.listIssues(args.project_path, {
     status: args.status,
@@ -138,19 +106,7 @@ async function fetchIssues(args: ListIssuesArgs & { project_path: string }): Pro
 }
 
 async function fetchReadyIssues(args: { limit?: number; sortBy?: 'priority' | 'createdAt' }): Promise<GetReadyIssuesResult> {
-  const mode = getMode();
   const projectPath = process.cwd();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    const response = await client.getReadyIssues(args);
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to get ready issues');
-    }
-    return response.data as GetReadyIssuesResult;
-  }
-
-  // Local mode
   const db = getDbManager();
   const issues = db.getReadyIssues(projectPath, args.limit);
 
@@ -276,7 +232,6 @@ program
   .option('--long', 'Show detailed output')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
-    const mode = getMode();
     const spinner = options.json ? null : ora(`Fetching issues...`).start();
 
     try {
@@ -352,7 +307,6 @@ program
   .option('--sort <field>', 'Sort by: priority, createdAt (default: priority)')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
-    const mode = getMode();
     const spinner = options.json ? null : ora(`Fetching ready issues...`).start();
 
     try {
@@ -400,7 +354,6 @@ program
   .description('Show detailed issue information')
   .option('--json', 'Output as JSON')
   .action(async (issueId: string | undefined, options) => {
-    const mode = getMode();
     let targetId = issueId;
 
     if (!targetId) {
@@ -548,7 +501,6 @@ program
   .option('--by-label', 'Group by label')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
-    const mode = getMode();
     const spinner = options.json ? null : ora(`Fetching issue statistics...`).start();
 
     try {

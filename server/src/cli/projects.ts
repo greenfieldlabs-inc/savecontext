@@ -1,13 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 /**
  * SaveContext Projects CLI
  * User-focused project management: list, rename, delete, merge
  *
  * This CLI is for USER operations (organizing projects).
  * These operations are NOT available as MCP tools.
- *
- * Supports both local (SQLite) and cloud modes.
- * Default: local mode. Cloud mode when API key is present.
  */
 
 import { createInterface } from 'node:readline';
@@ -18,13 +15,8 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import boxen from 'boxen';
-import { CloudClient } from '../cloud-client.js';
 import { DatabaseManager } from '../database/index.js';
 import { Project } from '../types/index.js';
-import {
-  loadCredentials,
-  getCloudApiUrl,
-} from '../utils/config.js';
 
 // Read version from package.json
 const __filename = fileURLToPath(import.meta.url);
@@ -33,25 +25,8 @@ const pkg = JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-
 
 const program = new Command();
 
-// Mode detection
-type Mode = 'local' | 'cloud';
-
-function getMode(): Mode {
-  const apiKey = process.env.SAVECONTEXT_API_KEY || loadCredentials()?.apiKey;
-  return apiKey ? 'cloud' : 'local';
-}
-
-// Singleton instances
-let cloudClient: CloudClient | null = null;
+// Singleton instance
 let dbManager: DatabaseManager | null = null;
-
-function getCloudClient(): CloudClient | null {
-  if (cloudClient) return cloudClient;
-  const apiKey = process.env.SAVECONTEXT_API_KEY || loadCredentials()?.apiKey;
-  if (!apiKey) return null;
-  cloudClient = new CloudClient(apiKey, getCloudApiUrl());
-  return cloudClient;
-}
 
 function getDbManager(): DatabaseManager {
   if (!dbManager) {
@@ -60,7 +35,7 @@ function getDbManager(): DatabaseManager {
   return dbManager;
 }
 
-// Project list item type (unified for both modes)
+// Project list item type
 interface ProjectListItem {
   id: string;
   name: string;
@@ -89,26 +64,10 @@ function projectToListItem(project: Project & { session_count?: number }): Proje
 }
 
 // ==================
-// Helper functions for both modes
+// Helper functions
 // ==================
 
 async function fetchProjects(options: { limit?: number; includeSessionCount?: boolean }): Promise<{ projects: ProjectListItem[]; count: number }> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    const response = await client.listProjects({
-      limit: options.limit,
-      include_session_count: options.includeSessionCount,
-    });
-    if (!response.success) {
-      throw new Error(response.message || 'Failed to list projects');
-    }
-    const data = response.data as { projects: ProjectListItem[]; count?: number };
-    return { projects: data.projects || [], count: data.count || data.projects?.length || 0 };
-  }
-
-  // Local mode
   const db = getDbManager();
   const result = db.listProjects({
     limit: options.limit,
@@ -120,41 +79,13 @@ async function fetchProjects(options: { limit?: number; includeSessionCount?: bo
   };
 }
 
-async function renameProjectOp(projectId: string, currentName: string, newName: string, description?: string): Promise<{ success: boolean; message?: string }> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    const response = await client.renameProject({
-      project_id: projectId,
-      current_name: currentName,
-      new_name: newName,
-      description,
-    });
-    return { success: response.success, message: response.message };
-  }
-
-  // Local mode
+async function renameProjectOp(projectId: string, _currentName: string, newName: string, description?: string): Promise<{ success: boolean; message?: string }> {
   const db = getDbManager();
   const success = db.renameProject(projectId, newName, description);
   return { success, message: success ? undefined : 'Project not found' };
 }
 
-async function deleteProjectOp(projectId: string, projectName: string, force?: boolean): Promise<{ success: boolean; sessionsUnlinked?: number; message?: string }> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    const response = await client.deleteProject({
-      project_id: projectId,
-      project_name: projectName,
-      force,
-    });
-    const data = response.data as { sessions_unlinked?: number } | undefined;
-    return { success: response.success, sessionsUnlinked: data?.sessions_unlinked, message: response.message };
-  }
-
-  // Local mode
+async function deleteProjectOp(projectId: string, _projectName: string, force?: boolean): Promise<{ success: boolean; sessionsUnlinked?: number; message?: string }> {
   const db = getDbManager();
   const result = db.deleteProject(projectId, force);
   return { success: result.success, sessionsUnlinked: result.sessionsUnlinked, message: result.success ? undefined : 'Project has sessions (use --force)' };
@@ -162,28 +93,11 @@ async function deleteProjectOp(projectId: string, projectName: string, force?: b
 
 async function mergeProjectsOp(
   sourceId: string,
-  sourceName: string,
+  _sourceName: string,
   targetId: string,
-  targetName: string,
+  _targetName: string,
   deleteSource?: boolean
 ): Promise<{ success: boolean; sessionsMoved?: number; sourceDeleted?: boolean; message?: string }> {
-  const mode = getMode();
-
-  if (mode === 'cloud') {
-    const client = getCloudClient()!;
-    const response = await client.mergeProjects({
-      source_project_id: sourceId,
-      source_project_name: sourceName,
-      target_project_id: targetId,
-      target_project_name: targetName,
-      delete_source: deleteSource,
-      confirm: true,
-    });
-    const data = response.data as { sessions_moved?: number; source_deleted?: boolean } | undefined;
-    return { success: response.success, sessionsMoved: data?.sessions_moved, sourceDeleted: data?.source_deleted, message: response.message };
-  }
-
-  // Local mode
   const db = getDbManager();
   const result = db.mergeProjects(sourceId, targetId, deleteSource);
   return { success: result.success, sessionsMoved: result.sessionsMoved, sourceDeleted: result.sourceDeleted };
@@ -296,7 +210,6 @@ program
   .option('-c, --counts', 'Include session counts (slower)')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
-    const mode = getMode();
     const spinner = ora(`Loading projects...`).start();
 
     try {
@@ -358,7 +271,6 @@ program
   .command('rename')
   .description('Rename a project (interactive picker)')
   .action(async () => {
-    const mode = getMode();
     const spinner = ora(`Loading projects...`).start();
 
     try {
@@ -405,14 +317,6 @@ program
   .option('-d, --description <desc>', 'Set project description')
   .option('--cascade', 'Update existing issue IDs when changing prefix')
   .action(async (options) => {
-    const mode = getMode();
-
-    if (mode === 'cloud') {
-      console.log(chalk.yellow('\nProject prefix update not yet supported in cloud mode.\n'));
-      console.log(chalk.dim('Use the dashboard or contact support.\n'));
-      process.exit(1);
-    }
-
     const spinner = ora(`Loading projects...`).start();
 
     try {
@@ -443,7 +347,7 @@ program
         const issueCount = db.getDatabase().prepare(`
           SELECT COUNT(*) as count FROM issues
           WHERE project_path = ? AND short_id LIKE ?
-        `).get(selected.source_path, `${oldPrefix}-%`) as { count: number };
+        `).get(selected.source_path ?? null, `${oldPrefix}-%`) as { count: number };
 
         console.log(boxen(
           chalk.bold('Prefix Update Preview') + '\n\n' +
@@ -538,7 +442,6 @@ program
   .description('Delete a project (interactive picker)')
   .option('-f, --force', 'Force delete even if project has sessions (unlinks sessions, does not delete them)')
   .action(async (options) => {
-    const mode = getMode();
     const spinner = ora(`Loading projects...`).start();
 
     try {
@@ -605,7 +508,6 @@ program
   .description('Merge one project into another (moves all sessions)')
   .option('--keep-source', 'Keep the source project after merge (default: delete it)')
   .action(async (options) => {
-    const mode = getMode();
     const spinner = ora(`Loading projects...`).start();
 
     try {
