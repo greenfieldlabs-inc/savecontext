@@ -1,8 +1,10 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 /**
  * SaveContext MCP Server
  * Local context management with SQLite
+ *
+ * Requires Bun runtime (bun:sqlite). Install: https://bun.sh
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -42,19 +44,23 @@ program
   .name('savecontext')
   .version(VERSION)
   .description('SaveContext MCP Server - Local SQLite mode')
-  .option('--setup-statusline', 'Configure Claude Code status line (run this first)')
+  .option('--setup-statusline', 'Configure status line for AI coding tools')
+  .option('--uninstall-statusline', 'Remove status line configuration')
   .option('--setup-skill', 'Install SaveContext skill for AI coding tools')
-  .option('--tool <name>', 'Target tool for skill install (claude, codex, gemini, etc.)')
+  .option('--tool <name>', 'Target tool (claude-code)')
   .option('--path <path>', 'Custom path for skill install')
   .option('--sync', 'Sync skill to all previously configured tools')
   .parse(process.argv);
 
 const options = program.opts();
 
-// Handle --setup-statusline before anything else
-if (options.setupStatusline) {
+// Handle --setup-statusline or --uninstall-statusline before anything else
+if (options.setupStatusline || options.uninstallStatusline) {
   const { setupStatusLine } = await import('./cli/setup.js');
-  await setupStatusLine();
+  await setupStatusLine({
+    tool: options.tool as 'claude-code' | undefined,
+    uninstall: options.uninstallStatusline,
+  });
   process.exit(0);
 }
 
@@ -116,6 +122,7 @@ import {
   ListIssuesArgs,
   AddDependencyArgs,
   RemoveDependencyArgs,
+  MarkDuplicateArgs,
   AddLabelsArgs,
   RemoveLabelsArgs,
   ClaimIssuesArgs,
@@ -126,6 +133,7 @@ import {
 } from './types/index.js';
 import { loadConfig, getEmbeddingSettings } from './utils/config.js';
 import { updateStatusLine, refreshStatusCache } from './utils/status-cache.js';
+import { relativeToAbsoluteTime } from './utils/time.js';
 import { createEmbeddingProvider, getProviderInfo } from './lib/embeddings/factory.js';
 import { chunkText } from './lib/embeddings/chunker.js';
 import type { EmbeddingProvider } from './lib/embeddings/index.js';
@@ -406,12 +414,26 @@ async function updateAgentActivity() {
 
 /**
  * Ensure we have an active session
+ * Checks in-memory session first, then falls back to agent-associated session in database
  */
-function ensureSession(): string {
-  if (!currentSessionId) {
-    throw new SessionError('No active session. Use context_session_start first.');
+async function ensureSession(): Promise<string> {
+  if (currentSessionId) {
+    return currentSessionId;
   }
-  return currentSessionId;
+
+  // Check for agent-associated session in database
+  const branch = await getCurrentBranch();
+  const projectPath = normalizeProjectPath(getCurrentProjectPath());
+  const provider = getCurrentProvider();
+  const agentId = getAgentId(projectPath, branch || 'main', provider);
+  const agentSession = getDb().getCurrentSessionForAgent(agentId);
+
+  if (agentSession && agentSession.status === 'active') {
+    currentSessionId = agentSession.id;
+    return currentSessionId;
+  }
+
+  throw new SessionError('No active session. Use context_session_start first.');
 }
 
 /**
@@ -584,7 +606,7 @@ async function handleSessionStart(args: any) {
  */
 async function handleSaveContext(args: any) {
   try {
-    const sessionId = ensureSession();
+    const sessionId = await ensureSession();
     const validated = validateSaveContext(args);
 
     // Get session to use its default channel if not specified
@@ -681,7 +703,7 @@ async function handleGetContext(args: any) {
     // For semantic search across all sessions with a query, session is optional
     // For all other operations, session is required
     const needsSession = !searchAllSessions || !args?.query || validated.key;
-    const sessionId = needsSession ? ensureSession() : currentSessionId;
+    const sessionId = needsSession ? await ensureSession() : currentSessionId;
 
     // If key is provided, get single item (requires session)
     if (validated.key) {
@@ -821,7 +843,7 @@ async function handleGetContext(args: any) {
  */
 async function handleDeleteContext(args: any) {
   try {
-    const sessionId = ensureSession();
+    const sessionId = await ensureSession();
 
     if (!args?.key) {
       throw new ValidationError('key is required');
@@ -853,7 +875,7 @@ async function handleDeleteContext(args: any) {
  */
 async function handleUpdateContext(args: any) {
   try {
-    const sessionId = ensureSession();
+    const sessionId = await ensureSession();
 
     if (!args?.key) {
       throw new ValidationError('key is required');
@@ -1192,8 +1214,8 @@ async function handleTaskCreate(args: any) {
     if (args.issueType && !['task', 'bug', 'feature', 'epic', 'chore'].includes(args.issueType)) {
       throw new ValidationError('issueType must be one of: task, bug, feature, epic, chore');
     }
-    if (args.status && !['open', 'in_progress', 'blocked', 'closed', 'deferred'].includes(args.status)) {
-      throw new ValidationError('status must be one of: open, in_progress, blocked, closed, deferred');
+    if (args.status && !['backlog', 'open', 'in_progress', 'blocked', 'closed', 'deferred'].includes(args.status)) {
+      throw new ValidationError('status must be one of: backlog, open, in_progress, blocked, closed, deferred');
     }
 
     const issueArgs: CreateIssueArgs = {
@@ -1270,8 +1292,8 @@ async function handleTaskUpdate(args: any) {
     if (args.issueType && !['task', 'bug', 'feature', 'epic', 'chore'].includes(args.issueType)) {
       throw new ValidationError('issueType must be one of: task, bug, feature, epic, chore');
     }
-    if (args.status && !['open', 'in_progress', 'blocked', 'closed', 'deferred'].includes(args.status)) {
-      throw new ValidationError('status must be one of: open, in_progress, blocked, closed, deferred');
+    if (args.status && !['backlog', 'open', 'in_progress', 'blocked', 'closed', 'deferred'].includes(args.status)) {
+      throw new ValidationError('status must be one of: backlog, open, in_progress, blocked, closed, deferred');
     }
 
     const updates: UpdateIssueArgs = {
@@ -1360,8 +1382,8 @@ async function handleTaskList(args: any) {
     const projectPath = allProjects ? null : normalizeProjectPath(getCurrentProjectPath());
 
     // Validate optional fields
-    if (args?.status && !['open', 'in_progress', 'blocked', 'closed', 'deferred'].includes(args.status)) {
-      throw new ValidationError('status must be one of: open, in_progress, blocked, closed, deferred');
+    if (args?.status && !['backlog', 'open', 'in_progress', 'blocked', 'closed', 'deferred', 'all'].includes(args.status)) {
+      throw new ValidationError('status must be one of: backlog, open, in_progress, blocked, closed, deferred, all');
     }
     if (args?.issueType && !['task', 'bug', 'feature', 'epic', 'chore'].includes(args.issueType)) {
       throw new ValidationError('issueType must be one of: task, bug, feature, epic, chore');
@@ -1373,8 +1395,18 @@ async function handleTaskList(args: any) {
       throw new ValidationError('sortOrder must be one of: asc, desc');
     }
 
+    // Convert relative time filters to absolute timestamps
+    const timeFilter = relativeToAbsoluteTime({
+      createdInLastDays: args?.created_in_last_days,
+      createdInLastHours: args?.created_in_last_hours,
+      updatedInLastDays: args?.updated_in_last_days,
+      updatedInLastHours: args?.updated_in_last_hours,
+    });
+
     const listArgs: ListIssuesArgs = {
-      status: args?.status,
+      id: args?.id,
+      // status='all' means no status filter (return all statuses)
+      status: args?.status === 'all' ? undefined : args?.status,
       priority: args?.priority,
       priorityMin: args?.priority_min,
       priorityMax: args?.priority_max,
@@ -1388,6 +1420,10 @@ async function handleTaskList(args: any) {
       sortBy: args?.sortBy,
       sortOrder: args?.sortOrder,
       limit: args?.limit,
+      createdAfter: timeFilter.createdAfter,
+      updatedAfter: timeFilter.updatedAfter,
+      search: args?.search,
+      assignee: args?.assignee,
     };
 
     const result = getDb().listIssues(projectPath, listArgs);
@@ -1535,29 +1571,209 @@ async function handleTaskDelete(args: any) {
 }
 
 /**
+ * Mark an issue as a duplicate of another issue
+ */
+async function handleTaskMarkDuplicate(args: Record<string, unknown> = {}) {
+  try {
+    const id = args.id as string | undefined;
+    const issue_title = args.issue_title as string | undefined;
+    const duplicate_of_id = args.duplicate_of_id as string | undefined;
+
+    if (!id) {
+      throw new ValidationError('id is required');
+    }
+    if (!issue_title) {
+      throw new ValidationError('issue_title is required');
+    }
+    if (!duplicate_of_id) {
+      throw new ValidationError('duplicate_of_id is required');
+    }
+
+    // Fetch issue to verify it exists and validate title
+    const issue = getDb().getIssue(id);
+    if (!issue) {
+      return success(
+        { marked_duplicate: false, id },
+        `No issue found with id '${id}'`
+      );
+    }
+
+    // Validate title matches
+    if (issue.title !== issue_title) {
+      throw new ValidationError(`Issue title mismatch: expected '${issue.title}' but got '${issue_title}'`);
+    }
+
+    // Verify the canonical issue exists
+    const canonicalIssue = getDb().getIssue(duplicate_of_id);
+    if (!canonicalIssue) {
+      return success(
+        { marked_duplicate: false, id },
+        `Canonical issue not found with id '${duplicate_of_id}'`
+      );
+    }
+
+    const agentId = getCurrentProvider();
+    const result = getDb().markIssueAsDuplicate(id, duplicate_of_id, agentId, currentSessionId || undefined);
+
+    if (!result) {
+      return success(
+        { marked_duplicate: false, id },
+        `Failed to mark issue as duplicate`
+      );
+    }
+
+    await updateAgentActivity();
+
+    return success(
+      {
+        marked_duplicate: true,
+        id: result.issue.id,
+        shortId: result.issue.shortId,
+        title: result.issue.title,
+        status: result.issue.status,
+        duplicate_of_id: canonicalIssue.id,
+        duplicate_of_short_id: canonicalIssue.shortId,
+        duplicate_of_title: canonicalIssue.title,
+        closedAt: result.issue.closedAt,
+        closedByAgent: result.issue.closedByAgent,
+        dependency_created: result.dependencyCreated,
+      },
+      `Marked issue ${result.issue.shortId || result.issue.id} as duplicate of ${canonicalIssue.shortId || canonicalIssue.id}`
+    );
+  } catch (err) {
+    return error('Failed to mark issue as duplicate', err);
+  }
+}
+
+/**
+ * Clone an issue to create a copy with the same or overridden properties
+ */
+async function handleIssueClone(args: Record<string, unknown> = {}) {
+  try {
+    const id = args.id as string | undefined;
+    const issue_title = args.issue_title as string | undefined;
+
+    if (!id) {
+      throw new ValidationError('id is required');
+    }
+    if (!issue_title) {
+      throw new ValidationError('issue_title is required');
+    }
+
+    // Fetch issue to verify it exists and validate title
+    const original = getDb().getIssue(id);
+    if (!original) {
+      return success(
+        { cloned: false, original_id: id },
+        `No issue found with id '${id}'`
+      );
+    }
+
+    // Validate title matches
+    if (original.title !== issue_title) {
+      throw new ValidationError(`Issue title mismatch: expected '${original.title}' but got '${issue_title}'`);
+    }
+
+    // Validate status if provided
+    if (args.status && !['backlog', 'open', 'in_progress', 'blocked', 'closed', 'deferred'].includes(args.status as string)) {
+      throw new ValidationError('status must be one of: backlog, open, in_progress, blocked, closed, deferred');
+    }
+
+    // Validate issueType if provided
+    if (args.issueType && !['task', 'bug', 'feature', 'epic', 'chore'].includes(args.issueType as string)) {
+      throw new ValidationError('issueType must be one of: task, bug, feature, epic, chore');
+    }
+
+    // Validate priority if provided
+    if (args.priority !== undefined) {
+      const priority = args.priority as number;
+      if (typeof priority !== 'number' || priority < 0 || priority > 4) {
+        throw new ValidationError('priority must be a number between 0 and 4');
+      }
+    }
+
+    const agentId = getCurrentProvider();
+    const clonedIssue = getDb().cloneIssue(
+      id,
+      {
+        title: args.title as string | undefined,
+        description: args.description as string | undefined,
+        details: args.details as string | undefined,
+        status: args.status as 'backlog' | 'open' | 'in_progress' | 'blocked' | 'closed' | 'deferred' | undefined,
+        priority: args.priority as number | undefined,
+        issueType: args.issueType as 'task' | 'bug' | 'feature' | 'epic' | 'chore' | undefined,
+        parentId: args.parentId as string | undefined,
+        planId: args.planId as string | undefined,
+        labels: args.labels as string[] | undefined,
+        include_labels: args.include_labels as boolean | undefined,
+      },
+      agentId,
+      currentSessionId || undefined
+    );
+
+    if (!clonedIssue) {
+      return success(
+        { cloned: false, original_id: id },
+        `Failed to clone issue`
+      );
+    }
+
+    await updateAgentActivity();
+
+    return success(
+      {
+        cloned: true,
+        original_id: original.id,
+        original_short_id: original.shortId,
+        original_title: original.title,
+        new_issue: {
+          id: clonedIssue.id,
+          short_id: clonedIssue.shortId,
+          title: clonedIssue.title,
+          status: clonedIssue.status,
+          priority: clonedIssue.priority,
+          issue_type: clonedIssue.issueType,
+          labels: clonedIssue.labels,
+          parent_id: clonedIssue.parentId,
+          plan_id: clonedIssue.planId,
+        },
+      },
+      `Cloned issue ${original.shortId || original.id} as ${clonedIssue.shortId || clonedIssue.id}`
+    );
+  } catch (err) {
+    return error('Failed to clone issue', err);
+  }
+}
+
+/**
  * Add a dependency between issues
  */
-async function handleTaskAddDependency(args: any) {
+async function handleTaskAddDependency(args: Record<string, unknown> = {}) {
   try {
-    if (!args?.issueId) {
+    const issueId = args.issueId as string | undefined;
+    const dependsOnId = args.dependsOnId as string | undefined;
+    const dependencyType = args.dependencyType as string | undefined;
+
+    if (!issueId) {
       throw new ValidationError('issueId is required');
     }
-    if (!args?.dependsOnId) {
+    if (!dependsOnId) {
       throw new ValidationError('dependsOnId is required');
     }
-    if (args.dependencyType && !['blocks', 'related', 'parent-child', 'discovered-from'].includes(args.dependencyType)) {
-      throw new ValidationError('dependencyType must be one of: blocks, related, parent-child, discovered-from');
+    const validDependencyTypes = ['blocks', 'related', 'parent-child', 'discovered-from', 'duplicate-of'];
+    if (dependencyType && !validDependencyTypes.includes(dependencyType)) {
+      throw new ValidationError('dependencyType must be one of: blocks, related, parent-child, discovered-from, duplicate-of');
     }
 
     const result = getDb().addDependency(
-      args.issueId,
-      args.dependsOnId,
-      args.dependencyType || 'blocks'
+      issueId,
+      dependsOnId,
+      (dependencyType || 'blocks') as DependencyType
     );
 
     if (!result) {
       return success(
-        { created: false, issueId: args.issueId, dependsOnId: args.dependsOnId },
+        { created: false, issueId, dependsOnId },
         'Failed to add dependency - one or both issues not found'
       );
     }
@@ -1894,7 +2110,7 @@ async function handleTaskCreateBatch(args: any) {
  */
 async function handleCreateCheckpoint(args: any) {
   try {
-    const sessionId = ensureSession();
+    const sessionId = await ensureSession();
     const validated = validateCreateCheckpoint(args);
 
     let git_status: string | undefined;
@@ -1950,7 +2166,7 @@ async function handleCreateCheckpoint(args: any) {
  */
 async function handlePrepareCompaction() {
   try {
-    const sessionId = ensureSession();
+    const sessionId = await ensureSession();
 
     // Generate auto-checkpoint name
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
@@ -2095,7 +2311,7 @@ async function handlePrepareCompaction() {
  */
 async function handleRestoreCheckpoint(args: any) {
   try {
-    const sessionId = ensureSession();
+    const sessionId = await ensureSession();
     const validated = validateRestoreCheckpoint(args);
 
     // Verify checkpoint exists and name matches
@@ -2129,7 +2345,7 @@ async function handleRestoreCheckpoint(args: any) {
  */
 async function handleTagContextItems(args: any) {
   try {
-    const sessionId = ensureSession();
+    const sessionId = await ensureSession();
     const validated = validateTagContextItems(args);
 
     const updated = getDb().tagContextItems(sessionId, {
@@ -2161,7 +2377,7 @@ async function handleTagContextItems(args: any) {
  */
 async function handleAddItemsToCheckpoint(args: any) {
   try {
-    const sessionId = ensureSession();
+    const sessionId = await ensureSession();
     const validated = validateCheckpointItemManagement(args);
 
     // Verify checkpoint exists and name matches
@@ -2194,7 +2410,7 @@ async function handleAddItemsToCheckpoint(args: any) {
  */
 async function handleRemoveItemsFromCheckpoint(args: any) {
   try {
-    const sessionId = ensureSession();
+    const sessionId = await ensureSession();
     const validated = validateCheckpointItemManagement(args);
 
     // Verify checkpoint exists and name matches
@@ -2227,7 +2443,7 @@ async function handleRemoveItemsFromCheckpoint(args: any) {
  */
 async function handleSplitCheckpoint(args: any) {
   try {
-    ensureSession();
+    await ensureSession();
     const validated = validateCheckpointSplit(args);
 
     // Verify source checkpoint exists
@@ -2294,7 +2510,7 @@ async function handleSplitCheckpoint(args: any) {
 
 async function handleDeleteCheckpoint(args: any) {
   try {
-    ensureSession();
+    await ensureSession();
     const validated = validateDeleteCheckpoint(args);
 
     // Verify checkpoint exists and name matches
@@ -2522,7 +2738,7 @@ async function handleSessionStatus() {
  */
 async function handleSessionRename(args: any) {
   try {
-    const sessionId = ensureSession();
+    const sessionId = await ensureSession();
     const { current_name, new_name } = args;
 
     if (!current_name || typeof current_name !== 'string') {
@@ -2573,15 +2789,41 @@ async function handleSessionRename(args: any) {
 async function handleListSessions(args: any) {
   try {
     const limit = args?.limit || 10;
-    const projectPath = args?.project_path || getCurrentProjectPath();
+    const allProjects = args?.all_projects || false;
+    const explicitPath = args?.project_path;
+    const detectedPath = getCurrentProjectPath();
     const status = args?.status;
     const includeCompleted = args?.include_completed || false;
     const search = args?.search;
 
+    // Determine project path filtering strategy
+    let projectPath: string | null = null;
+    let usedFallback = false;
+
+    if (allProjects) {
+      // Explicit all_projects - show everything
+      projectPath = null;
+    } else if (explicitPath) {
+      // User provided explicit path - use it
+      projectPath = normalizeProjectPath(explicitPath);
+    } else {
+      // Auto-detect: check if cwd matches a known project
+      const normalizedCwd = normalizeProjectPath(detectedPath);
+      const cwdProject = db!.getProject(normalizedCwd);
+
+      if (cwdProject) {
+        // cwd is a known project - filter by it
+        projectPath = normalizedCwd;
+      } else {
+        // cwd is NOT a known project - show all sessions as fallback
+        projectPath = null;
+        usedFallback = true;
+      }
+    }
+
     // Use listSessionsByPaths to properly check session_projects junction table
-    // This ensures multi-path sessions appear in all their associated projects
     const sessions = db!.listSessionsByPaths(
-      projectPath ? [normalizeProjectPath(projectPath)] : [],
+      projectPath ? [projectPath] : [],
       limit,
       {
         status,
@@ -2590,9 +2832,24 @@ async function handleListSessions(args: any) {
       }
     );
 
+    const projectNote = allProjects
+      ? ' (all projects)'
+      : usedFallback
+        ? ` (all projects - cwd '${detectedPath}' not a known project)`
+        : projectPath
+          ? ` for ${projectPath}`
+          : '';
+
     return success(
-      { sessions, count: sessions.length },
-      `Found ${sessions.length} sessions`
+      {
+        sessions,
+        count: sessions.length,
+        project_path: projectPath,
+        all_projects: allProjects || usedFallback,
+        detected_cwd: detectedPath,
+        used_fallback: usedFallback,
+      },
+      `Found ${sessions.length} sessions${projectNote}`
     );
   } catch (err) {
     return error('Failed to list sessions', err);
@@ -2604,7 +2861,7 @@ async function handleListSessions(args: any) {
  */
 async function handleSessionEnd() {
   try {
-    const sessionId = ensureSession();
+    const sessionId = await ensureSession();
     const session = db!.getSession(sessionId);
 
     if (!session) {
@@ -2656,7 +2913,7 @@ async function handleSessionEnd() {
  */
 async function handleSessionPause() {
   try {
-    const sessionId = ensureSession();
+    const sessionId = await ensureSession();
     const session = db!.getSession(sessionId);
 
     if (!session) {
@@ -3255,6 +3512,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: JSON.stringify(await handleTaskComplete(args), null, 2) }] };
       case 'context_issue_delete':
         return { content: [{ type: 'text', text: JSON.stringify(await handleTaskDelete(args), null, 2) }] };
+      case 'context_issue_mark_duplicate':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleTaskMarkDuplicate(args), null, 2) }] };
+      case 'context_issue_clone':
+        return { content: [{ type: 'text', text: JSON.stringify(await handleIssueClone(args), null, 2) }] };
       case 'context_issue_add_dependency':
         return { content: [{ type: 'text', text: JSON.stringify(await handleTaskAddDependency(args), null, 2) }] };
       case 'context_issue_remove_dependency':

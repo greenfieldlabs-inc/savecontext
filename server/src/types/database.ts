@@ -5,6 +5,8 @@
 export interface DatabaseConfig {
   filename?: string;
   dataDir?: string;
+  /** Full path to database file. If set, overrides dataDir/filename. Used for testing. */
+  dbPath?: string;
 }
 
 // ====================

@@ -78,7 +78,7 @@ export const tools = [
           properties: {
             query: {
               type: 'string',
-              description: 'RECOMMENDED: Semantic search query to find items by meaning (e.g., "how did we handle authentication"). Cloud mode uses AI-powered search; local mode uses keyword fallback.',
+              description: 'RECOMMENDED: Semantic search query to find items by meaning (e.g., "how did we handle authentication"). Uses embeddings for semantic search when configured, falls back to keyword search.',
             },
             search_all_sessions: {
               type: 'boolean',
@@ -88,7 +88,7 @@ export const tools = [
               type: 'number',
               minimum: 0,
               maximum: 1,
-              description: 'Semantic search threshold (0-1). Lower = more results. Default: 0.5. Only applies to cloud mode.',
+              description: 'Semantic search threshold (0-1). Lower = more results. Default: 0.5. Only applies when embeddings are configured.',
             },
             key: {
               type: 'string',
@@ -365,7 +365,7 @@ export const tools = [
             },
             parentId: {
               type: 'string',
-              description: 'Parent issue ID for subtasks',
+              description: 'Parent issue ID for subtasks (accepts short_id like "SC-a1b2" or full UUID)',
             },
             planId: {
               type: 'string',
@@ -378,7 +378,7 @@ export const tools = [
             },
             status: {
               type: 'string',
-              enum: ['open', 'in_progress', 'blocked', 'closed', 'deferred'],
+              enum: ['backlog', 'open', 'in_progress', 'blocked', 'closed', 'deferred'],
               description: 'Initial status (default: open)',
             },
           },
@@ -393,7 +393,7 @@ export const tools = [
           properties: {
             id: {
               type: 'string',
-              description: 'Issue ID to update',
+              description: 'Issue ID to update (accepts short_id like "SC-a1b2" or full UUID)',
             },
             issue_title: {
               type: 'string',
@@ -413,7 +413,7 @@ export const tools = [
             },
             status: {
               type: 'string',
-              enum: ['open', 'in_progress', 'blocked', 'closed', 'deferred'],
+              enum: ['backlog', 'open', 'in_progress', 'blocked', 'closed', 'deferred'],
               description: 'New issue status',
             },
             priority: {
@@ -429,7 +429,7 @@ export const tools = [
             },
             parentId: {
               type: 'string',
-              description: 'New parent issue ID (or null to remove)',
+              description: 'New parent issue ID or null to remove (accepts short_id like "SC-a1b2" or full UUID)',
             },
             planId: {
               type: 'string',
@@ -453,10 +453,14 @@ export const tools = [
         inputSchema: {
           type: 'object',
           properties: {
+            id: {
+              type: 'string',
+              description: 'Filter by specific issue ID (accepts short_id like "SC-a1b2" or full UUID). Returns single issue.',
+            },
             status: {
               type: 'string',
-              enum: ['open', 'in_progress', 'blocked', 'closed', 'deferred'],
-              description: 'Filter by status',
+              enum: ['backlog', 'open', 'in_progress', 'blocked', 'closed', 'deferred', 'all'],
+              description: 'Filter by status (use "all" to include all statuses including closed)',
             },
             priority: {
               type: 'number',
@@ -487,7 +491,7 @@ export const tools = [
             },
             parentId: {
               type: 'string',
-              description: 'Filter by parent issue ID',
+              description: 'Filter by parent issue ID (accepts short_id like "SC-a1b2" or full UUID)',
             },
             planId: {
               type: 'string',
@@ -519,6 +523,30 @@ export const tools = [
               type: 'boolean',
               description: 'Search across all projects instead of just current project (default: false)',
             },
+            created_in_last_days: {
+              type: 'number',
+              description: 'Filter issues created in the last N days (e.g., 7 for last week)',
+            },
+            created_in_last_hours: {
+              type: 'number',
+              description: 'Filter issues created in the last N hours (e.g., 24 for last day)',
+            },
+            updated_in_last_days: {
+              type: 'number',
+              description: 'Filter issues updated in the last N days',
+            },
+            updated_in_last_hours: {
+              type: 'number',
+              description: 'Filter issues updated in the last N hours',
+            },
+            search: {
+              type: 'string',
+              description: 'Search issues by title or description text (case-insensitive)',
+            },
+            assignee: {
+              type: 'string',
+              description: 'Filter by assigned agent (e.g., "claude-code")',
+            },
           },
         },
       },
@@ -530,7 +558,7 @@ export const tools = [
           properties: {
             id: {
               type: 'string',
-              description: 'Issue ID to mark as closed',
+              description: 'Issue ID to mark as closed (accepts short_id like "SC-a1b2" or full UUID)',
             },
             issue_title: {
               type: 'string',
@@ -548,11 +576,94 @@ export const tools = [
           properties: {
             id: {
               type: 'string',
-              description: 'Issue ID to delete',
+              description: 'Issue ID to delete (accepts short_id like "SC-a1b2" or full UUID)',
             },
             issue_title: {
               type: 'string',
               description: 'Issue title (for verification and display)',
+            },
+          },
+          required: ['id', 'issue_title'],
+        },
+      },
+      {
+        name: 'context_issue_mark_duplicate',
+        description: 'Mark an issue as a duplicate of another issue. Sets status to closed, creates duplicate-of dependency, and sets closed_at. The duplicate relationship is tracked via the dependency, not the status.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              description: 'Issue ID to mark as duplicate (accepts short_id like "SC-a1b2" or full UUID)',
+            },
+            issue_title: {
+              type: 'string',
+              description: 'Issue title (for verification and display)',
+            },
+            duplicate_of_id: {
+              type: 'string',
+              description: 'ID of the canonical issue this duplicates (accepts short_id like "SC-a1b2" or full UUID)',
+            },
+          },
+          required: ['id', 'issue_title', 'duplicate_of_id'],
+        },
+      },
+      {
+        name: 'context_issue_clone',
+        description: 'Clone an issue to create a copy with the same or overridden properties. Copies title (with "Copy of" prefix by default), description, details, priority, type, parent, plan, and labels.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              description: 'Issue ID to clone (accepts short_id like "SC-a1b2" or full UUID)',
+            },
+            issue_title: {
+              type: 'string',
+              description: 'Issue title (for verification and display)',
+            },
+            title: {
+              type: 'string',
+              description: 'New title for the clone (defaults to "Copy of {original title}")',
+            },
+            description: {
+              type: 'string',
+              description: 'Override description (defaults to original)',
+            },
+            details: {
+              type: 'string',
+              description: 'Override details (defaults to original)',
+            },
+            status: {
+              type: 'string',
+              enum: ['backlog', 'open', 'in_progress', 'blocked', 'closed', 'deferred'],
+              description: 'Override status (defaults to "open")',
+            },
+            priority: {
+              type: 'number',
+              description: 'Override priority 0-4 (defaults to original)',
+            },
+            issueType: {
+              type: 'string',
+              enum: ['task', 'bug', 'feature', 'epic', 'chore'],
+              description: 'Override issue type (defaults to original)',
+            },
+            parentId: {
+              type: 'string',
+              description: 'Override parent issue ID (accepts short_id like "SC-a1b2" or full UUID, defaults to original)',
+            },
+            planId: {
+              type: 'string',
+              description: 'Override plan ID (defaults to original plan)',
+            },
+            labels: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Override labels (defaults to original labels)',
+            },
+            include_labels: {
+              type: 'boolean',
+              description: 'Whether to copy labels from original (default: true)',
             },
           },
           required: ['id', 'issue_title'],
@@ -566,15 +677,15 @@ export const tools = [
           properties: {
             issueId: {
               type: 'string',
-              description: 'ID of the issue that will have the dependency',
+              description: 'Issue ID that will have the dependency (accepts short_id like "SC-a1b2" or full UUID)',
             },
             dependsOnId: {
               type: 'string',
-              description: 'ID of the issue it depends on',
+              description: 'Issue ID it depends on (accepts short_id like "SC-a1b2" or full UUID)',
             },
             dependencyType: {
               type: 'string',
-              enum: ['blocks', 'related', 'parent-child', 'discovered-from'],
+              enum: ['blocks', 'related', 'parent-child', 'discovered-from', 'duplicate-of'],
               description: 'Type of dependency (default: blocks)',
             },
           },
@@ -589,11 +700,11 @@ export const tools = [
           properties: {
             issueId: {
               type: 'string',
-              description: 'ID of the issue with the dependency',
+              description: 'Issue ID with the dependency (accepts short_id like "SC-a1b2" or full UUID)',
             },
             dependsOnId: {
               type: 'string',
-              description: 'ID of the issue it depends on',
+              description: 'Issue ID it depends on (accepts short_id like "SC-a1b2" or full UUID)',
             },
           },
           required: ['issueId', 'dependsOnId'],
@@ -607,7 +718,7 @@ export const tools = [
           properties: {
             id: {
               type: 'string',
-              description: 'Issue ID',
+              description: 'Issue ID (accepts short_id like "SC-a1b2" or full UUID)',
             },
             labels: {
               type: 'array',
@@ -626,7 +737,7 @@ export const tools = [
           properties: {
             id: {
               type: 'string',
-              description: 'Issue ID',
+              description: 'Issue ID (accepts short_id like "SC-a1b2" or full UUID)',
             },
             labels: {
               type: 'array',
@@ -646,7 +757,7 @@ export const tools = [
             issue_ids: {
               type: 'array',
               items: { type: 'string' },
-              description: 'Issue IDs to claim',
+              description: 'Issue IDs to claim (accepts short_id like "SC-a1b2" or full UUID)',
             },
           },
           required: ['issue_ids'],
@@ -661,7 +772,7 @@ export const tools = [
             issue_ids: {
               type: 'array',
               items: { type: 'string' },
-              description: 'Issue IDs to release',
+              description: 'Issue IDs to release (accepts short_id like "SC-a1b2" or full UUID)',
             },
           },
           required: ['issue_ids'],
@@ -727,7 +838,7 @@ export const tools = [
                   details: { type: 'string', description: 'Implementation details' },
                   priority: { type: 'number', description: 'Priority 0-4' },
                   issueType: { type: 'string', enum: ['task', 'bug', 'feature', 'epic', 'chore'] },
-                  parentId: { type: 'string', description: 'Parent ID or $N reference' },
+                  parentId: { type: 'string', description: 'Parent ID or $N reference (accepts short_id like "SC-a1b2" or full UUID)' },
                   planId: { type: 'string', description: 'Override batch-level planId for this issue' },
                   labels: { type: 'array', items: { type: 'string' } },
                 },
@@ -1077,6 +1188,10 @@ export const tools = [
             include_completed: {
               type: 'boolean',
               description: 'Include completed sessions (default: false)',
+            },
+            all_projects: {
+              type: 'boolean',
+              description: 'Show sessions from ALL projects instead of filtering by current working directory. Use this when project_path detection fails or to see all sessions.',
             },
           },
         },

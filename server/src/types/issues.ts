@@ -2,9 +2,10 @@
 // Issue Types
 // ====================
 
-export type IssueStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'deferred';
+// Note: "duplicate" is NOT a status - it's a relation type (duplicate-of dependency)
+export type IssueStatus = 'backlog' | 'open' | 'in_progress' | 'blocked' | 'closed' | 'deferred';
 export type IssueType = 'task' | 'bug' | 'feature' | 'epic' | 'chore';
-export type DependencyType = 'blocks' | 'related' | 'parent-child' | 'discovered-from';
+export type DependencyType = 'blocks' | 'related' | 'parent-child' | 'discovered-from' | 'duplicate-of';
 
 export interface Issue {
   id: string;
@@ -62,6 +63,7 @@ export interface UpdateIssueArgs {
 }
 
 export interface ListIssuesArgs {
+  id?: string;  // Filter by specific issue ID (accepts short_id)
   project_path?: string;
   status?: IssueStatus;
   priority?: number;
@@ -77,11 +79,45 @@ export interface ListIssuesArgs {
   sortBy?: 'priority' | 'createdAt' | 'updatedAt';
   sortOrder?: 'asc' | 'desc';
   limit?: number;
+  // Date filtering - relative (computed to timestamps at request time)
+  createdInLastDays?: number;
+  createdInLastHours?: number;
+  updatedInLastDays?: number;
+  updatedInLastHours?: number;
+  // Date filtering - absolute (timestamps in milliseconds, used internally)
+  createdAfter?: number;
+  createdBefore?: number;
+  updatedAfter?: number;
+  updatedBefore?: number;
+  // Text search and assignment
+  search?: string;  // Search title/description text
+  assignee?: string;  // Filter by assigned agent
 }
 
 export interface CompleteIssueArgs {
   id: string;
   issue_title: string;
+}
+
+export interface MarkDuplicateArgs {
+  id: string;
+  issue_title: string;
+  duplicate_of_id: string;
+}
+
+export interface CloneIssueArgs {
+  id: string;
+  issue_title: string;
+  title?: string;           // New title for the clone (defaults to "Copy of {original title}")
+  description?: string;     // Override description
+  details?: string;         // Override details
+  status?: IssueStatus;     // Override status (defaults to 'open')
+  priority?: number;        // Override priority
+  issueType?: IssueType;    // Override issue type
+  parentId?: string;        // Override parent (defaults to same parent)
+  planId?: string;          // Override plan (defaults to same plan)
+  labels?: string[];        // Override labels (defaults to same labels)
+  include_labels?: boolean; // Whether to copy labels (defaults to true)
 }
 
 // Dependency management
@@ -150,6 +186,38 @@ export interface CreateBatchArgs {
 // ====================
 // Issue Operation Results
 // ====================
+
+export interface MarkDuplicateResult {
+  marked_duplicate: boolean;
+  id: string;
+  shortId?: string;
+  title: string;
+  status: IssueStatus;
+  duplicate_of_id: string;
+  duplicate_of_short_id?: string;
+  duplicate_of_title: string;
+  closedAt: number;
+  closedByAgent?: string;
+  dependency_created: boolean;
+}
+
+export interface CloneIssueResult {
+  cloned: boolean;
+  original_id: string;
+  original_short_id?: string;
+  original_title: string;
+  new_issue: {
+    id: string;
+    short_id?: string;
+    title: string;
+    status: IssueStatus;
+    priority: number;
+    issue_type: IssueType;
+    labels?: string[];
+    parent_id?: string;
+    plan_id?: string;
+  };
+}
 
 export interface AddDependencyResult {
   created: boolean;
