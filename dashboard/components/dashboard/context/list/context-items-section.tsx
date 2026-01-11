@@ -3,9 +3,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { ContextItem } from '@/lib/types';
-import { ContextItemCard } from './context-item-card';
-import { DeleteContextDialog } from '../dialogs/delete-context-dialog';
-import { EditContextDialog } from '../dialogs/edit-context-dialog';
+import { ContextItemCard } from '../shared/context-item-card';
+import { DeleteContextDialog } from '@/components/dialogs/delete-context-dialog';
+import { EditContextDialog } from '@/components/dialogs/edit-context-dialog';
 import { AlertCircle } from 'lucide-react';
 
 interface ContextItemsSectionProps {

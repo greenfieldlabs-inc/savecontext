@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import type { Checkpoint } from '@/lib/types';
 import { Bookmark, X, Calendar, FileText } from 'lucide-react';
-import { CheckpointModal } from './checkpoint-modal';
+import { CheckpointModal } from '../dialogs/checkpoint-modal';
 
 interface CheckpointListProps {
   checkpoints: Checkpoint[];

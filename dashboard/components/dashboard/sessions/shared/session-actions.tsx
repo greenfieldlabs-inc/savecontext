@@ -10,8 +10,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { DeleteSessionDialog } from './delete-session-dialog';
-import { ManageProjectsDialog } from './manage-projects-dialog';
+import { DeleteSessionDialog } from '../dialogs/delete-session-dialog';
+import { ManageProjectsDialog } from '@/components/dashboard/dialogs/manage-projects-dialog';
 import type { SessionStatus } from '@/lib/types';
 
 interface SessionActionsProps {

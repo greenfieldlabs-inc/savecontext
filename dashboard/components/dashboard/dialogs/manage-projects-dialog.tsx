@@ -1,8 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, GitBranch, Plus, Star, Trash2, Loader2 } from 'lucide-react';
+import { GitBranch, Plus, Star, Trash2, Loader2 } from 'lucide-react';
 import type { SessionProjectInfo } from '@/lib/types';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface Project {
   id: string;
@@ -37,24 +45,6 @@ export function ManageProjectsDialog({
       loadData();
     }
   }, [open, sessionId]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onOpenChange(false);
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [open, onOpenChange]);
-
-  useEffect(() => {
-    if (open) {
-      document.body.style.overflow = 'hidden';
-      return () => {
-        document.body.style.overflow = 'unset';
-      };
-    }
-  }, [open]);
 
   const loadData = async () => {
     setLoading(true);
@@ -160,39 +150,26 @@ export function ManageProjectsDialog({
     }
   };
 
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div
-        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-        onClick={() => onOpenChange(false)}
-      />
-
-      <div className="relative z-10 mx-4 w-full max-w-lg max-h-[90vh] overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-800 dark:bg-zinc-900">
-        <div className="flex items-start justify-between border-b border-zinc-200 p-6 dark:border-zinc-800">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-hidden bg-white dark:bg-zinc-900">
+        <DialogHeader>
           <div className="flex gap-4">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
               <GitBranch className="h-5 w-5 text-zinc-600 dark:text-zinc-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+              <DialogTitle className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
                 Connections
-              </h2>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              </DialogTitle>
+              <DialogDescription className="text-sm text-zinc-500 dark:text-zinc-400">
                 {sessionName}
-              </p>
+              </DialogDescription>
             </div>
           </div>
-          <button
-            onClick={() => onOpenChange(false)}
-            className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
+        </DialogHeader>
 
-        <div className="max-h-[calc(90vh-10rem)] overflow-y-auto p-6">
+        <div className="max-h-[calc(90vh-14rem)] overflow-y-auto">
           {loading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-zinc-400" />
@@ -316,15 +293,15 @@ export function ManageProjectsDialog({
           )}
         </div>
 
-        <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
+        <DialogFooter>
           <button
             onClick={() => onOpenChange(false)}
             className="w-full rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
           >
             Done
           </button>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -1,8 +1,8 @@
 'use client';
 
-import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { ChevronDown, X, Search } from 'lucide-react';
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { useQueryFilters } from '@/lib/hooks/use-query-filters';
 import type { ProjectSummary } from '@/lib/types';
 
 interface SessionFiltersProps {
@@ -21,9 +21,7 @@ const statusOptions = [
 ];
 
 export function SessionFilters({ projects, currentProjectId, currentStatus, currentSearch, hideStatusFilter }: SessionFiltersProps) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
+  const { updateFilter, clearFilters } = useQueryFilters();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [searchValue, setSearchValue] = useState(currentSearch || '');
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -45,19 +43,6 @@ export function SessionFilters({ projects, currentProjectId, currentStatus, curr
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const updateFilters = useCallback((key: string, value: string | null) => {
-    const params = new URLSearchParams(searchParams.toString());
-
-    if (value === null || value === 'all' || value === '') {
-      params.delete(key);
-    } else {
-      params.set(key, value);
-    }
-
-    const queryString = params.toString();
-    router.push(`${pathname}${queryString ? `?${queryString}` : ''}`);
-  }, [router, pathname, searchParams]);
-
   // Debounced search
   const handleSearchChange = (value: string) => {
     setSearchValue(value);
@@ -67,7 +52,7 @@ export function SessionFilters({ projects, currentProjectId, currentStatus, curr
     }
 
     searchTimeoutRef.current = setTimeout(() => {
-      updateFilters('search', value || null);
+      updateFilter('search', value || null);
     }, 300);
   };
 
@@ -121,7 +106,7 @@ export function SessionFilters({ projects, currentProjectId, currentStatus, curr
             <div className="max-h-80 overflow-y-auto p-1">
               <button
                 onClick={() => {
-                  updateFilters('projectId', null);
+                  updateFilter('projectId', null);
                   setIsDropdownOpen(false);
                 }}
                 className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors ${
@@ -136,7 +121,7 @@ export function SessionFilters({ projects, currentProjectId, currentStatus, curr
                 <button
                   key={project.id}
                   onClick={() => {
-                    updateFilters('projectId', project.id);
+                    updateFilter('projectId', project.id);
                     setIsDropdownOpen(false);
                   }}
                   className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors ${
@@ -146,9 +131,9 @@ export function SessionFilters({ projects, currentProjectId, currentStatus, curr
                   }`}
                 >
                   <div className="truncate">{project.name}</div>
-                  {project.source_path && (
+                  {project.project_path && (
                     <div className="truncate text-xs text-zinc-500 dark:text-zinc-500">
-                      {project.source_path}
+                      {project.project_path}
                     </div>
                   )}
                 </button>
@@ -164,7 +149,7 @@ export function SessionFilters({ projects, currentProjectId, currentStatus, curr
           {statusOptions.map((option) => (
             <button
               key={option.value}
-              onClick={() => updateFilters('status', option.value)}
+              onClick={() => updateFilter('status', option.value)}
               className={`rounded-full px-2.5 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium transition-all ${
                 currentStatus === option.value
                   ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 shadow-sm'
@@ -182,9 +167,9 @@ export function SessionFilters({ projects, currentProjectId, currentStatus, curr
         <button
           onClick={() => {
             setSearchValue('');
-            updateFilters('search', null);
-            updateFilters('projectId', null);
-            updateFilters('status', 'all');
+            updateFilter('search', null);
+            updateFilter('projectId', null);
+            updateFilter('status', 'all');
           }}
           className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
         >

@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { StatusPill } from '@/components/ui/status-pill';
 import type { SessionStatus } from '@/lib/types';
+import { toast } from 'sonner';
 
 interface InlineStatusSelectProps {
   sessionId: string;
@@ -55,11 +56,13 @@ export function InlineStatusSelect({
       if (!res.ok) {
         const data = await res.json();
         console.error('Failed to change status:', data.error);
+        toast.error('Failed to change status');
       }
 
       router.refresh();
     } catch (err) {
       console.error('Failed to change status:', err);
+      toast.error('Failed to change status');
     } finally {
       setLoading(false);
     }

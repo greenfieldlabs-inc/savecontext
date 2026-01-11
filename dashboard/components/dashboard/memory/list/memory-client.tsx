@@ -1,25 +1,26 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { Brain, Plus, Search, Trash2, Edit, Terminal, Settings, FileText, ChevronDown, X, Info } from 'lucide-react';
-import type { ProjectSummary } from '@/lib/types';
-import { useRouter, useSearchParams, usePathname } from 'next/navigation';
+import { Brain, Plus, Search, Trash2, Edit, Terminal, Settings, FileText, ChevronDown, X } from 'lucide-react';
+import type { ProjectSummary, Memory, MemoryCategory } from '@/lib/types';
+import { useQueryFilters } from '@/lib/hooks/use-query-filters';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-
-interface Memory {
-  id: string;
-  project_path: string;
-  key: string;
-  value: string;
-  category: 'command' | 'config' | 'note';
-  created_at: number;
-  updated_at: number;
-}
+import { useMemoryEvents, useRefreshCounter } from '@/lib/hooks/use-issue-events';
+import { useClickOutside } from '@/lib/hooks/use-click-outside';
+import { useModal } from '@/lib/hooks/use-modal';
+import { ProjectDropdown } from '@/components/dashboard/shared/project-dropdown';
+import { MemoryCategoryDropdown } from '../shared/category-dropdown';
+import { toast } from 'sonner';
 
 interface MemoryClientProps {
   projects: ProjectSummary[];
   initialProjectFilter?: string;
   initialCategoryFilter: string;
+}
+
+interface DeleteMemoryData {
+  key: string;
+  projectPath: string;
 }
 
 const categoryOptions = [
@@ -30,54 +31,37 @@ const categoryOptions = [
 ];
 
 export function MemoryClient({ projects, initialProjectFilter, initialCategoryFilter }: MemoryClientProps) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
+  const { updateFilter, clearFilters } = useQueryFilters();
   const [memories, setMemories] = useState<Memory[]>([]);
+
+  // Subscribe to SSE for real-time updates
+  useMemoryEvents();
+  const refreshCounter = useRefreshCounter();
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
-  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
-  const [memoryToDelete, setMemoryToDelete] = useState<{ key: string; projectPath: string } | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Modal state
+  const addModal = useModal<string | null>(); // data = editingId
+  const deleteModal = useModal<DeleteMemoryData>();
 
   const [formData, setFormData] = useState({
     key: '',
     value: '',
-    category: 'note' as 'command' | 'config' | 'note'
+    category: 'note' as MemoryCategory,
+    projectPath: ''
   });
-  const [editingId, setEditingId] = useState<string | null>(null);
 
   const currentProject = initialProjectFilter || null;
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsProjectDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  // Close dropdowns when clicking outside
+  useClickOutside(dropdownRef, () => setIsProjectDropdownOpen(false));
 
-  const updateFilters = (key: string, value: string | null) => {
-    const params = new URLSearchParams(searchParams.toString());
-
-    if (value === null || value === 'all') {
-      params.delete(key);
-    } else {
-      params.set(key, value);
-    }
-
-    const queryString = params.toString();
-    router.push(`${pathname}${queryString ? `?${queryString}` : ''}`);
-  };
 
   useEffect(() => {
     loadMemories();
-  }, [currentProject, initialCategoryFilter]);
+  }, [currentProject, initialCategoryFilter, refreshCounter]);
 
   const loadMemories = async () => {
     try {
@@ -95,51 +79,50 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
       }
     } catch (error) {
       console.error('Failed to load memories:', error);
+      toast.error('Failed to load memories');
     } finally {
       setLoading(false);
     }
   };
 
-  const [editingProjectPath, setEditingProjectPath] = useState<string | null>(null);
-
   const handleSave = async () => {
-    const targetProject = editingProjectPath || currentProject;
-    if (!targetProject || !formData.key || !formData.value) return;
+    if (!formData.projectPath || !formData.key || !formData.value) return;
 
     try {
       const response = await fetch('/api/memory/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          projectPath: targetProject,
-          ...formData
+          projectPath: formData.projectPath,
+          key: formData.key,
+          value: formData.value,
+          category: formData.category
         })
       });
 
       if (response.ok) {
-        setFormData({ key: '', value: '', category: 'note' });
-        setIsAddDialogOpen(false);
-        setEditingId(null);
-        setEditingProjectPath(null);
+        setFormData({ key: '', value: '', category: 'note', projectPath: '' });
+        addModal.close();
         loadMemories();
       }
     } catch (error) {
       console.error('Failed to save memory:', error);
+      toast.error('Failed to save memory');
     }
   };
 
   const handleDelete = (key: string, projectPath: string) => {
-    setMemoryToDelete({ key, projectPath });
-    setIsConfirmDeleteOpen(true);
+    deleteModal.open({ key, projectPath });
   };
 
   const confirmDelete = async () => {
-    if (!memoryToDelete) return;
+    const data = deleteModal.data;
+    if (!data) return;
 
     try {
       const params = new URLSearchParams({
-        projectPath: memoryToDelete.projectPath,
-        key: memoryToDelete.key
+        projectPath: data.projectPath,
+        key: data.key
       });
 
       const response = await fetch(`/api/memory/delete?${params}`, {
@@ -147,12 +130,12 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
       });
 
       if (response.ok) {
+        deleteModal.close();
         loadMemories();
       }
     } catch (error) {
       console.error('Failed to delete memory:', error);
-    } finally {
-      setMemoryToDelete(null);
+      toast.error('Failed to delete memory');
     }
   };
 
@@ -160,11 +143,10 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
     setFormData({
       key: memory.key,
       value: memory.value,
-      category: memory.category
+      category: memory.category,
+      projectPath: memory.project_path
     });
-    setEditingId(memory.id);
-    setEditingProjectPath(memory.project_path);
-    setIsAddDialogOpen(true);
+    addModal.open(memory.id);
   };
 
   const filteredMemories = memories.filter(m =>
@@ -209,28 +191,21 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
             Store commands, configs, and notes that persist across sessions
           </p>
         </div>
-        <div className="relative group w-full sm:w-auto">
-          <button
-            onClick={() => {
-              setFormData({ key: '', value: '', category: 'note' });
-              setEditingId(null);
-              setEditingProjectPath(null);
-              setIsAddDialogOpen(true);
-            }}
-            disabled={!currentProject}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-[rgb(var(--sidebar-primary))] px-4 py-2.5 text-sm font-medium text-[rgb(var(--sidebar-primary-foreground))] shadow-sm transition-all hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto"
-          >
-            <Plus className="h-4 w-4" />
-            Add Memory
-          </button>
-          {!currentProject && (
-            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-zinc-900 text-white text-xs font-semibold rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none dark:bg-zinc-100 dark:text-zinc-900 flex items-center gap-1.5">
-              <Info className="h-3 w-3 stroke-[2.5]" />
-              Select a project first
-              <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-zinc-900 dark:border-t-zinc-100" />
-            </div>
-          )}
-        </div>
+        <button
+          onClick={() => {
+            setFormData({
+              key: '',
+              value: '',
+              category: 'note',
+              projectPath: currentProject || projects[0]?.project_path || ''
+            });
+            addModal.open(null);
+          }}
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-[rgb(var(--sidebar-primary))] px-4 py-2.5 text-sm font-medium text-[rgb(var(--sidebar-primary-foreground))] shadow-sm transition-all hover:opacity-90 w-full sm:w-auto"
+        >
+          <Plus className="h-4 w-4" />
+          Add Memory
+        </button>
       </div>
 
       {/* Quick Stats */}
@@ -271,7 +246,7 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
                 <div className="max-h-80 overflow-y-auto p-1">
                   <button
                     onClick={() => {
-                      updateFilters('project', null);
+                      updateFilter('project', null);
                       setIsProjectDropdownOpen(false);
                     }}
                     className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors ${
@@ -288,7 +263,7 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
                       <button
                         key={project.project_path}
                         onClick={() => {
-                          updateFilters('project', project.project_path);
+                          updateFilter('project', project.project_path);
                           setIsProjectDropdownOpen(false);
                         }}
                         className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors ${
@@ -314,7 +289,7 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
             {categoryOptions.map((option) => (
               <button
                 key={option.value}
-                onClick={() => updateFilters('category', option.value)}
+                onClick={() => updateFilter('category', option.value)}
                 className={`rounded-full px-2 sm:px-3 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium transition-all ${
                   initialCategoryFilter === option.value
                     ? 'bg-primary text-primary-foreground shadow-sm'
@@ -329,10 +304,7 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
           {/* Clear Filters */}
           {(initialProjectFilter || initialCategoryFilter !== 'all') && (
             <button
-              onClick={() => {
-                updateFilters('project', null);
-                updateFilters('category', 'all');
-              }}
+              onClick={() => clearFilters(['project', 'category'])}
               className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
             >
               <X className="h-3.5 w-3.5" />
@@ -435,26 +407,21 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
       </div>
 
       {/* Add/Edit Dialog */}
-      {isAddDialogOpen && (
+      {addModal.isOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-2xl rounded-xl border border-zinc-200 bg-white shadow-2xl dark:border-zinc-700 dark:bg-zinc-900">
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-700">
               <div className="flex items-center gap-2 text-sm">
-                <span className="px-2 py-0.5 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 text-xs font-medium">
-                  {currentProject ? currentProject.split('/').pop() : 'PROJECT'}
-                </span>
-                <span className="text-zinc-400">›</span>
+                <Brain className="h-4 w-4 text-zinc-400" />
                 <span className="text-zinc-700 dark:text-zinc-300">
-                  {editingId ? 'Edit memory' : 'New memory'}
+                  {addModal.data ? 'Edit memory' : 'New memory'}
                 </span>
               </div>
               <button
                 onClick={() => {
-                  setIsAddDialogOpen(false);
-                  setEditingId(null);
-                  setEditingProjectPath(null);
-                  setFormData({ key: '', value: '', category: 'note' });
+                  addModal.close();
+                  setFormData({ key: '', value: '', category: 'note', projectPath: '' });
                 }}
                 className="p-1 rounded text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 dark:hover:text-zinc-300 dark:hover:bg-zinc-700"
               >
@@ -484,15 +451,18 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
             {/* Property Pills */}
             <div className="px-4 py-3 border-t border-zinc-200 dark:border-zinc-700">
               <div className="flex flex-wrap items-center gap-2">
-                <select
+                {/* Project Select */}
+                <ProjectDropdown
+                  value={formData.projectPath}
+                  onChange={(path) => setFormData({ ...formData, projectPath: path })}
+                  projects={projects}
+                />
+
+                {/* Category Select */}
+                <MemoryCategoryDropdown
                   value={formData.category}
-                  onChange={(e) => setFormData({ ...formData, category: e.target.value as 'command' | 'config' | 'note' })}
-                  className="h-7 rounded-md border border-zinc-200 dark:border-zinc-700 bg-transparent px-2 text-xs font-medium text-zinc-600 dark:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400"
-                >
-                  <option value="command">Command</option>
-                  <option value="config">Config</option>
-                  <option value="note">Note</option>
-                </select>
+                  onChange={(category) => setFormData({ ...formData, category })}
+                />
               </div>
             </div>
 
@@ -500,10 +470,8 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
             <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-zinc-200 dark:border-zinc-700">
               <button
                 onClick={() => {
-                  setIsAddDialogOpen(false);
-                  setEditingId(null);
-                  setEditingProjectPath(null);
-                  setFormData({ key: '', value: '', category: 'note' });
+                  addModal.close();
+                  setFormData({ key: '', value: '', category: 'note', projectPath: '' });
                 }}
                 className="px-3 py-1.5 text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
               >
@@ -511,10 +479,10 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
               </button>
               <button
                 onClick={handleSave}
-                disabled={!formData.key || !formData.value}
+                disabled={!formData.projectPath || !formData.key || !formData.value}
                 className="px-3 py-1.5 text-sm font-medium rounded-md bg-zinc-900 text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {editingId ? 'Update Memory' : 'Create Memory'}
+                {addModal.data ? 'Update Memory' : 'Create Memory'}
               </button>
             </div>
           </div>
@@ -523,8 +491,8 @@ export function MemoryClient({ projects, initialProjectFilter, initialCategoryFi
 
       {/* Confirm Delete Dialog */}
       <ConfirmDialog
-        isOpen={isConfirmDeleteOpen}
-        onClose={() => setIsConfirmDeleteOpen(false)}
+        isOpen={deleteModal.isOpen}
+        onClose={deleteModal.close}
         onConfirm={confirmDelete}
         title="Delete Memory"
         message="Are you sure you want to delete this memory item? This action cannot be undone."

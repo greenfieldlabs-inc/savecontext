@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ContextItem } from '@/lib/types';
 import { ChevronDown, ChevronUp, Pencil, Trash2 } from 'lucide-react';
+import { getCategoryConfig, getPriorityConfig } from '@/lib/constants/context-config';
 
 interface ContextItemCardProps {
   item: ContextItem;
@@ -14,52 +15,11 @@ interface ContextItemCardProps {
 
 const TRUNCATE_LENGTH = 200;
 
-const categoryConfig = {
-  reminder: {
-    bg: 'bg-blue-500/10 dark:bg-blue-500/10',
-    text: 'text-blue-600 dark:text-blue-400',
-    label: 'Reminder'
-  },
-  decision: {
-    bg: 'bg-purple-500/10 dark:bg-purple-500/10',
-    text: 'text-purple-600 dark:text-purple-400',
-    label: 'Decision'
-  },
-  progress: {
-    bg: 'bg-teal-500/10 dark:bg-teal-500/10',
-    text: 'text-teal-600 dark:text-teal-400',
-    label: 'Progress'
-  },
-  note: {
-    bg: 'bg-zinc-500/10 dark:bg-zinc-500/10',
-    text: 'text-zinc-600 dark:text-zinc-400',
-    label: 'Note'
-  }
-} as const;
-
-const priorityConfig = {
-  high: {
-    bg: 'bg-red-500/10 dark:bg-red-500/10',
-    text: 'text-red-600 dark:text-red-400',
-    label: 'High'
-  },
-  normal: {
-    bg: 'bg-yellow-500/10 dark:bg-yellow-500/10',
-    text: 'text-yellow-600 dark:text-yellow-400',
-    label: 'Normal'
-  },
-  low: {
-    bg: 'bg-gray-500/10 dark:bg-gray-500/10',
-    text: 'text-gray-600 dark:text-gray-400',
-    label: 'Low'
-  }
-} as const;
-
 export function ContextItemCard({ item, onDelete, onEdit }: ContextItemCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const category = categoryConfig[item.category] || categoryConfig.note;
-  const priority = priorityConfig[item.priority] || priorityConfig.normal;
+  const category = getCategoryConfig(item.category);
+  const priority = getPriorityConfig(item.priority);
   const needsTruncation = item.value.length > TRUNCATE_LENGTH;
   const displayValue = !needsTruncation || isExpanded
     ? item.value
