@@ -58,7 +58,6 @@ export function getDatabase(): Database {
       // Enable WAL mode for better concurrent reads
       db.exec('PRAGMA journal_mode = WAL');
 
-      console.log(`Connected to database at: ${dbPath}`);
     } catch (error) {
       throw new Error(
         `Failed to connect to savecontext database at ${dbPath}. ` +
@@ -92,7 +91,6 @@ export function getWriteDatabase(): Database {
       // Enable WAL mode for better concurrent access
       writeDb.exec('PRAGMA journal_mode = WAL');
 
-      console.log(`Connected to writable database at: ${dbPath}`);
     } catch (error) {
       throw new Error(
         `Failed to connect to savecontext database at ${dbPath}. ` +
@@ -395,7 +393,7 @@ export function getCheckpointsByProject(projectPath: string): Checkpoint[] {
 export function getAllProjects(): ProjectSummary[] {
   const db = getDatabase();
 
-  // First, get projects from the projects table (consolidated view)
+  // Single query with all counts using subqueries
   const projects = db.prepare(`
     SELECT
       p.id,
@@ -404,11 +402,11 @@ export function getAllProjects(): ProjectSummary[] {
       p.project_path,
       p.created_at,
       p.updated_at,
-      COUNT(DISTINCT s.id) as session_count,
-      SUM(CASE WHEN s.status = 'active' THEN 1 ELSE 0 END) as active_sessions
+      (SELECT COUNT(*) FROM sessions WHERE project_path = p.project_path) as session_count,
+      (SELECT COUNT(*) FROM sessions WHERE project_path = p.project_path AND status = 'active') as active_sessions,
+      (SELECT COUNT(*) FROM context_items ci
+       WHERE ci.session_id IN (SELECT id FROM sessions WHERE project_path = p.project_path)) as total_items
     FROM projects p
-    LEFT JOIN sessions s ON s.project_path = p.project_path
-    GROUP BY p.id
     ORDER BY p.updated_at DESC
   `).all() as Array<{
     id: string;
@@ -419,30 +417,20 @@ export function getAllProjects(): ProjectSummary[] {
     updated_at: number;
     session_count: number;
     active_sessions: number;
+    total_items: number;
   }>;
 
-  // Get item counts for each project
-  return projects.map(proj => {
-    const itemCount = db.prepare(`
-      SELECT COUNT(*) as count FROM context_items ci
-      WHERE ci.session_id IN (
-        SELECT id FROM sessions WHERE project_path = ?
-      )
-    `).get(proj.project_path) as { count: number };
-
-    return {
-      id: proj.id,
-      name: proj.name,
-      description: proj.description,
-      source_path: proj.project_path,
-      project_path: proj.project_path,
-      session_count: proj.session_count,
-      active_sessions: proj.active_sessions,
-      total_items: itemCount.count,
-      created_at: proj.created_at,
-      updated_at: proj.updated_at,
-    };
-  });
+  return projects.map(proj => ({
+    id: proj.id,
+    name: proj.name,
+    description: proj.description,
+    project_path: proj.project_path,
+    session_count: proj.session_count,
+    active_sessions: proj.active_sessions,
+    total_items: proj.total_items,
+    created_at: proj.created_at,
+    updated_at: proj.updated_at,
+  }));
 }
 
 export function getSessionProjects(sessionId: string): SessionProject[] {
@@ -600,7 +588,11 @@ export function deleteMemoryItem(projectPath: string, key: string): number {
 // Issue Queries
 // ==================
 
-export function getIssues(projectPath?: string, status?: string): Issue[] {
+export function getIssues(
+  projectPath?: string,
+  status?: string,
+  timeFilter?: { createdAfter?: number; updatedAfter?: number }
+): Issue[] {
   const db = getDatabase();
 
   // Try issues table first, fall back to tasks table for old schema
@@ -629,7 +621,7 @@ export function getIssues(projectPath?: string, status?: string): Issue[] {
   }
 
   let whereClause = '';
-  const params: string[] = [];
+  const params: (string | number)[] = [];
 
   // Multi-project support: find issues that belong to this project
   // either as their primary path OR via the issue_projects junction table
@@ -650,6 +642,19 @@ export function getIssues(projectPath?: string, status?: string): Issue[] {
     const statusCondition = hasDependencies ? 'i.status = ?' : 'status = ?';
     whereClause = whereClause ? `${whereClause} AND ${statusCondition}` : `WHERE ${statusCondition}`;
     params.push(status);
+  }
+
+  // Time filters
+  if (timeFilter?.createdAfter) {
+    const createdCondition = hasDependencies ? 'i.created_at >= ?' : 'created_at >= ?';
+    whereClause = whereClause ? `${whereClause} AND ${createdCondition}` : `WHERE ${createdCondition}`;
+    params.push(timeFilter.createdAfter);
+  }
+
+  if (timeFilter?.updatedAfter) {
+    const updatedCondition = hasDependencies ? 'i.updated_at >= ?' : 'updated_at >= ?';
+    whereClause = whereClause ? `${whereClause} AND ${updatedCondition}` : `WHERE ${updatedCondition}`;
+    params.push(timeFilter.updatedAfter);
   }
 
   const orderClause = hasDependencies ? 'ORDER BY i.created_at DESC' : 'ORDER BY created_at DESC';
@@ -700,6 +705,33 @@ export function getIssues(projectPath?: string, status?: string): Issue[] {
     }
   }
 
+  // Enrich issues with labels
+  if (issues.length > 0 && tableExists(db, 'issue_labels')) {
+    const issueIds = issues.map(i => i.id);
+    const placeholders = issueIds.map(() => '?').join(',');
+
+    const labelRows = db.prepare(`
+      SELECT issue_id, id, label
+      FROM issue_labels
+      WHERE issue_id IN (${placeholders})
+      ORDER BY label
+    `).all(...issueIds) as Array<{ issue_id: string; id: string; label: string }>;
+
+    // Group labels by issue ID
+    const labelsByIssue = new Map<string, Array<{ id: string; label: string }>>();
+    for (const row of labelRows) {
+      if (!labelsByIssue.has(row.issue_id)) {
+        labelsByIssue.set(row.issue_id, []);
+      }
+      labelsByIssue.get(row.issue_id)!.push({ id: row.id, label: row.label });
+    }
+
+    // Attach labels to each issue
+    for (const issue of issues) {
+      issue.labels = labelsByIssue.get(issue.id) || [];
+    }
+  }
+
   return issues;
 }
 
@@ -707,6 +739,8 @@ export function getIssueById(id: string): Issue | null {
   const db = getDatabase();
   const tableName = tableExists(db, 'issues') ? 'issues' : 'tasks';
   const hasDependencies = tableExists(db, 'issue_dependencies');
+
+  let issue: Issue | null = null;
 
   if (hasDependencies) {
     const query = `
@@ -722,30 +756,71 @@ export function getIssueById(id: string): Issue | null {
     const row = db.prepare(query).get(id) as (Issue & { parent_id?: string; parent_short_id?: string; parent_title?: string }) | undefined;
     if (!row) return null;
 
-    const { parent_id, parent_short_id, parent_title, ...issue } = row;
+    const { parent_id, parent_short_id, parent_title, ...issueData } = row;
+    issue = issueData as Issue;
     if (parent_id) {
-      return {
-        ...issue,
-        parent: {
-          id: parent_id,
-          short_id: parent_short_id || null,
-          title: parent_title || ''
-        }
-      } as Issue;
+      issue.parent = {
+        id: parent_id,
+        short_id: parent_short_id || null,
+        title: parent_title || ''
+      };
     }
-    return issue as Issue;
+
+    // Load all dependencies (including duplicate-of)
+    const deps = db.prepare(`
+      SELECT d.id, d.depends_on_id, d.dependency_type,
+        target.short_id as depends_on_short_id,
+        target.title as depends_on_title
+      FROM issue_dependencies d
+      LEFT JOIN ${tableName} target ON d.depends_on_id = target.id
+      WHERE d.issue_id = ?
+    `).all(id) as Array<{
+      id: string;
+      depends_on_id: string;
+      dependency_type: string;
+      depends_on_short_id: string | null;
+      depends_on_title: string | null;
+    }>;
+
+    issue.dependencies = deps.map(d => ({
+      id: d.id,
+      dependsOnId: d.depends_on_id,
+      dependsOnShortId: d.depends_on_short_id,
+      dependsOnTitle: d.depends_on_title || '',
+      dependencyType: d.dependency_type as 'blocks' | 'related' | 'parent-child' | 'discovered-from' | 'duplicate-of'
+    }));
+
+    // Load labels
+    if (tableExists(db, 'issue_labels')) {
+      const labelRows = db.prepare(`
+        SELECT id, label FROM issue_labels WHERE issue_id = ? ORDER BY label
+      `).all(id) as Array<{ id: string; label: string }>;
+      issue.labels = labelRows;
+    }
+
+    return issue;
   }
 
-  return db.prepare(`SELECT * FROM ${tableName} WHERE id = ?`).get(id) as Issue | null;
+  // Fallback for old schema without dependencies
+  const fallbackIssue = db.prepare(`SELECT * FROM ${tableName} WHERE id = ?`).get(id) as Issue | null;
+  if (fallbackIssue && tableExists(db, 'issue_labels')) {
+    const labelRows = db.prepare(`
+      SELECT id, label FROM issue_labels WHERE issue_id = ? ORDER BY label
+    `).all(id) as Array<{ id: string; label: string }>;
+    fallbackIssue.labels = labelRows;
+  }
+  return fallbackIssue;
 }
 
 export function getIssueStats(projectPath?: string): IssueStats {
   const db = getDatabase();
   const tableName = tableExists(db, 'issues') ? 'issues' : 'tasks';
 
+  // Note: "duplicate" is not a status - it's a relation type (duplicate-of dependency)
   const query = projectPath
     ? `SELECT
         COUNT(*) as total,
+        SUM(CASE WHEN status = 'backlog' THEN 1 ELSE 0 END) as backlog,
         SUM(CASE WHEN status = 'open' OR status = 'todo' OR status = 'pending' THEN 1 ELSE 0 END) as open,
         SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
         SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) as blocked,
@@ -755,6 +830,7 @@ export function getIssueStats(projectPath?: string): IssueStats {
       WHERE project_path = ?`
     : `SELECT
         COUNT(*) as total,
+        SUM(CASE WHEN status = 'backlog' THEN 1 ELSE 0 END) as backlog,
         SUM(CASE WHEN status = 'open' OR status = 'todo' OR status = 'pending' THEN 1 ELSE 0 END) as open,
         SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
         SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) as blocked,
@@ -763,11 +839,12 @@ export function getIssueStats(projectPath?: string): IssueStats {
       FROM ${tableName}`;
 
   const result = projectPath
-    ? db.prepare(query).get(projectPath) as { total: number; open: number; in_progress: number; blocked: number; closed: number; deferred: number }
-    : db.prepare(query).get() as { total: number; open: number; in_progress: number; blocked: number; closed: number; deferred: number };
+    ? db.prepare(query).get(projectPath) as { total: number; backlog: number; open: number; in_progress: number; blocked: number; closed: number; deferred: number }
+    : db.prepare(query).get() as { total: number; backlog: number; open: number; in_progress: number; blocked: number; closed: number; deferred: number };
 
   return {
     total: result.total || 0,
+    backlog: result.backlog || 0,
     open: result.open || 0,
     in_progress: result.in_progress || 0,
     blocked: result.blocked || 0,
@@ -1230,4 +1307,146 @@ export function getProjectBlockers(projectId: string): {
   `).all(projectId) as Array<{ id: string; short_id: string | null; title: string }>;
 
   return { plans };
+}
+
+// ==================
+// Label Queries
+// ==================
+
+export interface LabelInfo {
+  label: string;
+  count: number;
+}
+
+/**
+ * Get all unique labels with usage counts
+ * Optionally filter by project or search term
+ */
+export function getAllLabels(projectPath?: string, search?: string): LabelInfo[] {
+  const db = getDatabase();
+
+  let query: string;
+  const params: string[] = [];
+
+  if (projectPath) {
+    query = `
+      SELECT il.label, COUNT(*) as count
+      FROM issue_labels il
+      JOIN issues i ON il.issue_id = i.id
+      WHERE i.project_path = ?
+    `;
+    params.push(projectPath);
+
+    if (search) {
+      query += ` AND il.label LIKE ?`;
+      params.push(`%${search}%`);
+    }
+
+    query += ` GROUP BY il.label ORDER BY count DESC, il.label ASC`;
+  } else {
+    query = `
+      SELECT label, COUNT(*) as count
+      FROM issue_labels
+    `;
+
+    if (search) {
+      query += ` WHERE label LIKE ?`;
+      params.push(`%${search}%`);
+    }
+
+    query += ` GROUP BY label ORDER BY count DESC, label ASC`;
+  }
+
+  return db.prepare(query).all(...params) as LabelInfo[];
+}
+
+/**
+ * Get labels for a specific issue
+ */
+export function getIssueLabels(issueId: string): string[] {
+  const db = getDatabase();
+  const rows = db.prepare(
+    'SELECT label FROM issue_labels WHERE issue_id = ? ORDER BY label'
+  ).all(issueId) as Array<{ label: string }>;
+
+  return rows.map(r => r.label);
+}
+
+/**
+ * Add labels to an issue
+ */
+export function addIssueLabels(issueId: string, labels: string[]): number {
+  const db = getWriteDatabase();
+  const now = Date.now();
+
+  const insertStmt = db.prepare(`
+    INSERT OR IGNORE INTO issue_labels (id, issue_id, label)
+    VALUES (?, ?, ?)
+  `);
+
+  let added = 0;
+  for (const label of labels) {
+    const trimmed = label.trim();
+    if (trimmed) {
+      const id = crypto.randomUUID();
+      const result = insertStmt.run(id, issueId, trimmed);
+      added += result.changes;
+    }
+  }
+
+  // Update issue's updated_at
+  db.prepare('UPDATE issues SET updated_at = ? WHERE id = ?').run(now, issueId);
+
+  return added;
+}
+
+/**
+ * Remove labels from an issue
+ */
+export function removeIssueLabels(issueId: string, labels: string[]): number {
+  const db = getWriteDatabase();
+  const now = Date.now();
+
+  const deleteStmt = db.prepare(
+    'DELETE FROM issue_labels WHERE issue_id = ? AND label = ?'
+  );
+
+  let removed = 0;
+  for (const label of labels) {
+    const result = deleteStmt.run(issueId, label.trim());
+    removed += result.changes;
+  }
+
+  // Update issue's updated_at
+  db.prepare('UPDATE issues SET updated_at = ? WHERE id = ?').run(now, issueId);
+
+  return removed;
+}
+
+/**
+ * Set labels for an issue (replace all existing labels)
+ */
+export function setIssueLabels(issueId: string, labels: string[]): void {
+  const db = getWriteDatabase();
+  const now = Date.now();
+
+  // Remove all existing labels
+  db.prepare('DELETE FROM issue_labels WHERE issue_id = ?').run(issueId);
+
+  // Add new labels
+  const insertStmt = db.prepare(`
+    INSERT INTO issue_labels (id, issue_id, label)
+    VALUES (?, ?, ?)
+  `);
+
+  for (const label of labels) {
+    const trimmed = label.trim();
+    if (trimmed) {
+      const id = crypto.randomUUID();
+      insertStmt.run(id, issueId, trimmed);
+    }
+  }
+
+  // Update issue's updated_at
+  db.prepare('UPDATE issues SET updated_at = ? WHERE id = ?').run(now, issueId);
 }

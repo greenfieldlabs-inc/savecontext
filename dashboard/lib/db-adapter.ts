@@ -8,6 +8,8 @@ import type {
   Session,
   SessionWithProjects,
   SessionWithAgents,
+  SessionSummary,
+  AgentInfo,
   ContextItem,
   Checkpoint,
   SessionProject,
@@ -16,7 +18,8 @@ import type {
   Issue,
   IssueStats,
   ProjectSummary,
-  Plan
+  Plan,
+  LabelInfo
 } from './types';
 
 // Local SQLite database
@@ -55,11 +58,11 @@ export async function getSessionsByStatus(status: 'active' | 'paused' | 'complet
   return sqliteDb.getSessionsByStatus(status);
 }
 
-export async function getSessionSummary(sessionId: string): Promise<any> {
+export async function getSessionSummary(sessionId: string): Promise<SessionSummary | null> {
   return sqliteDb.getSessionSummary(sessionId);
 }
 
-export async function getAgentsForSession(sessionId: string): Promise<any[]> {
+export async function getAgentsForSession(sessionId: string): Promise<AgentInfo[]> {
   return sqliteDb.getAgentsForSession(sessionId);
 }
 
@@ -155,8 +158,14 @@ export async function deleteMemoryItem(projectPath: string, key: string): Promis
 }
 
 // Issues
-export async function getIssues(projectPath?: string, status?: string): Promise<Issue[]> {
-  return sqliteDb.getIssues ? sqliteDb.getIssues(projectPath, status) : sqliteDb.getTasks(projectPath, status);
+export async function getIssues(
+  projectPath?: string,
+  status?: string,
+  timeFilter?: { createdAfter?: number; updatedAfter?: number }
+): Promise<Issue[]> {
+  return sqliteDb.getIssues
+    ? sqliteDb.getIssues(projectPath, status, timeFilter)
+    : sqliteDb.getTasks(projectPath, status);
 }
 
 export async function getIssueById(id: string): Promise<Issue | null> {
@@ -168,8 +177,10 @@ export async function getIssueStats(projectPath?: string): Promise<IssueStats> {
     return sqliteDb.getIssueStats(projectPath);
   }
   // Fallback for old schema
+  // Note: "duplicate" is not a status - it's a relation type (duplicate-of dependency)
   const oldStats = sqliteDb.getTaskStats?.(projectPath) || { total: 0 };
   return {
+    backlog: oldStats.backlog || 0,
     open: oldStats.todo || oldStats.open || 0,
     in_progress: oldStats.in_progress || 0,
     blocked: oldStats.blocked || 0,
@@ -192,4 +203,25 @@ export async function getPlanById(id: string): Promise<Plan | null> {
 
 export async function getPlanStats(projectPath?: string): Promise<{ total: number; draft: number; active: number; completed: number }> {
   return sqliteDb.getPlanStats(projectPath);
+}
+
+// Labels
+export async function getAllLabels(projectPath?: string, search?: string): Promise<LabelInfo[]> {
+  return sqliteDb.getAllLabels(projectPath, search);
+}
+
+export async function getIssueLabels(issueId: string): Promise<string[]> {
+  return sqliteDb.getIssueLabels(issueId);
+}
+
+export async function addIssueLabels(issueId: string, labels: string[]): Promise<number> {
+  return sqliteDb.addIssueLabels(issueId, labels);
+}
+
+export async function removeIssueLabels(issueId: string, labels: string[]): Promise<number> {
+  return sqliteDb.removeIssueLabels(issueId, labels);
+}
+
+export async function setIssueLabels(issueId: string, labels: string[]): Promise<void> {
+  return sqliteDb.setIssueLabels(issueId, labels);
 }
