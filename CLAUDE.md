@@ -74,7 +74,8 @@ context_issue_create({
   title: "Implement feature X",
   description: "Details about the work",
   issueType: "feature",  // task, bug, feature, epic, chore
-  priority: 2            // 0=lowest to 4=critical
+  priority: 2,           // 0=lowest to 4=critical
+  status: "backlog"      // backlog, open, in_progress, blocked, closed, deferred
 })
 
 // Epic with subtasks
@@ -89,6 +90,23 @@ context_issue_create_batch({
 // List issues
 context_issue_list({ status: "open" })
 context_issue_list({ issueType: "bug", priority_min: 3 })
+context_issue_list({ status: "all" })  // Include closed issues
+
+// Date filtering (server computes timestamps)
+context_issue_list({ created_in_last_days: 7 })   // Created this week
+context_issue_list({ created_in_last_hours: 24 }) // Created today
+context_issue_list({ updated_in_last_days: 7 })   // Updated this week
+context_issue_list({ updated_in_last_hours: 1 })  // Updated in last hour
+
+// Search and lookup
+context_issue_list({ search: "authentication" })  // Search title/description
+context_issue_list({ id: "SC-a1b2" })             // Get single issue by ID
+```
+
+**Short IDs:** All issue ID parameters accept short IDs like `"SC-a1b2"` or full UUIDs:
+```javascript
+context_issue_complete({ id: "SC-a1b2", issue_title: "..." })
+context_issue_claim({ issue_ids: ["SC-a1b2", "SC-c3d4"] })
 ```
 
 **Workflow:**
@@ -207,3 +225,66 @@ context_status()
 // Prepare for compaction
 context_prepare_compaction()
 ```
+
+### Feature Planning with Plans & Issues
+
+**For new features or releases, always create a Plan first:**
+
+```javascript
+// Create a plan (PRD/spec)
+context_plan_create({
+  title: "v0.1.25 Features",
+  content: `## Overview
+Features for this release...
+
+## Goals
+- Feature 1
+- Feature 2
+
+## Success Criteria
+- All tests pass
+- No regressions`,
+  status: "active"
+})
+
+// List plans
+context_plan_list()
+context_plan_list({ status: "all" })
+
+// Get plan details with linked epics
+context_plan_get({ plan_id: "plan_..." })
+```
+
+**Then create epics and issues linked to the plan:**
+
+```javascript
+// Create epic with subtasks, all linked to plan
+context_issue_create_batch({
+  planId: "plan_...",  // Links all issues to plan
+  issues: [
+    {
+      title: "Epic: Duplicate Issues Feature",
+      issueType: "epic",
+      description: "Allow marking issues as duplicates",
+      details: "## Implementation\n- Add duplicate status\n- Add duplicate-of dependency type"
+    },
+    { title: "Add duplicate status to types", parentId: "$0", issueType: "task" },
+    { title: "Update database for duplicate handling", parentId: "$0", issueType: "task" },
+    { title: "Add MCP tool for marking duplicates", parentId: "$0", issueType: "task" }
+  ],
+  dependencies: [
+    { issueIndex: 2, dependsOnIndex: 1, dependencyType: "blocks" }
+  ]
+})
+```
+
+**Workflow for feature development:**
+1. `context_plan_create` - Create plan with requirements
+2. `context_issue_create_batch` - Create epics with subtasks linked to plan
+3. `context_issue_update` - Mark epic as `in_progress` before starting work
+4. `context_issue_claim` - Claim first task
+5. Implement the task
+6. `context_issue_complete` - Mark task done
+7. Repeat 4-6 for remaining tasks
+8. `context_issue_complete` - Mark epic done when all tasks complete
+9. `context_plan_update` - Mark plan complete when all epics done
