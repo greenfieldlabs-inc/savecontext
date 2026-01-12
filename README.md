@@ -47,16 +47,25 @@ SaveContext is a Model Context Protocol (MCP) server that gives AI coding assist
 
 ## 📦 Installation
 
-### Using npm (Recommended)
+### Prerequisites
+
+**[Bun](https://bun.sh) is required** - SaveContext uses `bun:sqlite` for optimal performance:
 
 ```bash
-npm install -g @savecontext/mcp
+# Install Bun (macOS, Linux, WSL)
+curl -fsSL https://bun.sh/install | bash
 ```
 
-### Using npx (No installation)
+### Using bunx (Recommended)
 
 ```bash
-npx -y @savecontext/mcp
+bunx @savecontext/mcp
+```
+
+### Global Install
+
+```bash
+bun install -g @savecontext/mcp
 ```
 
 ### From source (Development)
@@ -64,8 +73,8 @@ npx -y @savecontext/mcp
 ```bash
 git clone https://github.com/greenfieldlabs-inc/savecontext.git
 cd savecontext/server
-pnpm install
-pnpm build
+bun install
+bun run build
 ```
 
 ---
@@ -75,8 +84,8 @@ pnpm build
 Get started with SaveContext in under a minute:
 
 ```bash
-# 1. Install the package
-npm install -g @savecontext/mcp
+# 1. Install Bun (if not already installed)
+curl -fsSL https://bun.sh/install | bash
 
 # 2. Add to your AI tool's MCP config
 ```
@@ -87,8 +96,8 @@ Add this to your MCP configuration (Claude Code, Cursor, etc.):
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -141,13 +150,17 @@ bun dev -p 4000  # or specify a custom port
 
 ---
 
-##  Claude Code Status Line
+## Status Line
 
-> **Note:** This feature is specific to **Claude Code** (Anthropic's CLI tool). Other editors like Cursor, Windsurf, VS Code, etc. show MCP connection status in their own UI - this terminal status line feature doesn't apply to them.
+Display real-time SaveContext session info directly in your terminal.
 
-**Never lose track of your session** - See real-time session info directly in Claude Code's status bar.
+| Tool | Status |
+|------|--------|
+| **Claude Code** | Supported (native statusline) |
+| **OpenCode** | Coming soon (tmux integration) |
+| **Other CLI tools** | Coming soon (tmux integration) |
 
-![Claude Code Status Line](https://pub-4304173ae3f74a77852a77192ab0b3e3.r2.dev/claude-statusline.png)
+> **Note:** IDE-based tools like Cursor, Windsurf, VS Code, etc. show MCP connection status in their own UI - this terminal status line feature is for CLI-based tools.
 
 ### What You See
 
@@ -155,23 +168,61 @@ bun dev -p 4000  # or specify a custom port
 |--------|-------------|
 | **Session Name** | Your current SaveContext session |
 | **Context** | Token count + visual progress bar + percentage |
-| **Cost** | Running cost for this Claude Code session |
+| **Cost** | Running cost for the session |
 | **Duration** | How long the session has been active |
 | **Lines** | Net lines changed (+/-) |
 
-### Setup
+### Quick Setup
 
 ```bash
-npx @savecontext/mcp@latest --setup-statusline
+# Auto-detect and configure Claude Code
+bunx @savecontext/mcp@latest --setup-statusline
+
+# Or specify the tool explicitly
+bunx @savecontext/mcp@latest --setup-statusline --tool claude-code
+
+# Remove statusline configuration
+bunx @savecontext/mcp@latest --uninstall-statusline
 ```
 
 Then restart Claude Code. That's it.
 
+### Claude Code
+
+![Claude Code Status Line](https://pub-4304173ae3f74a77852a77192ab0b3e3.r2.dev/claude-statusline.png)
+
+Claude Code has native statusline support. The setup script:
+1. Installs `statusline.py` to `~/.savecontext/`
+2. Installs `update-status-cache.py` hook to `~/.savecontext/hooks/`
+3. Updates `~/.claude/settings.json` with statusline and hook configuration
+
+**Requires Python 3.x** - see [Troubleshooting](#troubleshooting) if Python isn't detected.
+
 ### How It Works
 
-1. **PostToolUse Hook**: A Claude Code hook intercepts SaveContext MCP tool responses and writes session info to a local cache file (`~/.savecontext/status-cache/<key>.json`)
-2. **Status Script**: Claude Code runs the status line script on each prompt, which reads the cache and parses your transcript for context usage
-3. **Terminal Isolation**: Each terminal instance gets its own cache key, so multiple Claude Code windows show their own sessions without overlap
+```
+┌─────────────────┐
+│   Claude Code   │
+│  (PostToolUse   │
+│   Python hook)  │
+└────────┬────────┘
+         │
+         ▼
+┌────────────────────────────────────┐
+│  ~/.savecontext/status-cache/      │
+│     (shared JSON cache)            │
+└────────────────┬───────────────────┘
+                 │
+                 ▼
+┌─────────────────┐
+│  statusline.py  │
+│ (Claude native) │
+└─────────────────┘
+```
+
+1. **Hook Intercepts MCP Responses**: When SaveContext tools execute, a PostToolUse Python hook writes session info to a local cache file (`~/.savecontext/status-cache/<key>.json`)
+2. **Status Display Reads Cache**: Claude Code's native statusline runs `statusline.py` on each prompt to read from the cache
+3. **Terminal Isolation**: Each terminal instance gets its own cache key, so multiple windows show their own sessions without overlap
 
 ### Cross-Platform Support
 
@@ -200,9 +251,7 @@ export SAVECONTEXT_STATUS_KEY="my-custom-session"
 
 ### Troubleshooting
 
-If the statusline doesn't work after setup:
-
-1. **Check Python is installed**: The scripts require Python 3.x
+1. **Check Python is installed**: Claude Code scripts require Python 3.x
    - Windows: Install from [python.org](https://python.org) or run `winget install Python.Python.3`
    - macOS: Run `brew install python3` or use system Python
    - Linux: Run `apt install python3` or equivalent
@@ -218,24 +267,26 @@ If the statusline doesn't work after setup:
 **Still not working?** Please [open an issue](https://github.com/greenfieldlabs-inc/savecontext/issues) with:
 - Your OS and terminal (e.g., "Windows 11 + Windows Terminal", "macOS + iTerm2")
 - Output of `python3 --version` (or `py -3 --version` on Windows)
-- Any error messages from Claude Code
+- Any error messages
 
 ### What Gets Tracked
 
-The hook monitors session lifecycle tools and updates the status line when:
+The hooks monitor SaveContext tool calls and update the status cache when:
 - Sessions start, resume, or switch (`context_session_start`, `context_session_resume`, `context_session_switch`)
 - Sessions are renamed (`context_session_rename`)
 - Sessions pause or end (`context_session_pause`, `context_session_end`) - clears status
 - Status is checked (`context_status`)
+- Context items are saved or deleted (`context_save`, `context_delete`) - updates item count
+- Checkpoints are created (`context_checkpoint`) - updates item count
 
-Other tools like `context_save`, `context_get`, checkpoints, etc. don't change the status line since the session itself hasn't changed.
+This ensures the status display always reflects your current session state.
 
 ### Script Locations
 
 | Script | Location | Purpose |
 |--------|----------|---------|
-| Status line | `~/.savecontext/statusline.py` | Reads cache and displays session info |
-| PostToolUse hook | `~/.savecontext/hooks/update-status-cache.py` | Intercepts MCP responses, updates cache |
+| Statusline display | `~/.savecontext/statusline.py` | Reads cache and displays session info |
+| Cache update hook | `~/.savecontext/hooks/update-status-cache.py` | Intercepts MCP responses, updates cache |
 
 Source available at [`server/scripts/`](https://github.com/greenfieldlabs-inc/savecontext/blob/main/server/scripts/).
 
@@ -269,19 +320,20 @@ SaveContext includes a skill system that teaches AI coding assistants how to use
 ### Setup Skills
 
 ```bash
-npx @savecontext/mcp@latest --setup-skill
+bunx @savecontext/mcp@latest --setup-skill
 ```
 
 This installs the SaveContext skill to your AI tool's skills directory.
 
 ### Supported Tools
 
-We natively support **Claude Code** and **OpenAI Codex** with automatic path detection:
+We natively support **Claude Code**, **OpenAI Codex**, and **Gemini CLI** with automatic path detection:
 
 | Tool | Default Location |
 |------|------------------|
-| Claude Code | `~/.claude/skills/savecontext/` |
-| OpenAI Codex | `~/.codex/skills/savecontext/` |
+| Claude Code | `~/.claude/skills/SaveContext/` |
+| OpenAI Codex | `~/.codex/skills/SaveContext/` |
+| Gemini CLI | `~/.gemini/skills/SaveContext/` |
 
 ### Custom Tool Locations
 
@@ -289,7 +341,7 @@ You can add skills to any AI tool that supports a skills directory:
 
 ```bash
 # Install to a custom path
-npx @savecontext/mcp@latest --setup-skill --path ~/.my-ai-tool/skills/savecontext
+bunx @savecontext/mcp@latest --setup-skill --path ~/.my-ai-tool/skills/SaveContext
 ```
 
 Your custom locations are saved to `~/.savecontext/skill-sync.json` and will be updated automatically when you run `--setup-skill --sync` in the future.
@@ -299,7 +351,7 @@ Your custom locations are saved to `~/.savecontext/skill-sync.json` and will be 
 To update skills across all your configured tools:
 
 ```bash
-npx @savecontext/mcp@latest --setup-skill --sync
+bunx @savecontext/mcp@latest --setup-skill --sync
 ```
 
 This re-installs skills to every location in your sync config, including any custom paths you've added.
@@ -310,7 +362,12 @@ This re-installs skills to every location in your sync config, including any cus
 
 ### Manual Configuration
 
-If you prefer manual setup, add to `~/.claude/settings.json`:
+<details>
+<summary><b>Claude Code Manual Setup</b></summary>
+
+<br>
+
+Add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -344,6 +401,8 @@ mkdir -p ~/.savecontext/hooks
 cp "$SCRIPTS/update-status-cache.py" ~/.savecontext/hooks/
 chmod +x ~/.savecontext/statusline.py ~/.savecontext/hooks/update-status-cache.py
 ```
+
+</details>
 
 ---
 
@@ -438,8 +497,8 @@ savecontext-projects merge --keep-source  # Don't delete source project after me
   "mcpServers": {
     "savecontext": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -461,8 +520,8 @@ savecontext-projects merge --keep-source  # Don't delete source project after me
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -484,8 +543,8 @@ savecontext-projects merge --keep-source  # Don't delete source project after me
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -504,8 +563,8 @@ savecontext-projects merge --keep-source  # Don't delete source project after me
     "servers": {
       "savecontext": {
         "type": "stdio",
-        "command": "npx",
-        "args": ["-y", "@savecontext/mcp"]
+        "command": "bunx",
+        "args": ["@savecontext/mcp"]
       }
     }
   }
@@ -522,7 +581,7 @@ savecontext-projects merge --keep-source  # Don't delete source project after me
 Factory's droid supports MCP servers through its CLI.
 
 ```bash
-droid mcp add savecontext "npx -y @savecontext/mcp"
+droid mcp add savecontext "bunx @savecontext/mcp"
 ```
 
 </details>
@@ -534,8 +593,8 @@ droid mcp add savecontext "npx -y @savecontext/mcp"
 
 ```toml
 [mcp_servers.savecontext]
-args = ["-y", "@savecontext/mcp"]
-command = "npx"
+args = ["@savecontext/mcp"]
+command = "bunx"
 startup_timeout_ms = 20_000
 ```
 
@@ -550,8 +609,8 @@ startup_timeout_ms = 20_000
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -571,8 +630,8 @@ Add this to your Zed `settings.json`:
   "context_servers": {
     "SaveContext": {
       "source": "custom",
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -591,8 +650,8 @@ Open Claude Desktop developer settings and edit your `claude_desktop_config.json
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -619,8 +678,8 @@ Open Claude Desktop developer settings and edit your `claude_desktop_config.json
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -643,8 +702,8 @@ Edit Roo Code's MCP settings:
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -663,8 +722,8 @@ Edit Roo Code's MCP settings:
     "servers": {
       "savecontext": {
         "type": "stdio",
-        "command": "npx",
-        "args": ["-y", "@savecontext/mcp"]
+        "command": "bunx",
+        "args": ["@savecontext/mcp"]
       }
     }
   }
@@ -684,8 +743,8 @@ Add to your Kilo Code MCP configuration:
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -702,8 +761,8 @@ Add SaveContext to your Gemini CLI configuration:
 
 ```bash
 gemini mcp add savecontext \
-  --command "npx" \
-  --args "-y @savecontext/mcp"
+  --command "bunx" \
+  --args "@savecontext/mcp"
 ```
 
 </details>
@@ -719,8 +778,8 @@ Navigate to Perplexity Desktop Settings → Integrations → MCP Servers:
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -740,8 +799,8 @@ In LM Studio, go to Settings → Tools → MCP and add:
   "servers": {
     "savecontext": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -761,8 +820,8 @@ Add to your Copilot Coding Agent configuration:
   "mcp": {
     "servers": {
       "savecontext": {
-        "command": "npx",
-        "args": ["-y", "@savecontext/mcp"]
+        "command": "bunx",
+        "args": ["@savecontext/mcp"]
       }
     }
   }
@@ -779,8 +838,8 @@ Add to your Copilot Coding Agent configuration:
 Configure via GitHub Copilot CLI settings:
 
 ```bash
-gh copilot config set mcp.servers.savecontext.command "npx"
-gh copilot config set mcp.servers.savecontext.args "-y @savecontext/mcp"
+gh copilot config set mcp.servers.savecontext.command "bunx"
+gh copilot config set mcp.servers.savecontext.args "@savecontext/mcp"
 ```
 
 </details>
@@ -796,8 +855,8 @@ In Warp terminal, navigate to Settings → AI → MCP Servers:
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -817,8 +876,8 @@ Add to Qodo Gen MCP configuration file:
   "servers": {
     "savecontext": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -835,8 +894,8 @@ In your Replit project, add to `.replit` configuration:
 
 ```toml
 [mcp.servers.savecontext]
-command = "npx"
-args = ["-y", "@savecontext/mcp"]
+command = "bunx"
+args = ["@savecontext/mcp"]
 ```
 
 </details>
@@ -852,8 +911,8 @@ Configure in Amazon Q Developer settings:
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -873,8 +932,8 @@ Add to Cody's MCP server configuration:
   "mcp": {
     "servers": {
       "savecontext": {
-        "command": "npx",
-        "args": ["-y", "@savecontext/mcp"]
+        "command": "bunx",
+        "args": ["@savecontext/mcp"]
       }
     }
   }
@@ -894,8 +953,8 @@ In Tabnine settings, navigate to Extensions → MCP:
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -914,8 +973,8 @@ Open the "Settings" page of the app, navigate to "Plugins," and enter the follow
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -937,7 +996,7 @@ Add this to your Opencode configuration file. See [Opencode MCP docs](https://op
   "mcp": {
     "savecontext": {
       "type": "local",
-      "command": ["npx", "-y", "@savecontext/mcp"],
+      "command": ["bunx", "@savecontext/mcp"],
       "enabled": true
     }
   }
@@ -960,8 +1019,8 @@ See [Qwen Coder MCP Configuration](https://qwenlm.github.io/qwen-code-docs/en/to
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -986,8 +1045,8 @@ Add this to your Visual Studio MCP config file:
     "servers": {
       "savecontext": {
         "type": "stdio",
-        "command": "npx",
-        "args": ["-y", "@savecontext/mcp"]
+        "command": "bunx",
+        "args": ["@savecontext/mcp"]
       }
     }
   }
@@ -1009,8 +1068,8 @@ Add this to your Windsurf MCP config file. See [Windsurf MCP docs](https://docs.
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"]
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
     }
   }
 }
@@ -1023,14 +1082,14 @@ Add this to your Windsurf MCP config file. See [Windsurf MCP docs](https://docs.
 
 <br>
 
-For local development (running from source):
+For local development (running from source). **Requires [Bun](https://bun.sh)** runtime due to `bun:sqlite` dependency:
 
 ```json
 {
   "mcpServers": {
     "savecontext": {
       "type": "stdio",
-      "command": "node",
+      "command": "bun",
       "args": ["/path/to/savecontext/server/dist/index.js"]
     }
   }
@@ -1056,8 +1115,8 @@ Control when and how SaveContext preserves context before your conversation wind
 {
   "mcpServers": {
     "savecontext": {
-      "command": "npx",
-      "args": ["-y", "@savecontext/mcp"],
+      "command": "bunx",
+      "args": ["@savecontext/mcp"],
       "env": {
         "SAVECONTEXT_COMPACTION_THRESHOLD": "70",
         "SAVECONTEXT_COMPACTION_MODE": "remind"
@@ -1359,7 +1418,7 @@ Memory persists across sessions and is accessible by all agents working on the p
 - `title` (TEXT) - Issue title
 - `description` (TEXT) - Optional issue description
 - `details` (TEXT) - Implementation details or notes
-- `status` (TEXT) - open, in_progress, blocked, closed, or deferred
+- `status` (TEXT) - backlog, open, in_progress, blocked, closed, or deferred
 - `priority` (INTEGER) - 0=lowest, 1=low, 2=medium, 3=high, 4=critical
 - `issue_type` (TEXT) - task, bug, feature, epic, or chore
 - `parent_id` (TEXT) - Parent issue ID for subtasks
@@ -1754,7 +1813,7 @@ Returns:
   parentId?: string,                        // Optional: parent issue ID for subtasks
   labels?: string[],                        // Optional: labels for categorization
   planId?: string,                          // Optional: link to a plan
-  status?: 'open'|'in_progress'|'blocked'|'closed'|'deferred'  // Default: 'open'
+  status?: 'backlog'|'open'|'in_progress'|'blocked'|'closed'|'deferred'  // Default: 'open'
 }
 ```
 Creates a new issue for the current project. Issues persist across all sessions and are accessible by all agents working on this project. Supports hierarchies (Epic > Task > Subtask), priority levels, labels, and dependencies.
@@ -1786,7 +1845,7 @@ Returns:
   title?: string,                           // Optional: new title
   description?: string,                     // Optional: new description
   details?: string,                         // Optional: new implementation details
-  status?: 'open'|'in_progress'|'blocked'|'closed'|'deferred',  // Optional: new status
+  status?: 'backlog'|'open'|'in_progress'|'blocked'|'closed'|'deferred',  // Optional: new status
   priority?: number,                        // Optional: new priority (0-4)
   issueType?: 'task'|'bug'|'feature'|'epic'|'chore',  // Optional: new type
   parentId?: string | null,                 // Optional: new parent (null to remove)
@@ -1817,7 +1876,7 @@ Returns:
 **context_issue_list**
 ```javascript
 {
-  status?: 'open'|'in_progress'|'blocked'|'closed'|'deferred',  // Optional: filter by status
+  status?: 'backlog'|'open'|'in_progress'|'blocked'|'closed'|'deferred',  // Optional: filter by status
   priority?: number,                        // Optional: filter by exact priority (0-4)
   priority_min?: number,                    // Optional: minimum priority
   priority_max?: number,                    // Optional: maximum priority

@@ -5,6 +5,90 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.25] - 2026-01-11
+
+### Breaking Changes
+- **Bun runtime required for MCP server** - Migrated from Node.js to Bun
+  - Uses `bun:sqlite` instead of `better-sqlite3` (eliminates native module issues)
+  - All users must use `bunx @savecontext/mcp` instead of `npx`
+  - Shebang changed from `#!/usr/bin/env node` to `#!/usr/bin/env bun`
+  - Install Bun: `curl -fsSL https://bun.sh/install | bash`
+  - npm install still works but running with Node.js will fail
+
+### Added
+- **Modular statusline architecture** - Refactored setup code for maintainability
+  - Moved from monolithic setup to `server/src/cli/setup/` directory
+  - `index.ts` - Multi-tool orchestrator with auto-detection
+  - `claude-code.ts` - Claude Code native statusline + hooks
+  - `shared.ts` - Shared utilities (detectInstalledTools, detectPythonCommand)
+  - New types in `server/src/types/statusline.ts`
+- **Statusline uninstall support**
+  - `--uninstall-statusline` flag removes configuration from all tools
+  - Per-tool uninstall: `--uninstall-statusline --tool claude-code`
+- **`context_issue_mark_duplicate` tool** - Mark issues as duplicates
+  - Sets status to closed, creates `duplicate-of` dependency
+  - Records closed_at timestamp and closing agent
+  - Prevents duplicate work tracking
+- **`context_issue_clone` tool** - Clone issues with property overrides
+  - Copies title (with "Copy of" prefix), description, details, priority, type, parent, plan, labels
+  - Override any property in the clone
+  - `include_labels` option to skip label copying
+- **`backlog` status for issues** - New status between creation and active work
+  - Full status set: backlog, open, in_progress, blocked, closed, deferred
+- **Issue date filtering** - Filter by creation/update time
+  - `created_in_last_days` / `created_in_last_hours` - Issues created recently
+  - `updated_in_last_days` / `updated_in_last_hours` - Issues updated recently
+  - Server converts relative to absolute timestamps
+- **Issue text search** - `search` parameter for title/description matching
+- **Issue assignee filter** - `assignee` parameter to filter by assigned agent
+- **Issue ID filter** - `id` parameter for direct issue lookup (accepts short_id or UUID)
+- **`status: "all"` option** - Include all statuses (including closed) in issue list
+- **`duplicate-of` dependency type** - Track duplicate relationships between issues
+- **Real-time dashboard updates via SSE**
+  - SQLite-based event queue (`sse_events` table)
+  - Server emits events on session, issue, context, and memory changes
+  - Dashboard polls `/api/events` endpoint
+  - 5-minute event retention with periodic cleanup
+- **New dashboard API routes**
+  - `/api/events` - SSE event polling
+  - `/api/issues/[id]` - Single issue operations
+  - `/api/issues/clone` - Clone issues
+  - `/api/issues/labels` - Label management
+  - `/api/issues/mark-duplicate` - Mark as duplicate
+  - `/api/labels` - List all labels
+- **Custom React hooks for dashboard**
+  - `use-click-outside` - Click outside detection
+  - `use-issue-events` - SSE subscription for issues
+  - `use-modal` - Modal state management
+  - `use-query-filters` - URL query filter sync
+- **Time utilities** - `server/src/utils/time.ts`
+  - `relativeToAbsoluteTime()` converts relative filters to timestamps
+  - Time constants: MS_PER_SECOND, MS_PER_MINUTE, MS_PER_HOUR, MS_PER_DAY, MS_PER_WEEK
+
+### Changed
+- **README updated for Bun runtime**
+  - All `npx` commands changed to `bunx`
+  - Added Prerequisites section with Bun installation
+  - Updated all MCP config examples (Claude Code, Cursor, Claude Desktop, etc.)
+  - OpenCode array format documented
+- **Dashboard component restructure** - Domain-based organization
+  - Reorganized from flat to modular structure: checkpoints/, context/, dialogs/, issues/, layout/, memory/, plans/, sessions/, shared/
+  - Deleted 16 flat component files, created organized modules
+- **Tool descriptions improved** - Short ID support documented
+  - All issue ID parameters note they accept "SC-a1b2" format or UUID
+- **toggle-mcp-mode.sh updated** - Supports additional config formats
+  - Handles OpenCode's array-style command format for local development
+
+### Fixed
+- **Cross-terminal session bleed** - Removed database fallback in `ensureSession()`
+  - Previously, one terminal's operations could affect another terminal's session
+  - `ensureSession()` now only uses in-memory session state (per-process isolation)
+  - Requires explicit `context_session_start` or `context_session_resume`
+- **macOS sqlite-vec extension loading** - Auto-detects Homebrew SQLite path
+  - macOS system SQLite doesn't support extensions; requires Homebrew SQLite
+  - Auto-detects Apple Silicon and Intel Homebrew paths
+  - Windows and Linux load extensions without this workaround
+
 ## [0.1.24] - 2026-01-04
 
 ### Fixed
@@ -91,7 +175,7 @@ Versions 0.1.0-0.1.2 were development releases with package.json version mismatc
 - **Status value changes** - Issue status now uses clearer terminology
   - `pending` → `open`
   - `done` → `closed`
-  - Full status set: `open`, `in_progress`, `blocked`, `closed`, `deferred`
+  - Full status set: `backlog`, `open`, `in_progress`, `blocked`, `closed`, `deferred`
 - **Database schema updated** - Local SQLite schema uses `issues` table instead of `tasks`
   - Table renamed: `tasks` → `issues`
   - Table renamed: `task_labels` → `issue_labels`
