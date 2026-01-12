@@ -713,6 +713,12 @@ context_issue_list planId="PLAN-abc123"
 
 # Check epic completion
 context_issue_list planId="PLAN-abc123" issueType="epic"
+
+# Recently updated issues in plan (last 7 days)
+context_issue_list planId="PLAN-abc123" updated_in_last_days=7
+
+# Issues created today
+context_issue_list created_in_last_hours=24
 ```
 
 ---

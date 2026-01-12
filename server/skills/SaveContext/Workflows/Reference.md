@@ -1,9 +1,6 @@
----
-name: savecontext
-description: This skill should be used when the user asks to "save context", "remember this decision", "track my progress", "checkpoint my work", "resume where I left off", "continue from last session", "persist state across sessions", "prepare for compaction", "restore from checkpoint", "switch sessions", or when starting work and needing to check for existing sessions. Also triggers on compound workflows like "wrap up session", "wrap up and checkpoint", "end of day checkpoint", "resume fully", "pick up where I left off and show status", "checkpoint with tags", "log work and checkpoint", "tag and checkpoint", "prepare for handoff", "handoff to another agent".
----
+# SaveContext Reference
 
-# SaveContext
+Full tool documentation and patterns.
 
 Persistent context management for AI coding agents. Save decisions, track progress, and maintain continuity across sessions.
 
@@ -469,6 +466,16 @@ context_issue_create
   labels=["auth", "security"]
 ```
 
+**Issue Status Values:**
+| Status | Use For |
+|--------|---------|
+| `backlog` | Not yet triaged, waiting in queue |
+| `open` | Ready to work on (default) |
+| `in_progress` | Currently being worked on |
+| `blocked` | Waiting on something |
+| `closed` | Completed |
+| `deferred` | Intentionally postponed |
+
 **Always format issue descriptions in markdown:**
 
 ```markdown
@@ -487,6 +494,30 @@ context_issue_create
 Additional context here
 ```
 
+### Short IDs
+
+All issue ID parameters accept either:
+- **Short ID**: `"SC-a1b2"` (project prefix + 4 chars)
+- **Full UUID**: `"1234567890-abcdefg"`
+
+Short IDs are displayed in the dashboard and tool responses. Use them anywhere an issue ID is needed:
+
+```
+context_issue_complete id="SC-a1b2" issue_title="..."
+context_issue_update id="SC-a1b2" issue_title="..." status="in_progress"
+context_issue_list parentId="SC-abc"
+context_issue_claim issue_ids=["SC-a1b2", "SC-c3d4"]
+```
+
+### Issue Lookup
+
+Get a single issue by ID:
+```
+context_issue_list id="SC-a1b2"
+```
+
+Returns the full issue with dependencies, labels, and parent info.
+
 ### Issue Workflow
 
 ```
@@ -496,16 +527,16 @@ context_issue_create title="Implement JWT tokens" issueType="task"
 context_issue_create title="Add refresh token rotation" issueType="task"
 
 # Link dependencies
-context_issue_add_dependency issueId="PROJ-2" dependsOnId="PROJ-1"
-context_issue_add_dependency issueId="PROJ-3" dependsOnId="PROJ-2"
+context_issue_add_dependency issueId="SC-a1b2" dependsOnId="SC-a1b1"
+context_issue_add_dependency issueId="SC-a1b3" dependsOnId="SC-a1b2"
 
 # Get ready issues (no blockers)
 context_issue_get_ready
 
 # Claim and work
-context_issue_claim issue_ids=["PROJ-1"]
+context_issue_claim issue_ids=["SC-a1b1"]
 # ... do work ...
-context_issue_complete id="PROJ-1" issue_title="Design auth schema"
+context_issue_complete id="SC-a1b1" issue_title="Design auth schema"
 ```
 
 ## Planning with Epics
@@ -678,6 +709,73 @@ context_issue_list parentId="PROJ-abc"
 ```
 
 Returns all subtasks with their status, letting you track epic completion.
+
+### Filtering Issues by Date
+
+Find recently created or updated issues using relative time filters:
+
+```
+# Issues created in the last 7 days
+context_issue_list created_in_last_days=7
+
+# Issues created in the last 24 hours
+context_issue_list created_in_last_hours=24
+
+# Issues updated in the last hour (recently touched)
+context_issue_list updated_in_last_hours=1
+
+# Combine with other filters
+context_issue_list issueType="bug" created_in_last_days=7 priority_min=3
+context_issue_list planId="PLAN-abc" updated_in_last_days=7
+```
+
+The server computes timestamps at request time, so you specify relative values like "last 7 days" rather than raw timestamps.
+
+### Search and Assignee Filters
+
+Search issues by title or description text:
+```
+# Search for issues mentioning "auth" or "authentication"
+context_issue_list search="authentication"
+
+# Filter by assigned agent
+context_issue_list assignee="claude-code"
+
+# Combine search with status
+context_issue_list search="webhook" status="open"
+```
+
+### Cloning Issues
+
+Create a copy of an issue with optional overrides:
+
+```
+# Clone with default "Copy of" prefix
+context_issue_clone id="SC-a1b2" issue_title="Original issue title"
+
+# Clone with custom title and status
+context_issue_clone id="SC-a1b2" issue_title="Original title" title="New variant" status="backlog"
+
+# Clone without labels
+context_issue_clone id="SC-a1b2" issue_title="..." include_labels=false
+```
+
+Cloning copies: title, description, details, priority, type, parent, plan, and labels (unless disabled).
+
+### Marking Duplicates
+
+Mark an issue as a duplicate of another (canonical) issue:
+
+```
+context_issue_mark_duplicate id="SC-dupe" issue_title="Duplicate issue" duplicate_of_id="SC-canon"
+```
+
+This:
+- Sets the duplicate issue status to `closed`
+- Creates a `duplicate-of` dependency linking to the canonical issue
+- Sets `closed_at` timestamp
+
+The duplicate relationship is tracked via the dependency, not a special status.
 
 ### Epic Execution Pattern
 
@@ -960,6 +1058,8 @@ Search tips:
 | List projects | `context_project_list` |
 | Create issue | `context_issue_create title="..." issueType="feature"` |
 | List issues | `context_issue_list` |
+| Recent issues | `context_issue_list created_in_last_days=7` |
+| Recently updated | `context_issue_list updated_in_last_hours=24` |
 | Get ready issues | `context_issue_get_ready` |
 | Complete issue | `context_issue_complete id="..." issue_title="..."` |
 
@@ -967,4 +1067,4 @@ Full tool reference: [savecontext.dev/docs/reference/tools](https://savecontext.
 
 ## Reference Files
 
-- [references/WORKFLOWS.md](references/WORKFLOWS.md) - Detailed workflow patterns for multi-session projects, pre-refactor checkpointing, and compaction recovery.
+- [AdvancedWorkflows.md](AdvancedWorkflows.md) - Detailed workflow patterns for multi-session projects, pre-refactor checkpointing, and compaction recovery.
