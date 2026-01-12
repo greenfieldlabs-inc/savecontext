@@ -54,7 +54,6 @@ server/tests/
 outputs/
 test_repos/
 archive-research/
-/scripts/
 
 # Documentation moved to parent
 # docs/ - moved to ../docs/ at monorepo root
