@@ -270,7 +270,7 @@ function loadCompactionConfig(): CompactionConfig {
 
 const compactionConfig = loadCompactionConfig();
 
-// Track current session
+// Track current session (per-process, not shared across terminals)
 let currentSessionId: string | null = null;
 
 // Connection tracking
@@ -414,26 +414,14 @@ async function updateAgentActivity() {
 
 /**
  * Ensure we have an active session
- * Checks in-memory session first, then falls back to agent-associated session in database
+ * Only uses in-memory session to prevent cross-terminal session bleed
  */
 async function ensureSession(): Promise<string> {
   if (currentSessionId) {
     return currentSessionId;
   }
 
-  // Check for agent-associated session in database
-  const branch = await getCurrentBranch();
-  const projectPath = normalizeProjectPath(getCurrentProjectPath());
-  const provider = getCurrentProvider();
-  const agentId = getAgentId(projectPath, branch || 'main', provider);
-  const agentSession = getDb().getCurrentSessionForAgent(agentId);
-
-  if (agentSession && agentSession.status === 'active') {
-    currentSessionId = agentSession.id;
-    return currentSessionId;
-  }
-
-  throw new SessionError('No active session. Use context_session_start first.');
+  throw new SessionError('No active session. Use context_session_start or context_session_resume first.');
 }
 
 /**
