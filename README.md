@@ -105,6 +105,36 @@ Add this to your MCP configuration (Claude Code, Cursor, etc.):
 
 That's it! Your AI assistant now has persistent memory across sessions.
 
+<details>
+<summary><b>⚠️ Troubleshooting: "bunx not found" or MCP connection fails</b></summary>
+
+GUI apps (Claude Desktop) and some terminals (Ghostty, tmux) don't inherit your shell's PATH, so `bunx` may not be found.
+
+**Fix:** Use the full path to bunx and include PATH in env:
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "/Users/YOUR_USERNAME/.bun/bin/bunx",
+      "args": ["@savecontext/mcp"],
+      "env": {
+        "PATH": "/Users/YOUR_USERNAME/.bun/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}
+```
+
+Find your bun path with: `which bunx`
+
+Common locations:
+- macOS/Linux: `~/.bun/bin/bunx`
+- Homebrew: `/opt/homebrew/bin/bunx`
+- npm global: `/usr/local/bin/bunx`
+
+</details>
+
 **Optional:** Install [Ollama](https://ollama.com) for AI-powered semantic search:
 ```bash
 ollama pull nomic-embed-text
@@ -644,18 +674,25 @@ Add this to your Zed `settings.json`:
 
 <br>
 
-Open Claude Desktop developer settings and edit your `claude_desktop_config.json` file:
+Open Claude Desktop developer settings and edit your `claude_desktop_config.json` file.
+
+> **Important:** Claude Desktop is a GUI app and doesn't inherit your shell's PATH. You must use the full path to bunx.
 
 ```json
 {
   "mcpServers": {
     "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
+      "command": "/Users/YOUR_USERNAME/.bun/bin/bunx",
+      "args": ["@savecontext/mcp"],
+      "env": {
+        "PATH": "/Users/YOUR_USERNAME/.bun/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+      }
     }
   }
 }
 ```
+
+Replace `YOUR_USERNAME` with your actual username. Find the path with `which bunx`.
 
 **Config File Location:**
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
