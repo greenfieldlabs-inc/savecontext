@@ -268,6 +268,33 @@ def extract_session_info(tool_name: str, data: dict, cwd: str) -> dict | None:
                 'provider': 'claude-code'
             }
 
+    # context_restore - checkpoint restored, update with session info
+    if tool_name == 'mcp__savecontext__context_restore':
+        session_id = data.get('session_id')
+        if session_id:
+            return {
+                'sessionId': session_id,
+                'sessionName': data.get('session_name', ''),
+                'projectPath': data.get('project_path', cwd),
+                'itemCount': data.get('items_restored', 0),
+                'sessionStatus': 'active',
+                'provider': 'claude-code'
+            }
+
+    # Checkpoint tools that don't affect session display - explicitly ignore
+    # These should NOT clear or modify the status cache
+    checkpoint_readonly_tools = [
+        'mcp__savecontext__context_list_checkpoints',
+        'mcp__savecontext__context_get_checkpoint',
+        'mcp__savecontext__context_checkpoint_add_items',
+        'mcp__savecontext__context_checkpoint_remove_items',
+        'mcp__savecontext__context_checkpoint_split',
+        'mcp__savecontext__context_checkpoint_delete',
+        'mcp__savecontext__context_tag',
+    ]
+    if tool_name in checkpoint_readonly_tools:
+        return None  # Explicitly return None to preserve existing cache
+
     return None
 
 
