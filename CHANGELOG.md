@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.26] - 2026-01-18
+
+### Fixed
+- **Statusline disappears on checkpoint calls** - Checkpoint tool responses now include session context
+  - Root cause: `context_checkpoint` response didn't include `session_name`, causing Python hook to overwrite cache with empty string
+  - Added `session_name` and `project_path` to `CheckpointResponse` in `server/src/index.ts`
+  - Updated `CheckpointResponse` interface in `server/src/types/mcp.ts`
+  - Statusline now persists correctly after checkpoint creation
+- **MCP connection fails in Ghostty terminal** - GUI apps and some terminals don't inherit shell PATH
+  - Updated `~/.claude.json` example to use full path to bunx (`/Users/you/.bun/bin/bunx`)
+  - Added explicit PATH environment variable in MCP config
+  - Same fix applies to Claude Desktop and other GUI-launched MCP clients
+- **PostToolUse hook for checkpoint tools** - Updated `update-status-cache.py`
+  - Added `context_restore` handler to update cache with session info after restore
+  - Added explicit ignore list for read-only checkpoint tools to preserve existing cache
+  - Tools ignored: `context_list_checkpoints`, `context_get_checkpoint`, `context_checkpoint_add_items`, `context_checkpoint_remove_items`, `context_checkpoint_split`, `context_checkpoint_delete`, `context_tag`
+
+### Added
+- **Robust bun launcher script** - `server/scripts/launch.sh`
+  - Searches common bun locations: `~/.bun/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `/usr/bin`
+  - Falls back gracefully with helpful error message if bun not found
+  - Solves PATH issues for GUI apps, non-standard terminals, and remote sessions
+- **PATH troubleshooting documentation** - Added to README.md
+  - Explains why GUI apps don't inherit shell PATH
+  - Copy-paste MCP configs for Claude Desktop and Claude Code
+  - Platform-specific bun path examples
+
+### Changed
+- **Tool parameter ordering for better UX** - Name now appears before ID in tool calls
+  - Agent tool calls now display as `context_session_resume(session_name: "...", session_id: "...")`
+  - Users can immediately see what operation is happening without expanding tool calls
+  - Affected tools (10 total):
+    - `context_restore`
+    - `context_checkpoint_add_items`
+    - `context_checkpoint_remove_items`
+    - `context_checkpoint_split`
+    - `context_checkpoint_delete`
+    - `context_session_resume`
+    - `context_session_switch`
+    - `context_session_delete`
+    - `context_session_add_path`
+    - `context_session_remove_path`
+  - No breaking changes - both parameters still required, just reordered in schema
+- **Updated package.json bin entries** - Now use launcher script for better cross-platform support
+
 ## [0.1.25] - 2026-01-11
 
 ### Breaking Changes
