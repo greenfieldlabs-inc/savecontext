@@ -29,6 +29,8 @@ export interface CheckpointResponse {
   id: string;
   name: string;
   session_id: string;
+  session_name: string;
+  project_path: string;
   item_count: number;
   total_size: number;
   created_at: number;

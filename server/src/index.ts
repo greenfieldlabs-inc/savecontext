@@ -2130,10 +2130,21 @@ async function handleCreateCheckpoint(args: any) {
     // Update agent activity timestamp
     await updateAgentActivity();
 
+    // Refresh status cache so statusline doesn't lose the session
+    const session = getDb().getSession(sessionId);
+    if (session) {
+      const stats = getDb().getSessionStats(sessionId);
+      const projectPath = normalizeProjectPath(getCurrentProjectPath());
+      const provider = getCurrentProvider();
+      refreshStatusCache(session, { itemCount: stats?.total_items || 0, provider, projectPath });
+    }
+
     const response: CheckpointResponse = {
       id: checkpoint.id,
       name: checkpoint.name,
       session_id: checkpoint.session_id,
+      session_name: session?.name || '',
+      project_path: normalizeProjectPath(getCurrentProjectPath()),
       item_count: checkpoint.item_count,
       total_size: checkpoint.total_size,
       created_at: checkpoint.created_at,
