@@ -914,13 +914,13 @@ export const tools = [
         inputSchema: {
           type: 'object',
           properties: {
-            checkpoint_id: {
-              type: 'string',
-              description: 'ID of checkpoint to restore',
-            },
             checkpoint_name: {
               type: 'string',
               description: 'Checkpoint name (for verification and display)',
+            },
+            checkpoint_id: {
+              type: 'string',
+              description: 'ID of checkpoint to restore',
             },
             restore_tags: {
               type: 'array',
@@ -970,17 +970,17 @@ export const tools = [
       },
       {
         name: 'context_checkpoint_add_items',
-        description: 'Add items to an existing checkpoint. Use to incrementally build up checkpoints or add items you forgot to include. Requires checkpoint_id, checkpoint_name, and item_keys.',
+        description: 'Add items to an existing checkpoint. Use to incrementally build up checkpoints or add items you forgot to include. Requires checkpoint_name, checkpoint_id, and item_keys.',
         inputSchema: {
           type: 'object',
           properties: {
-            checkpoint_id: {
-              type: 'string',
-              description: 'ID of the checkpoint to modify',
-            },
             checkpoint_name: {
               type: 'string',
               description: 'Checkpoint name (for verification and display)',
+            },
+            checkpoint_id: {
+              type: 'string',
+              description: 'ID of the checkpoint to modify',
             },
             item_keys: {
               type: 'array',
@@ -988,22 +988,22 @@ export const tools = [
               description: 'Keys of items to add to the checkpoint',
             },
           },
-          required: ['checkpoint_id', 'checkpoint_name', 'item_keys'],
+          required: ['checkpoint_name', 'checkpoint_id', 'item_keys'],
         },
       },
       {
         name: 'context_checkpoint_remove_items',
-        description: 'Remove items from an existing checkpoint. Use to fix checkpoints that contain unwanted items or to clean up mixed work streams. Requires checkpoint_id, checkpoint_name, and item_keys.',
+        description: 'Remove items from an existing checkpoint. Use to fix checkpoints that contain unwanted items or to clean up mixed work streams. Requires checkpoint_name, checkpoint_id, and item_keys.',
         inputSchema: {
           type: 'object',
           properties: {
-            checkpoint_id: {
-              type: 'string',
-              description: 'ID of the checkpoint to modify',
-            },
             checkpoint_name: {
               type: 'string',
               description: 'Checkpoint name (for verification and display)',
+            },
+            checkpoint_id: {
+              type: 'string',
+              description: 'ID of the checkpoint to modify',
             },
             item_keys: {
               type: 'array',
@@ -1011,22 +1011,22 @@ export const tools = [
               description: 'Keys of items to remove from the checkpoint',
             },
           },
-          required: ['checkpoint_id', 'checkpoint_name', 'item_keys'],
+          required: ['checkpoint_name', 'checkpoint_id', 'item_keys'],
         },
       },
       {
         name: 'context_checkpoint_split',
-        description: 'Split a checkpoint into multiple checkpoints based on tags or categories. REQUIRED WORKFLOW: (1) Use context_get_checkpoint to see all items, (2) Use context_tag to tag items by work stream (e.g., "auth", "ui"), (3) Then split using include_tags for each work stream. Each split MUST have include_tags or include_categories - the tool will ERROR if no filters provided. Verify results show expected item counts. Requires source_checkpoint_id, source_checkpoint_name, and splits array.',
+        description: 'Split a checkpoint into multiple checkpoints based on tags or categories. REQUIRED WORKFLOW: (1) Use context_get_checkpoint to see all items, (2) Use context_tag to tag items by work stream (e.g., "auth", "ui"), (3) Then split using include_tags for each work stream. Each split MUST have include_tags or include_categories - the tool will ERROR if no filters provided. Verify results show expected item counts. Requires source_checkpoint_name, source_checkpoint_id, and splits array.',
         inputSchema: {
           type: 'object',
           properties: {
-            source_checkpoint_id: {
-              type: 'string',
-              description: 'ID of the checkpoint to split',
-            },
             source_checkpoint_name: {
               type: 'string',
               description: 'Source checkpoint name (for verification and display)',
+            },
+            source_checkpoint_id: {
+              type: 'string',
+              description: 'ID of the checkpoint to split',
             },
             splits: {
               type: 'array',
@@ -1060,25 +1060,25 @@ export const tools = [
               description: 'Array of split configurations',
             },
           },
-          required: ['source_checkpoint_id', 'source_checkpoint_name', 'splits'],
+          required: ['source_checkpoint_name', 'source_checkpoint_id', 'splits'],
         },
       },
       {
         name: 'context_checkpoint_delete',
-        description: 'Delete a checkpoint permanently. Use to clean up failed, duplicate, or unwanted checkpoints. Cannot be undone. Requires checkpoint_id and checkpoint_name.',
+        description: 'Delete a checkpoint permanently. Use to clean up failed, duplicate, or unwanted checkpoints. Cannot be undone. Requires checkpoint_name and checkpoint_id.',
         inputSchema: {
           type: 'object',
           properties: {
-            checkpoint_id: {
-              type: 'string',
-              description: 'ID of the checkpoint to delete',
-            },
             checkpoint_name: {
               type: 'string',
               description: 'Checkpoint name (for verification and display)',
             },
+            checkpoint_id: {
+              type: 'string',
+              description: 'ID of the checkpoint to delete',
+            },
           },
-          required: ['checkpoint_id', 'checkpoint_name'],
+          required: ['checkpoint_name', 'checkpoint_id'],
         },
       },
       {
@@ -1214,100 +1214,100 @@ export const tools = [
       },
       {
         name: 'context_session_resume',
-        description: 'Resume a previously paused session. Restores session state and sets it as the active session. Cannot resume completed sessions. Requires session_id and session_name.',
+        description: 'Resume a previously paused session. Restores session state and sets it as the active session. Cannot resume completed sessions. Requires session_name and session_id.',
         inputSchema: {
           type: 'object',
           properties: {
+            session_name: {
+              type: 'string',
+              description: 'Name of the session (for verification and display)',
+            },
             session_id: {
               type: 'string',
               description: 'ID of the session to resume',
             },
-            session_name: {
-              type: 'string',
-              description: 'Name of the session (for verification and display)',
-            },
           },
-          required: ['session_id', 'session_name'],
+          required: ['session_name', 'session_id'],
         },
       },
       {
         name: 'context_session_switch',
-        description: 'Switch between sessions atomically. Pauses current session (if any) and resumes the specified session. Use when working on multiple projects. Requires session_id and session_name.',
+        description: 'Switch between sessions atomically. Pauses current session (if any) and resumes the specified session. Use when working on multiple projects. Requires session_name and session_id.',
         inputSchema: {
           type: 'object',
           properties: {
+            session_name: {
+              type: 'string',
+              description: 'Name of the session (for verification and display)',
+            },
             session_id: {
               type: 'string',
               description: 'ID of the session to switch to',
             },
-            session_name: {
-              type: 'string',
-              description: 'Name of the session (for verification and display)',
-            },
           },
-          required: ['session_id', 'session_name'],
+          required: ['session_name', 'session_id'],
         },
       },
       {
         name: 'context_session_delete',
-        description: 'Delete a session permanently. Cannot delete active sessions (must pause or end first). Cascade deletes all context items and checkpoints. Use to clean up accidentally created sessions. Requires session_id and session_name.',
+        description: 'Delete a session permanently. Cannot delete active sessions (must pause or end first). Cascade deletes all context items and checkpoints. Use to clean up accidentally created sessions. Requires session_name and session_id.',
         inputSchema: {
           type: 'object',
           properties: {
-            session_id: {
-              type: 'string',
-              description: 'ID of the session to delete',
-            },
             session_name: {
               type: 'string',
               description: 'Name of the session (for verification and display)',
             },
+            session_id: {
+              type: 'string',
+              description: 'ID of the session to delete',
+            },
           },
-          required: ['session_id', 'session_name'],
+          required: ['session_name', 'session_id'],
         },
       },
       {
         name: 'context_session_add_path',
-        description: 'Add a project path to a session. Enables sessions to span multiple related directories (e.g., monorepo folders like /frontend and /backend, or /app and /dashboard). Requires session_id and session_name.',
+        description: 'Add a project path to a session. Enables sessions to span multiple related directories (e.g., monorepo folders like /frontend and /backend, or /app and /dashboard). Requires session_name and session_id.',
         inputSchema: {
           type: 'object',
           properties: {
-            project_path: {
+            session_name: {
               type: 'string',
-              description: 'Project path to add (defaults to current working directory)',
+              description: 'Name of the session (for verification and display)',
             },
             session_id: {
               type: 'string',
               description: 'ID of the session to add path to',
             },
-            session_name: {
+            project_path: {
               type: 'string',
-              description: 'Name of the session (for verification and display)',
+              description: 'Project path to add (defaults to current working directory)',
             },
           },
-          required: ['session_id', 'session_name'],
+          required: ['session_name', 'session_id'],
         },
       },
       {
         name: 'context_session_remove_path',
-        description: 'Remove a project path from a session. Cannot remove the last path (sessions must have at least one path). Use to clean up paths that are no longer needed. Requires session_id and session_name.',
+        description: 'Remove a project path from a session. Cannot remove the last path (sessions must have at least one path). Use to clean up paths that are no longer needed. Requires session_name and session_id.',
         inputSchema: {
           type: 'object',
           properties: {
-            project_path: {
+            session_name: {
               type: 'string',
-              description: 'Project path to remove from the session',
+              description: 'Name of the session (for verification and display)',
             },
             session_id: {
               type: 'string',
               description: 'ID of the session to remove path from',
             },
-            session_name: {
+            project_path: {
               type: 'string',
-              description: 'Name of the session (for verification and display)',
+              description: 'Project path to remove from the session',
             },
           },
-          required: ['project_path', 'session_id', 'session_name'],
+          required: ['session_name', 'session_id', 'project_path'],
         },
       },
       // ====================
