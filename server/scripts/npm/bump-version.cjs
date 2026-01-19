@@ -12,6 +12,11 @@ const packages = [
 const bumpType = process.argv[2] || 'patch';
 
 function bumpVersion(version, type) {
+  // If type looks like a version number (x.y.z), use it directly
+  if (/^\d+\.\d+\.\d+$/.test(type)) {
+    return type;
+  }
+
   const [major, minor, patch] = version.split('.').map(Number);
   switch (type) {
     case 'major':
