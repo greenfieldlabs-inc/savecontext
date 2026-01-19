@@ -8,6 +8,11 @@ Versions 0.1.0-0.1.2 were development releases with package.json version mismatc
 ## [0.1.26] - 2026-01-18
 
 ### Fixed
+- **New database fails with "no such table: embeddings_meta"** - Missing table in schema.sql
+  - Root cause: Table was only defined in migration 008, not in schema.sql
+  - For new databases, migrations are marked applied without running
+  - Added embeddings_meta table to schema.sql before vec_context_chunks
+  - Fixes GitHub issue #3
 - **Statusline disappears on checkpoint calls** - Checkpoint tool responses now include session context
   - Root cause: `context_checkpoint` response didn't include `session_name`, causing Python hook to overwrite cache with empty string
   - Added `session_name` and `project_path` to `CheckpointResponse` in `server/src/index.ts`

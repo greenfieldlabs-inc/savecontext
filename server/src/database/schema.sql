@@ -397,6 +397,13 @@ CREATE INDEX IF NOT EXISTS idx_plans_short_id ON plans(project_id, short_id);
 -- Embeddings Support (Local Semantic Search)
 -- ====================
 
+-- Embeddings configuration metadata (for dynamic dimension support)
+CREATE TABLE IF NOT EXISTS embeddings_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 -- Vector storage for chunked context item embeddings (sqlite-vec virtual table)
 -- Uses 768 dimensions (nomic-embed-text default)
 -- Large items are split into multiple chunks for full content coverage
