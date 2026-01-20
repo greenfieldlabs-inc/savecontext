@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.27] - 2026-01-19
+
+### Fixed
+- **MCP server fails with "Module not found" error** - Symlink resolution in launch.sh
+  - Root cause: `BASH_SOURCE[0]` returns symlink path, not resolved path
+  - When bunx installs packages, it creates symlinks (e.g., `/opt/homebrew/bin/mcp`)
+  - Old code calculated `../dist/index.js` relative to symlink location, not package location
+  - Added symlink resolution loop using `readlink` before calculating paths
+  - Affects: bunx, bun global install, any symlinked installation
+
+### Changed
+- **Updated troubleshooting docs** - Consolidated MCP connection troubleshooting
+  - Combined "bunx not found" and "Module not found" into single section
+  - Added cache clearing instructions for users with stale cached versions
+
 ## [0.1.26] - 2026-01-18
 
 ### Fixed
