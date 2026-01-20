@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.28] - 2026-01-19
+
+### Fixed
+- **`all_projects: true` returns 0 sessions** - Fixed `context_list_sessions` ignoring the flag
+  - Root cause: `listSessionsByPaths` had early return when `projectPaths.length === 0` without checking `all_projects`
+  - Added `all_projects?: boolean` to filters parameter
+  - Updated guard clause to allow empty projectPaths when `all_projects` is explicitly true
+
 ## [0.1.27] - 2026-01-19
 
 ### Fixed

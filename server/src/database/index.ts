@@ -572,11 +572,11 @@ export class DatabaseManager {
       status?: string;
       include_completed?: boolean;
       search?: string;
+      all_projects?: boolean;
     }
   ): Session[] {
-    // If no project paths AND no search, return empty
-    // But if we have search, we can search all sessions
-    if (projectPaths.length === 0 && !filters?.search) {
+    // If no project paths AND no search AND not explicitly requesting all, return empty
+    if (projectPaths.length === 0 && !filters?.search && !filters?.all_projects) {
       return [];
     }
 

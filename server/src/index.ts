@@ -2828,6 +2828,7 @@ async function handleListSessions(args: any) {
         status,
         include_completed: includeCompleted,
         search,
+        all_projects: allProjects || usedFallback,
       }
     );
 
