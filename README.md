@@ -106,9 +106,9 @@ Add this to your MCP configuration (Claude Code, Cursor, etc.):
 That's it! Your AI assistant now has persistent memory across sessions.
 
 <details>
-<summary><b>⚠️ Troubleshooting: "bunx not found" or MCP connection fails</b></summary>
+<summary><b>⚠️ Troubleshooting: MCP connection fails</b></summary>
 
-GUI apps (Claude Desktop) and some terminals (Ghostty, tmux) don't inherit your shell's PATH, so `bunx` may not be found.
+**"bunx not found"** — GUI apps (Claude Desktop) and some terminals (Ghostty, tmux) don't inherit your shell's PATH.
 
 **Fix:** Use the full path to bunx and include PATH in env:
 
@@ -132,6 +132,17 @@ Common locations:
 - macOS/Linux: `~/.bun/bin/bunx`
 - Homebrew: `/opt/homebrew/bin/bunx`
 - npm global: `/usr/local/bin/bunx`
+
+---
+
+**"Module not found" error** — If you see `Module not found "/opt/homebrew/bin/../dist/index.js"` or similar, you have a cached older version.
+
+**Fix:** Clear the bunx cache:
+
+```bash
+rm -rf ~/.bun/install/cache/@savecontext*
+bunx @savecontext/mcp@latest --version  # Should show 0.1.27+
+```
 
 </details>
 
