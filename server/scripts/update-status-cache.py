@@ -13,6 +13,7 @@ import os
 import re
 import time
 from pathlib import Path
+from typing import Optional
 
 
 def get_status_key():
@@ -124,7 +125,7 @@ def get_status_key():
     return re.sub(r'[/\\:*?"<>| ]', '_', status_key)[:100]
 
 
-def parse_tool_response(tool_response) -> dict | None:
+def parse_tool_response(tool_response) -> Optional[dict]:
     """Parse tool response from various formats into a dict."""
 
     # Handle Claude Code format: [{"type":"text","text":"{ JSON }"}]
@@ -150,7 +151,7 @@ def parse_tool_response(tool_response) -> dict | None:
     return tool_response
 
 
-def extract_session_info(tool_name: str, data: dict, cwd: str) -> dict | None:
+def extract_session_info(tool_name: str, data: dict, cwd: str) -> Optional[dict]:
     """Extract session info from parsed MCP tool response data."""
 
     if not data:
