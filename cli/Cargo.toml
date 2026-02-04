@@ -1,0 +1,69 @@
+[package]
+name = "sc"
+version = "0.1.29"
+edition = "2024"
+rust-version = "1.85"
+description = "SaveContext CLI - The OS for AI coding agents"
+authors = ["Shane Monastero"]
+license = "MIT"
+
+[[bin]]
+name = "sc"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+clap_complete = "4.5"
+
+# Database
+rusqlite = { version = "0.32", features = ["bundled", "blob"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Hashing
+sha2 = "0.10"
+
+# HTTP client (for embeddings)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+
+# Fast embeddings (Model2Vec - 2-tier architecture)
+model2vec-rs = "0.1"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Terminal
+colored = "3.0"
+
+# Utilities
+uuid = { version = "1.0", features = ["v4", "serde"] }
+directories = "5.0"
+
+[dev-dependencies]
+tempfile = "3.10"
+assert_cmd = "2.0"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
