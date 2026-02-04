@@ -192,7 +192,8 @@ export class DatabaseManager {
   }
 
   private runMigrations(): void {
-    const migrationsDir = path.join(__dirname, 'migrations');
+    // Migrations are at repo root, shared between CLI and server
+    const migrationsDir = path.join(__dirname, '..', '..', '..', 'migrations');
 
     if (!fs.existsSync(migrationsDir)) {
       return;
