@@ -49,6 +49,7 @@ program
   .option('--setup-skill', 'Install SaveContext skill for AI coding tools')
   .option('--tool <name>', 'Target tool (claude-code)')
   .option('--path <path>', 'Custom path for skill install')
+  .option('--mode <mode>', 'Skill mode: mcp, cli, or both (default: mcp)')
   .option('--sync', 'Sync skill to all previously configured tools')
   .parse(process.argv);
 
@@ -71,6 +72,7 @@ if (options.setupSkill || options.sync) {
     tool: options.tool,
     path: options.path,
     sync: options.sync,
+    mode: options.mode,
   });
   process.exit(0);
 }
@@ -137,6 +139,14 @@ import { relativeToAbsoluteTime } from './utils/time.js';
 import { createEmbeddingProvider, getProviderInfo } from './lib/embeddings/factory.js';
 import { chunkText } from './lib/embeddings/chunker.js';
 import type { EmbeddingProvider } from './lib/embeddings/index.js';
+
+// CLI Bridge for gradual migration (Strangler Fig pattern)
+import {
+  shouldUseCliBridge,
+  delegateToCliBridge,
+  getBridge,
+  Features,
+} from './cli/index.js';
 
 // Initialize local SQLite database
 const db = new DatabaseManager();
@@ -452,6 +462,33 @@ function error(message: string, err?: any): ToolResponse {
  * Auto-detects project path and checks for existing active sessions
  */
 async function handleSessionStart(args: any) {
+  // Check if CLI bridge should be used for session operations
+  if (shouldUseCliBridge(Features.SESSION)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    const projectPath = args?.project_path || getCurrentProjectPath();
+    const result = await delegateToCliBridge(
+      () => bridge.sessionStart(args?.name, {
+        description: args?.description,
+        projectPath,
+      }),
+      { message: `Session started via CLI`, operationName: 'session.start' }
+    );
+    // Update MCP server state after successful CLI operation
+    if (result.success && result.data) {
+      const sessionData = result.data as { id?: string; session_id?: string };
+      const newSessionId = sessionData.id || sessionData.session_id;
+      if (newSessionId) {
+        currentSessionId = newSessionId;
+        const session = db?.getSession(newSessionId);
+        if (session) {
+          updateStatusLine(session, { projectPath });
+        }
+      }
+    }
+    return result;
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const validated = validateCreateSession(args);
 
@@ -593,6 +630,19 @@ async function handleSessionStart(args: any) {
  * Save context to current session
  */
 async function handleSaveContext(args: any) {
+  // Check if CLI bridge should be used for context operations
+  if (shouldUseCliBridge(Features.CONTEXT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.contextSave(args?.key, args?.value, {
+        category: args?.category,
+        priority: args?.priority,
+      }),
+      { message: `Saved '${args?.key}' via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const sessionId = await ensureSession();
     const validated = validateSaveContext(args);
@@ -684,6 +734,27 @@ async function generateEmbeddingAsync(itemId: string, text: string): Promise<voi
  * Get context from current session (or all sessions if search_all_sessions=true)
  */
 async function handleGetContext(args: any) {
+  // Check if CLI bridge should be used for context operations
+  // Note: CLI only supports keyword search, so we skip delegation for:
+  // - semantic search (query with embeddings)
+  // - search_all_sessions (requires cross-session semantic search)
+  const hasSemanticSearch = args?.query && !args?.key;
+  const searchAllSessions = args?.search_all_sessions === true;
+  if (shouldUseCliBridge(Features.CONTEXT) && !hasSemanticSearch && !searchAllSessions) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.contextGet({
+        key: args?.key,
+        query: args?.query,
+        category: args?.category,
+        priority: args?.priority,
+        limit: args?.limit,
+      }),
+      { message: args?.key ? `Retrieved item '${args.key}' via CLI` : 'Retrieved context items via CLI', operationName: 'context.get' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled or semantic search needed)
   try {
     const validated = validateGetContext(args);
     const searchAllSessions = args?.search_all_sessions === true;
@@ -830,6 +901,16 @@ async function handleGetContext(args: any) {
  * Delete context item from current session
  */
 async function handleDeleteContext(args: any) {
+  // Check if CLI bridge should be used for context operations
+  if (shouldUseCliBridge(Features.CONTEXT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.contextDelete(args?.key),
+      { message: `Deleted context item '${args?.key}' via CLI`, operationName: 'context.delete' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const sessionId = await ensureSession();
 
@@ -862,6 +943,21 @@ async function handleDeleteContext(args: any) {
  * Update existing context item
  */
 async function handleUpdateContext(args: any) {
+  // Check if CLI bridge should be used for context operations
+  if (shouldUseCliBridge(Features.CONTEXT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.contextUpdate(args?.key, {
+        value: args?.value,
+        category: args?.category,
+        priority: args?.priority,
+        channel: args?.channel,
+      }),
+      { message: `Updated context item '${args?.key}' via CLI`, operationName: 'context.update' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const sessionId = await ensureSession();
 
@@ -913,6 +1009,16 @@ async function handleUpdateContext(args: any) {
  * Save project memory (command, config, or note)
  */
 async function handleMemorySave(args: any) {
+  // Check if CLI bridge should be used for memory operations
+  if (shouldUseCliBridge(Features.MEMORY)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.memorySave(args?.key, args?.value, { category: args?.category }),
+      { message: `Saved memory '${args?.key}' via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
 
@@ -951,6 +1057,16 @@ async function handleMemorySave(args: any) {
  * Get project memory by key
  */
 async function handleMemoryGet(args: any) {
+  // Check if CLI bridge should be used for memory operations
+  if (shouldUseCliBridge(Features.MEMORY)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.memoryGet(args?.key),
+      { message: 'Memory retrieved via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
 
@@ -985,6 +1101,16 @@ async function handleMemoryGet(args: any) {
  * List all project memory
  */
 async function handleMemoryList(args: any) {
+  // Check if CLI bridge should be used for memory operations
+  if (shouldUseCliBridge(Features.MEMORY)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.memoryList(args?.category),
+      { message: 'Memory listed via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
     const category = args?.category;
@@ -1008,6 +1134,16 @@ async function handleMemoryList(args: any) {
  * Delete project memory by key
  */
 async function handleMemoryDelete(args: any) {
+  // Check if CLI bridge should be used for memory operations
+  if (shouldUseCliBridge(Features.MEMORY)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.memoryDelete(args?.key),
+      { message: `Deleted memory '${args?.key}' via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
 
@@ -1043,6 +1179,20 @@ async function handleMemoryDelete(args: any) {
  * Create a new project
  */
 async function handleProjectCreate(args: any) {
+  // Check if CLI bridge should be used for project operations
+  if (shouldUseCliBridge(Features.PROJECT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.projectCreate(args?.project_path, {
+        name: args?.name,
+        description: args?.description,
+        issuePrefix: args?.issue_prefix,
+      }),
+      { message: `Created project via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.project_path) {
       throw new ValidationError('project_path is required');
@@ -1080,6 +1230,19 @@ async function handleProjectCreate(args: any) {
  * List all projects
  */
 async function handleProjectList(args: any) {
+  // Check if CLI bridge should be used for project operations
+  if (shouldUseCliBridge(Features.PROJECT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.projectList({
+        limit: args?.limit,
+        includeSessionCount: args?.include_session_count,
+      }),
+      { message: 'Projects listed via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const result = getDb().listProjects({
       limit: args?.limit,
@@ -1099,6 +1262,16 @@ async function handleProjectList(args: any) {
  * Get a project by path
  */
 async function handleProjectGet(args: any) {
+  // Check if CLI bridge should be used for project operations
+  if (shouldUseCliBridge(Features.PROJECT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.projectGet(args?.project_path),
+      { message: 'Project retrieved via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.project_path) {
       throw new ValidationError('project_path is required');
@@ -1124,6 +1297,20 @@ async function handleProjectGet(args: any) {
  * Update a project
  */
 async function handleProjectUpdate(args: any) {
+  // Check if CLI bridge should be used for project operations
+  if (shouldUseCliBridge(Features.PROJECT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.projectUpdate(args?.project_path, {
+        name: args?.name,
+        description: args?.description,
+        issuePrefix: args?.issue_prefix,
+      }),
+      { message: `Updated project via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.project_path) {
       throw new ValidationError('project_path is required');
@@ -1159,6 +1346,16 @@ async function handleProjectUpdate(args: any) {
  * Delete a project
  */
 async function handleProjectDelete(args: any) {
+  // Check if CLI bridge should be used for project operations
+  if (shouldUseCliBridge(Features.PROJECT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.projectDelete(args?.project_path, args?.confirm ?? false),
+      { message: `Deleted project via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.project_path) {
       throw new ValidationError('project_path is required');
@@ -1188,6 +1385,24 @@ async function handleProjectDelete(args: any) {
  * Create a new issue
  */
 async function handleTaskCreate(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueCreate(args?.title, {
+        description: args?.description,
+        details: args?.details,
+        issueType: args?.issueType,
+        priority: args?.priority,
+        parent: args?.parentId,
+        planId: args?.planId,
+        labels: args?.labels?.join(','),
+      }),
+      { message: `Created issue via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
 
@@ -1250,6 +1465,25 @@ async function handleTaskCreate(args: any) {
  * Update an existing issue
  */
 async function handleTaskUpdate(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueUpdate(args?.id, {
+        title: args?.title,
+        description: args?.description,
+        details: args?.details,
+        status: args?.status,
+        priority: args?.priority,
+        issueType: args?.issueType,
+        parentId: args?.parentId,
+        planId: args?.planId,
+      }),
+      { message: `Updated issue ${args?.id} via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.id) {
       throw new ValidationError('id is required');
@@ -1364,6 +1598,39 @@ async function handleTaskUpdate(args: any) {
  * List issues for current project
  */
 async function handleTaskList(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueList({
+        id: args?.id,
+        status: args?.status,
+        priority: args?.priority,
+        priorityMin: args?.priority_min,
+        priorityMax: args?.priority_max,
+        issueType: args?.issueType,
+        labels: args?.labels,
+        labelsAny: args?.labels_any,
+        parentId: args?.parentId,
+        planId: args?.planId,
+        hasSubtasks: args?.has_subtasks,
+        hasDependencies: args?.has_dependencies,
+        sortBy: args?.sortBy,
+        sortOrder: args?.sortOrder,
+        limit: args?.limit,
+        createdInLastDays: args?.created_in_last_days,
+        createdInLastHours: args?.created_in_last_hours,
+        updatedInLastDays: args?.updated_in_last_days,
+        updatedInLastHours: args?.updated_in_last_hours,
+        search: args?.search,
+        assignee: args?.assignee,
+        allProjects: args?.all_projects,
+      }),
+      { message: 'Issues listed via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     // Support all_projects flag to query across all projects
     const allProjects = args?.all_projects === true;
@@ -1447,6 +1714,16 @@ async function handleTaskList(args: any) {
  * Mark an issue as complete
  */
 async function handleTaskComplete(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueComplete(args?.id),
+      { message: `Completed issue ${args?.id} via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.id) {
       throw new ValidationError('id is required');
@@ -1511,6 +1788,16 @@ async function handleTaskComplete(args: any) {
  * Delete an issue permanently
  */
 async function handleTaskDelete(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueDelete(args?.id),
+      { message: `Deleted issue ${args?.id} via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.id) {
       throw new ValidationError('id is required');
@@ -1562,6 +1849,16 @@ async function handleTaskDelete(args: any) {
  * Mark an issue as a duplicate of another issue
  */
 async function handleTaskMarkDuplicate(args: Record<string, unknown> = {}) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueMarkDuplicate(args?.id as string, args?.duplicate_of_id as string),
+      { message: `Marked issue as duplicate via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const id = args.id as string | undefined;
     const issue_title = args.issue_title as string | undefined;
@@ -1637,6 +1934,21 @@ async function handleTaskMarkDuplicate(args: Record<string, unknown> = {}) {
  * Clone an issue to create a copy with the same or overridden properties
  */
 async function handleIssueClone(args: Record<string, unknown> = {}) {
+  // Check if CLI bridge should be used for issue operations
+  // Note: CLI only supports title, status, includeLabels - other options need original impl
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueClone(args?.id as string, {
+        title: args?.title as string | undefined,
+        status: args?.status as string | undefined,
+        includeLabels: args?.include_labels as boolean | undefined,
+      }),
+      { message: `Cloned issue via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const id = args.id as string | undefined;
     const issue_title = args.issue_title as string | undefined;
@@ -1737,6 +2049,20 @@ async function handleIssueClone(args: Record<string, unknown> = {}) {
  * Add a dependency between issues
  */
 async function handleTaskAddDependency(args: Record<string, unknown> = {}) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueAddDependency(
+        args?.issueId as string,
+        args?.dependsOnId as string,
+        { dependencyType: args?.dependencyType as string | undefined }
+      ),
+      { message: `Added dependency via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const issueId = args.issueId as string | undefined;
     const dependsOnId = args.dependsOnId as string | undefined;
@@ -1787,6 +2113,16 @@ async function handleTaskAddDependency(args: Record<string, unknown> = {}) {
  * Remove a dependency between issues
  */
 async function handleTaskRemoveDependency(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueRemoveDependency(args?.issueId, args?.dependsOnId),
+      { message: `Removed dependency via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.issueId) {
       throw new ValidationError('issueId is required');
@@ -1819,6 +2155,16 @@ async function handleTaskRemoveDependency(args: any) {
  * Add labels to an issue
  */
 async function handleTaskAddLabels(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueAddLabels(args?.id, args?.labels || []),
+      { message: `Added labels via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.id) {
       throw new ValidationError('id is required');
@@ -1856,6 +2202,16 @@ async function handleTaskAddLabels(args: any) {
  * Remove labels from an issue
  */
 async function handleTaskRemoveLabels(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueRemoveLabels(args?.id, args?.labels || []),
+      { message: `Removed labels via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.id) {
       throw new ValidationError('id is required');
@@ -1893,6 +2249,33 @@ async function handleTaskRemoveLabels(args: any) {
  * Claim issues for the current agent
  */
 async function handleTaskClaim(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    const issueIds = args?.issue_ids || [];
+    const claimed: string[] = [];
+    const errors: string[] = [];
+
+    for (const id of issueIds) {
+      try {
+        await bridge.issueClaim(id);
+        claimed.push(id);
+      } catch (err) {
+        errors.push(`${id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        claimed,
+        errors: errors.length > 0 ? errors : undefined,
+      },
+      message: `Claimed ${claimed.length} issue(s) via CLI`,
+    };
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.issue_ids || !Array.isArray(args.issue_ids) || args.issue_ids.length === 0) {
       throw new ValidationError('issue_ids must be a non-empty array');
@@ -1921,6 +2304,33 @@ async function handleTaskClaim(args: any) {
  * Release issues back to the pool
  */
 async function handleTaskRelease(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    const issueIds = args?.issue_ids || [];
+    const released: string[] = [];
+    const errors: string[] = [];
+
+    for (const id of issueIds) {
+      try {
+        await bridge.issueRelease(id);
+        released.push(id);
+      } catch (err) {
+        errors.push(`${id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        released,
+        errors: errors.length > 0 ? errors : undefined,
+      },
+      message: `Released ${released.length} issue(s) via CLI`,
+    };
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.issue_ids || !Array.isArray(args.issue_ids) || args.issue_ids.length === 0) {
       throw new ValidationError('issue_ids must be a non-empty array');
@@ -1948,6 +2358,16 @@ async function handleTaskRelease(args: any) {
  * Get issues that are ready to work on (no blocking dependencies)
  */
 async function handleTaskGetReady(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueGetReady({ limit: args?.limit }),
+      { message: 'Ready issues retrieved via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
     const issues = getDb().getReadyIssues(projectPath, args?.limit);
@@ -1979,6 +2399,20 @@ async function handleTaskGetReady(args: any) {
  * Get next block of issues and claim them
  */
 async function handleTaskGetNextBlock(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueGetNextBlock({
+        count: args?.count,
+        priorityMin: args?.priority_min,
+        labels: args?.labels,
+      }),
+      { message: 'Got next block via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const projectPath = normalizeProjectPath(getCurrentProjectPath());
     const agentId = getCurrentProvider();
@@ -2019,6 +2453,19 @@ async function handleTaskGetNextBlock(args: any) {
  * Create multiple issues in a batch with dependencies
  */
 async function handleTaskCreateBatch(args: any) {
+  // Check if CLI bridge should be used for issue operations
+  if (shouldUseCliBridge(Features.ISSUE)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.issueCreateBatch(args?.issues || [], {
+        dependencies: args?.dependencies,
+        planId: args?.planId,
+      }),
+      { message: 'Created batch via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!args?.issues || !Array.isArray(args.issues) || args.issues.length === 0) {
       throw new ValidationError('issues must be a non-empty array');
@@ -2097,6 +2544,23 @@ async function handleTaskCreateBatch(args: any) {
  * Create checkpoint of current session state
  */
 async function handleCreateCheckpoint(args: any) {
+  // Check if CLI bridge should be used for checkpoint operations
+  if (shouldUseCliBridge(Features.CHECKPOINT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.checkpointCreate(args?.name, {
+        description: args?.description,
+        includeGit: args?.include_git,
+        includeCategories: args?.include_categories,
+        includeTags: args?.include_tags,
+        excludeTags: args?.exclude_tags,
+        includeKeys: args?.include_keys,
+      }),
+      { message: `Checkpoint '${args?.name}' created via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const sessionId = await ensureSession();
     const validated = validateCreateCheckpoint(args);
@@ -2164,6 +2628,16 @@ async function handleCreateCheckpoint(args: any) {
  * Creates checkpoint + analyzes priority items + generates summary
  */
 async function handlePrepareCompaction() {
+  // Check if CLI bridge should be used for compaction operations
+  if (shouldUseCliBridge(Features.COMPACTION)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.prepareCompaction(),
+      { message: 'Compaction prepared via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const sessionId = await ensureSession();
 
@@ -2306,9 +2780,42 @@ async function handlePrepareCompaction() {
 }
 
 /**
+ * Read-only context aggregation for agent injection.
+ * Delegates to CLI bridge (sc prime) which aggregates session, items, issues, memory, and transcripts.
+ */
+async function handlePrime(args: any) {
+  if (shouldUseCliBridge(Features.PRIME)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.prime({
+        transcript: args?.include_transcript,
+        transcriptLimit: args?.transcript_limit,
+      }),
+      { message: 'Context primed via CLI', operationName: 'prime' }
+    );
+  }
+
+  // Fallback: prime requires the Rust CLI
+  return error('context_prime requires the sc CLI binary. Install it with: cargo install savecontext-cli');
+}
+
+/**
  * Restore from checkpoint
  */
 async function handleRestoreCheckpoint(args: any) {
+  // Check if CLI bridge should be used for checkpoint operations
+  if (shouldUseCliBridge(Features.CHECKPOINT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.checkpointRestore(args?.checkpoint_id, {
+        restoreCategories: args?.restore_categories,
+        restoreTags: args?.restore_tags,
+      }),
+      { message: `Checkpoint restored via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const sessionId = await ensureSession();
     const validated = validateRestoreCheckpoint(args);
@@ -2343,6 +2850,19 @@ async function handleRestoreCheckpoint(args: any) {
  * Tag context items for organization and filtering
  */
 async function handleTagContextItems(args: any) {
+  // Check if CLI bridge should be used for context operations
+  if (shouldUseCliBridge(Features.CONTEXT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.contextTag(args?.action, args?.tags, {
+        keys: args?.keys,
+        keyPattern: args?.key_pattern,
+      }),
+      { message: `Tagged context items via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const sessionId = await ensureSession();
     const validated = validateTagContextItems(args);
@@ -2375,6 +2895,19 @@ async function handleTagContextItems(args: any) {
  * Add items to an existing checkpoint
  */
 async function handleAddItemsToCheckpoint(args: any) {
+  // Check if CLI bridge should be used for checkpoint operations
+  if (shouldUseCliBridge(Features.CHECKPOINT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.checkpointAddItems(
+        args?.checkpoint_id as string,
+        args?.item_keys as string[]
+      ),
+      { message: `Added items to checkpoint via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const sessionId = await ensureSession();
     const validated = validateCheckpointItemManagement(args);
@@ -2408,6 +2941,19 @@ async function handleAddItemsToCheckpoint(args: any) {
  * Remove items from an existing checkpoint
  */
 async function handleRemoveItemsFromCheckpoint(args: any) {
+  // Check if CLI bridge should be used for checkpoint operations
+  if (shouldUseCliBridge(Features.CHECKPOINT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.checkpointRemoveItems(
+        args?.checkpoint_id as string,
+        args?.item_keys as string[]
+      ),
+      { message: `Removed items from checkpoint via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const sessionId = await ensureSession();
     const validated = validateCheckpointItemManagement(args);
@@ -2441,6 +2987,22 @@ async function handleRemoveItemsFromCheckpoint(args: any) {
  * Split a checkpoint into multiple checkpoints based on filters
  */
 async function handleSplitCheckpoint(args: any) {
+  // Check if CLI bridge should be used for checkpoint operations
+  if (shouldUseCliBridge(Features.CHECKPOINT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    const splits = args?.splits?.map((s: any) => ({
+      name: s.name,
+      description: s.description,
+      includeTags: s.include_tags,
+      includeCategories: s.include_categories,
+    })) || [];
+    return delegateToCliBridge(
+      () => bridge.checkpointSplit(args?.source_checkpoint_id, splits),
+      { message: `Checkpoint split via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     await ensureSession();
     const validated = validateCheckpointSplit(args);
@@ -2508,6 +3070,16 @@ async function handleSplitCheckpoint(args: any) {
 }
 
 async function handleDeleteCheckpoint(args: any) {
+  // Check if CLI bridge should be used for checkpoint operations
+  if (shouldUseCliBridge(Features.CHECKPOINT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.checkpointDelete(args?.checkpoint_id as string),
+      { message: `Deleted checkpoint via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     await ensureSession();
     const validated = validateDeleteCheckpoint(args);
@@ -2543,6 +3115,23 @@ async function handleDeleteCheckpoint(args: any) {
  * Use context_get_checkpoint to get full details for a specific checkpoint
  */
 async function handleListCheckpoints(args?: any) {
+  // Check if CLI bridge should be used for checkpoint operations
+  if (shouldUseCliBridge(Features.CHECKPOINT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.checkpointList({
+        search: args?.search,
+        sessionId: args?.session_id,
+        projectPath: args?.project_path,
+        includeAllProjects: args?.include_all_projects,
+        limit: args?.limit,
+        offset: args?.offset,
+      }),
+      { message: 'Checkpoints listed via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const search = args?.search;
     const sessionId = args?.session_id;
@@ -2627,6 +3216,16 @@ async function handleListCheckpoints(args?: any) {
  * Returns complete checkpoint data including description, git info, and item preview
  */
 async function handleGetCheckpoint(args: any) {
+  // Check if CLI bridge should be used for checkpoint operations
+  if (shouldUseCliBridge(Features.CHECKPOINT)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.checkpointGet(args?.checkpoint_id),
+      { message: 'Checkpoint retrieved via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const { checkpoint_id } = args;
 
@@ -2687,6 +3286,16 @@ async function handleGetCheckpoint(args: any) {
  * Get status of current session
  */
 async function handleSessionStatus() {
+  // Check if CLI bridge should be used for status operations
+  if (shouldUseCliBridge(Features.STATUS)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.status(),
+      { message: 'Session status retrieved via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     if (!currentSessionId) {
       return success({ current_session_id: null }, 'No active session');
@@ -2736,6 +3345,16 @@ async function handleSessionStatus() {
  * Rename current session
  */
 async function handleSessionRename(args: any) {
+  // Check if CLI bridge should be used for session operations
+  if (shouldUseCliBridge(Features.SESSION)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.sessionRename(args?.new_name),
+      { message: `Session renamed to '${args?.new_name}' via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const sessionId = await ensureSession();
     const { current_name, new_name } = args;
@@ -2786,6 +3405,25 @@ async function handleSessionRename(args: any) {
  * List recent sessions
  */
 async function handleListSessions(args: any) {
+  // Check if CLI bridge should be used for session operations
+  if (shouldUseCliBridge(Features.SESSION)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    // Use explicit project_path if provided, otherwise detect from CWD (unless all_projects is true)
+    const projectPath = args?.project_path || (args?.all_projects ? undefined : getCurrentProjectPath());
+    return delegateToCliBridge(
+      () => bridge.sessionList({
+        limit: args?.limit,
+        status: args?.status,
+        search: args?.search,
+        projectPath,
+        allProjects: args?.all_projects,
+        includeCompleted: args?.include_completed,
+      }),
+      { message: 'Sessions listed via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const limit = args?.limit || 10;
     const allProjects = args?.all_projects || false;
@@ -2860,6 +3498,22 @@ async function handleListSessions(args: any) {
  * End (complete) the current session
  */
 async function handleSessionEnd() {
+  // Check if CLI bridge should be used for session operations
+  if (shouldUseCliBridge(Features.SESSION)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    const result = await delegateToCliBridge(
+      () => bridge.sessionEnd(),
+      { message: 'Session ended via CLI' }
+    );
+    // Update MCP server state after successful CLI operation
+    if (result.success) {
+      currentSessionId = null;
+      updateStatusLine(null);
+    }
+    return result;
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const sessionId = await ensureSession();
     const session = db!.getSession(sessionId);
@@ -2912,6 +3566,22 @@ async function handleSessionEnd() {
  * Pause the current session
  */
 async function handleSessionPause() {
+  // Check if CLI bridge should be used for session operations
+  if (shouldUseCliBridge(Features.SESSION)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    const result = await delegateToCliBridge(
+      () => bridge.sessionPause(),
+      { message: 'Session paused via CLI' }
+    );
+    // Update MCP server state after successful CLI operation
+    if (result.success) {
+      currentSessionId = null;
+      updateStatusLine(null);
+    }
+    return result;
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const sessionId = await ensureSession();
     const session = db!.getSession(sessionId);
@@ -2953,6 +3623,25 @@ async function handleSessionPause() {
  * Resume a paused session
  */
 async function handleSessionResume(args: any) {
+  // Check if CLI bridge should be used for session operations
+  if (shouldUseCliBridge(Features.SESSION)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    const result = await delegateToCliBridge(
+      () => bridge.sessionResume(args?.session_id),
+      { message: `Resumed session via CLI` }
+    );
+    // Update MCP server state after successful CLI operation
+    if (result.success && args?.session_id) {
+      currentSessionId = args.session_id;
+      const session = db?.getSession(args.session_id);
+      if (session) {
+        updateStatusLine(session);
+      }
+    }
+    return result;
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const { session_id, session_name } = args;
 
@@ -3012,6 +3701,25 @@ async function handleSessionResume(args: any) {
  * Switch between sessions (pause current, resume another)
  */
 async function handleSessionSwitch(args: any) {
+  // Check if CLI bridge should be used for session operations
+  if (shouldUseCliBridge(Features.SESSION)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    const result = await delegateToCliBridge(
+      () => bridge.sessionSwitch(args?.session_id),
+      { message: `Switched to session via CLI` }
+    );
+    // Update MCP server state after successful CLI operation
+    if (result.success && args?.session_id) {
+      currentSessionId = args.session_id;
+      const session = db?.getSession(args.session_id);
+      if (session) {
+        updateStatusLine(session);
+      }
+    }
+    return result;
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const { session_id, session_name } = args;
 
@@ -3079,6 +3787,22 @@ async function handleSessionSwitch(args: any) {
  * Delete a session
  */
 async function handleSessionDelete(args: any) {
+  // Check if CLI bridge should be used for session operations
+  if (shouldUseCliBridge(Features.SESSION)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    const result = await delegateToCliBridge(
+      () => bridge.sessionDelete(args?.session_id),
+      { message: `Session deleted via CLI` }
+    );
+    // Update MCP server state if we deleted the current session
+    if (result.success && args?.session_id === currentSessionId) {
+      currentSessionId = null;
+      updateStatusLine(null);
+    }
+    return result;
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     const { session_id, session_name } = args;
 
@@ -3125,6 +3849,17 @@ async function handleSessionDelete(args: any) {
  * Enables sessions to span multiple related directories (e.g., monorepo folders)
  */
 async function handleSessionAddPath(args: any) {
+  // Check if CLI bridge should be used for session operations
+  if (shouldUseCliBridge(Features.SESSION)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    const projectPath = args?.project_path || getCurrentProjectPath();
+    return delegateToCliBridge(
+      () => bridge.sessionAddPath(args?.session_id, projectPath),
+      { message: `Added path to session via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     // Validate required fields
     const typedArgs = args as { session_id?: string; session_name?: string; project_path?: string };
@@ -3199,6 +3934,17 @@ async function handleSessionAddPath(args: any) {
  * Cannot remove the last path - sessions must have at least one path
  */
 async function handleSessionRemovePath(args: unknown) {
+  // Check if CLI bridge should be used for session operations
+  if (shouldUseCliBridge(Features.SESSION)) {
+    const typedArgs = args as { session_id?: string; project_path?: string };
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.sessionRemovePath(typedArgs?.session_id || '', typedArgs?.project_path || ''),
+      { message: `Removed path from session via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
     // Validate required fields
     const typedArgs = args as { session_id?: string; session_name?: string; project_path?: string };
@@ -3277,6 +4023,24 @@ async function handleSessionRemovePath(args: unknown) {
 // ====================
 
 async function handlePlanCreate(args: any) {
+  // Check if CLI bridge should be used for plan operations
+  if (shouldUseCliBridge(Features.PLAN)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.planCreate(
+        args?.title as string,
+        args?.content as string,
+        {
+          status: args?.status,
+          successCriteria: args?.successCriteria,
+          projectPath: args?.project_path,
+        }
+      ),
+      { message: `Created plan via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
 
     const projectPath = normalizeProjectPath(args?.project_path || getCurrentProjectPath());
@@ -3308,6 +4072,20 @@ async function handlePlanCreate(args: any) {
 }
 
 async function handlePlanList(args: any) {
+  // Check if CLI bridge should be used for plan operations
+  if (shouldUseCliBridge(Features.PLAN)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.planList({
+        projectPath: args?.project_path,
+        status: args?.status,
+        limit: args?.limit,
+      }),
+      { message: 'Plans listed via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
 
     const projectPath = normalizeProjectPath(args?.project_path || getCurrentProjectPath());
@@ -3327,6 +4105,16 @@ async function handlePlanList(args: any) {
 }
 
 async function handlePlanGet(args: any) {
+  // Check if CLI bridge should be used for plan operations
+  if (shouldUseCliBridge(Features.PLAN)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.planGet(args?.plan_id),
+      { message: 'Plan retrieved via CLI' }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
 
     if (!args?.plan_id) {
@@ -3345,6 +4133,22 @@ async function handlePlanGet(args: any) {
 }
 
 async function handlePlanUpdate(args: any) {
+  // Check if CLI bridge should be used for plan operations
+  if (shouldUseCliBridge(Features.PLAN)) {
+    const bridge = getBridge({ actor: getCurrentClientInfo().name, sessionId: currentSessionId || undefined });
+    return delegateToCliBridge(
+      () => bridge.planUpdate(args?.id as string, {
+        title: args?.title,
+        content: args?.content,
+        status: args?.status,
+        successCriteria: args?.successCriteria,
+        projectPath: args?.project_path,
+      }),
+      { message: `Updated plan via CLI` }
+    );
+  }
+
+  // Original implementation (fallback when CLI bridge disabled)
   try {
 
     if (!args?.id) {
@@ -3538,6 +4342,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: JSON.stringify(await handleCreateCheckpoint(args), null, 2) }] };
       case 'context_prepare_compaction':
         return { content: [{ type: 'text', text: JSON.stringify(await handlePrepareCompaction(), null, 2) }] };
+      case 'context_prime':
+        return { content: [{ type: 'text', text: JSON.stringify(await handlePrime(args), null, 2) }] };
       case 'context_restore':
         return { content: [{ type: 'text', text: JSON.stringify(await handleRestoreCheckpoint(args), null, 2) }] };
       case 'context_tag':

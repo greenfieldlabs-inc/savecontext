@@ -7,7 +7,7 @@ import {
 export const tools = [
       {
         name: 'context_session_start',
-        description: 'Start a new coding session or resume existing one. Auto-derives channel from git branch. Call at conversation start or when switching contexts. Use force_new=true to always create a fresh session instead of resuming an existing one. IMPORTANT: Always pass project_path with the specific project folder path (not workspace root). If working in a monorepo or unsure which project folder to use, ask the user before calling this tool.',
+        description: 'Start a NEW coding session. Auto-derives channel from git branch. Use force_new=true to always create a fresh session instead of resuming an existing one. IMPORTANT: Always pass project_path with the specific project folder path (not workspace root). If working in a monorepo or unsure which project folder to use, ask the user before calling this tool. WARNING: Do NOT use this tool when the user says "resume" - use context_list_sessions + context_session_resume instead to avoid creating duplicate sessions.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1142,6 +1142,23 @@ export const tools = [
         inputSchema: {
           type: 'object',
           properties: {},
+        },
+      },
+      {
+        name: 'context_prime',
+        description: 'Read-only context aggregation for agent injection. Returns session state, high-priority items, active issues, project memory, and command reference in a single payload. Optionally parses Claude Code session transcripts for additional context. Use at conversation start or when an agent needs full project awareness.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            include_transcript: {
+              type: 'boolean',
+              description: 'Include parsed Claude Code session transcripts for richer context (default: false)',
+            },
+            transcript_limit: {
+              type: 'number',
+              description: 'Maximum number of transcript entries to include (default: 5)',
+            },
+          },
         },
       },
       {

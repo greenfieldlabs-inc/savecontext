@@ -3,6 +3,14 @@
 // ====================
 
 /**
+ * Skill installation mode
+ * - mcp: Install SaveContext-MCP skill (for agents with MCP server access)
+ * - cli: Install SaveContext-CLI skill (for agents with Bash access only)
+ * - both: Install both skills
+ */
+export type SkillMode = 'mcp' | 'cli' | 'both';
+
+/**
  * Setup skill result
  */
 export interface SetupSkillResult {
@@ -18,6 +26,7 @@ export interface SkillInstallation {
   tool: string;
   path: string;
   installedAt: number;
+  mode: SkillMode;
 }
 
 /**
@@ -34,4 +43,5 @@ export interface SetupSkillOptions {
   tool?: string;
   path?: string;
   sync?: boolean;
+  mode?: SkillMode;
 }
