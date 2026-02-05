@@ -25,9 +25,11 @@ SaveContext is a Model Context Protocol (MCP) server that gives AI coding assist
 - **Semantic Search** — Find past decisions by meaning, not just keywords
 - **Checkpoints** — Snapshot and restore session state at any point
 
+> **🦀 CLI-First Development:** The Rust CLI (`sc`) is the **primary implementation** — all business logic lives there, and the MCP server delegates to it via a bridge pattern. **New features land in the CLI first**, often weeks before MCP support. For the best experience, latest capabilities, and fastest performance, **prefer using `sc` directly**. See [`cli/README.md`](cli/README.md) for the full command reference.
+
 ## 🛠️ Features
 
-- **Local Semantic Search**: AI-powered search using Ollama or Transformers.js for offline embedding generation
+- **2-Tier Semantic Search**: Instant local embeddings via Model2Vec (~15ms) with optional quality tier (Ollama, HuggingFace)
 - **Multi-Agent Support**: Run multiple CLI/IDE instances simultaneously with agent-scoped session tracking
 - **Automatic Provider Detection**: Detects 30+ MCP clients including coding tools (Claude Code, Cursor, Cline, VS Code, JetBrains, etc.) and desktop apps (Claude Desktop, Perplexity, ChatGPT, Raycast, etc.)
 - **Session Lifecycle Management**: Full session state management with pause, resume, end, switch, and delete operations
@@ -358,13 +360,28 @@ The templates include:
 
 SaveContext includes a skill system that teaches AI coding assistants how to use SaveContext effectively. Skills are markdown files containing workflows, best practices, and usage patterns.
 
+### Skill Modes
+
+SaveContext offers two skill variants:
+
+| Mode | Skill | For |
+|------|-------|-----|
+| `mcp` (default) | SaveContext-MCP | Agents with MCP server access (Claude Code, Cursor, etc.) |
+| `cli` | SaveContext-CLI | Agents with only Bash access, using the `sc` binary |
+| `both` | Both installed | Agents that may use either method |
+
 ### Setup Skills
 
 ```bash
+# Install MCP skill (default)
 bunx @savecontext/mcp@latest --setup-skill
-```
 
-This installs the SaveContext skill to your AI tool's skills directory.
+# Install CLI skill (for bash-only agents)
+bunx @savecontext/mcp@latest --setup-skill --mode cli
+
+# Install both
+bunx @savecontext/mcp@latest --setup-skill --mode both
+```
 
 ### Supported Tools
 
@@ -372,9 +389,9 @@ We natively support **Claude Code**, **OpenAI Codex**, and **Gemini CLI** with a
 
 | Tool | Default Location |
 |------|------------------|
-| Claude Code | `~/.claude/skills/SaveContext/` |
-| OpenAI Codex | `~/.codex/skills/SaveContext/` |
-| Gemini CLI | `~/.gemini/skills/SaveContext/` |
+| Claude Code | `~/.claude/skills/SaveContext-MCP/` (or `SaveContext-CLI/`) |
+| OpenAI Codex | `~/.codex/skills/SaveContext-MCP/` (or `SaveContext-CLI/`) |
+| Gemini CLI | `~/.gemini/skills/SaveContext-MCP/` (or `SaveContext-CLI/`) |
 
 ### Custom Tool Locations
 
@@ -382,7 +399,7 @@ You can add skills to any AI tool that supports a skills directory:
 
 ```bash
 # Install to a custom path
-bunx @savecontext/mcp@latest --setup-skill --path ~/.my-ai-tool/skills/SaveContext
+bunx @savecontext/mcp@latest --setup-skill --path ~/.my-ai-tool/skills --mode both
 ```
 
 Your custom locations are saved to `~/.savecontext/skill-sync.json` and will be updated automatically when you run `--setup-skill --sync` in the future.
@@ -395,7 +412,7 @@ To update skills across all your configured tools:
 bunx @savecontext/mcp@latest --setup-skill --sync
 ```
 
-This re-installs skills to every location in your sync config, including any custom paths you've added.
+This re-installs skills to every location in your sync config, respecting each tool's configured mode.
 
 **Want native support for another AI tool?** [Open an issue](https://github.com/greenfieldlabs-inc/savecontext/issues) with the tool name and its skills directory path.
 
@@ -447,84 +464,49 @@ chmod +x ~/.savecontext/statusline.py ~/.savecontext/hooks/update-status-cache.p
 
 ---
 
-## CLI Session Management
+## CLI (`sc`) — Primary Implementation
 
-Manage sessions directly from the command line.
+The Rust-native CLI is the **source of truth** for all SaveContext operations. The MCP server is a thin wrapper that delegates every tool call to `sc` via a bridge pattern. This architecture ensures:
 
-### Commands
+- **Single source of truth** — Business logic lives in Rust, not duplicated in TypeScript
+- **CLI-first features** — New capabilities land in the CLI first, often weeks before MCP
+- **Direct performance** — No MCP overhead when using `sc` directly
+- **Agent flexibility** — Works with any agent that has Bash access, not just MCP clients
 
-| Command | Description |
-|---------|-------------|
-| `savecontext-sessions list` | List sessions with search and filtering |
-| `savecontext-sessions show` | Display session details |
-| `savecontext-sessions rename` | Rename a session (interactive picker) |
-| `savecontext-sessions delete` | Delete a session with confirmation |
-| `savecontext-sessions archive` | Mark session as completed (soft close) |
-| `savecontext-sessions add-path` | Add a project path to a session |
-| `savecontext-sessions remove-path` | Remove a project path from a session |
-
-### Usage
-
-All commands that accept `[session_id]` show an interactive picker if no ID is provided.
+### Installation
 
 ```bash
-# List sessions (filters to current directory by default)
-savecontext-sessions list
-savecontext-sessions list --global          # All projects
-savecontext-sessions list --search "auth"   # Search by name/description
-savecontext-sessions list --all             # Include archived sessions
+# Build from source
+cd cli && cargo build --release
 
-# Show session details (context items, checkpoints, paths)
-savecontext-sessions show [session_id]
-
-# Rename a session
-savecontext-sessions rename [session_id]
-
-# Archive a session (marks as completed, data preserved)
-savecontext-sessions archive [session_id]
-
-# Delete a session permanently
-savecontext-sessions delete [session_id]
-
-# Manage multi-project sessions
-savecontext-sessions add-path [session_id]     # Add current directory
-savecontext-sessions remove-path [session_id]  # Remove a path
+# Add to PATH
+cp target/release/sc /usr/local/bin/sc
 ```
 
-## CLI Project Management
-
-Manage projects directly from the command line.
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `savecontext-projects list` | List all projects with session counts |
-| `savecontext-projects rename` | Rename a project (interactive picker) |
-| `savecontext-projects delete` | Delete a project (sessions unlinked, not deleted) |
-| `savecontext-projects merge` | Merge two projects into one |
-
-### Usage
-
-All commands use interactive pickers to select projects.
+### Quick Start
 
 ```bash
-# List all projects
-savecontext-projects list
-savecontext-projects list --counts   # Include session counts (slower)
-savecontext-projects list --json     # JSON output
-
-# Rename a project
-savecontext-projects rename
-
-# Delete a project (sessions unlinked, not deleted)
-savecontext-projects delete
-savecontext-projects delete --force  # Skip confirmation for projects with sessions
-
-# Merge two projects (moves all sessions to target)
-savecontext-projects merge
-savecontext-projects merge --keep-source  # Don't delete source project after merge
+sc init                                    # Initialize database
+sc session start "working on auth"         # Start a session
+sc save auth-choice "Using JWT" -c decision -p high  # Save context
+sc issue create "Fix login bug" -t bug -p 3          # Create issue
+sc status                                  # Check current state
 ```
+
+### For AI Agents
+
+Agents with Bash access can use `sc` directly — no MCP server required:
+
+```bash
+# Agent-friendly JSON output (auto-enabled when stdout is non-TTY)
+sc issue list --format json
+sc get -s "authentication" --threshold 0.3 --json
+
+# Structured error codes for agent self-correction
+sc issue complete invalid-id  # Returns error code + hint + similar IDs
+```
+
+See [`cli/README.md`](cli/README.md) for the full command reference and [`cli/AGENTS.md`](cli/AGENTS.md) for agent integration patterns.
 
 ## Configuration
 
@@ -1191,14 +1173,21 @@ Control when and how SaveContext preserves context before your conversation wind
 
 #### Local Semantic Search
 
-SaveContext supports local semantic search using vector embeddings. When enabled, `context_get` can find items by meaning rather than just keywords.
+SaveContext uses a 2-tier embedding system for semantic search. When you save context items, embeddings are generated in the background and used by `context_get` to find items by meaning.
 
-**How It Works:**
-1. When you save context items, embeddings are generated in the background
-2. The `context_get` tool's `query` parameter uses vector similarity to find relevant items
-3. Falls back to keyword search if no embedding provider is available
+**2-Tier Architecture:**
 
-**Setting Up Ollama (Recommended):**
+| Tier | Provider | Speed | Quality | Setup |
+|------|----------|-------|---------|-------|
+| **Tier 1 (Fast)** | Model2Vec | ~15ms | Good | Automatic (built-in) |
+| **Tier 2 (Quality)** | Ollama or HuggingFace | ~50-200ms | Best | Optional configuration |
+
+- **Tier 1** runs instantly with no external dependencies — every item gets an embedding immediately
+- **Tier 2** provides higher quality embeddings when configured and available
+- Items are automatically re-embedded in the background when Tier 2 becomes available
+- Search uses the highest quality embedding available for each item
+
+**Setting Up Tier 2 with Ollama (Recommended):**
 
 [Ollama](https://ollama.ai) provides fast, local embedding generation:
 
@@ -1215,7 +1204,7 @@ ollama pull nomic-embed-text
 
 SaveContext will automatically detect and use Ollama when available.
 
-**Using HuggingFace (Custom Models):**
+**Setting Up Tier 2 with HuggingFace:**
 
 Use any embedding model from HuggingFace Hub:
 
@@ -1229,18 +1218,15 @@ export HF_MODEL=BAAI/bge-base-en-v1.5
 
 Supported models include: `sentence-transformers/all-MiniLM-L6-v2`, `BAAI/bge-*`, `thenlper/gte-*`, `intfloat/e5-*`, `nomic-ai/nomic-embed-text-v1.5`, and any HuggingFace embedding model.
 
-**Fallback to Transformers.js:**
-
-If no other provider is available, SaveContext falls back to [@xenova/transformers](https://github.com/xenova/transformers.js) which runs entirely in-process. This is slower but requires no external dependencies.
-
 **Provider Comparison:**
 
-| Feature | Ollama | HuggingFace | Transformers.js |
-|---------|--------|-------------|-----------------|
-| Speed | Fast (~50ms) | Medium (~200ms) | Slower (~500ms) |
-| Model | nomic-embed-text | Any HF model | all-MiniLM-L6-v2 |
-| Setup | Requires install | HF_TOKEN env | Automatic |
-| Location | Local | Cloud API | In-process |
+| Feature | Model2Vec (Tier 1) | Ollama (Tier 2) | HuggingFace (Tier 2) |
+|---------|-------------------|-----------------|---------------------|
+| Speed | ~15ms | ~50ms | ~200ms |
+| Quality | Good | Best | Best |
+| Model | Built-in | nomic-embed-text | Any HF model |
+| Setup | Automatic | Requires install | HF_TOKEN env |
+| Location | In-process | Local | Cloud API |
 
 **Environment Variables:**
 
@@ -1335,40 +1321,33 @@ All data is stored locally on your machine in SQLite:
 
 ### Server Implementation
 
-The MCP server is built on `@modelcontextprotocol/sdk` and provides 52 tools for context management, including session lifecycle, memory storage, issue tracking, plan management, and checkpoints. The server maintains a single active session per connection and stores data in a local SQLite database with optional semantic search via sqlite-vec.
+The MCP server is built on `@modelcontextprotocol/sdk` and provides 54 tools for context management. The server delegates all operations to the Rust CLI (`sc`) via a bridge pattern, ensuring a single source of truth for business logic.
 
 ```
-server/
+cli/                          # Rust CLI (primary implementation)
+├── src/
+│   ├── main.rs               # CLI entry point
+│   ├── cli/commands/         # 45+ command implementations
+│   ├── storage/              # SQLite database layer
+│   ├── embeddings/           # Embedding providers (Ollama, HF)
+│   └── sync/                 # JSONL import/export
+└── Cargo.toml
+
+server/                       # MCP server (delegates to CLI)
 ├── src/
 │   ├── index.ts              # MCP server entry point
-│   ├── cloud-client.ts       # Cloud API client (legacy, to be removed)
 │   ├── cli/
-│   │   ├── sessions.ts       # savecontext-sessions CLI
-│   │   ├── projects.ts       # savecontext-projects CLI
-│   │   ├── embeddings.ts     # savecontext-embeddings CLI
-│   │   ├── issues.ts         # savecontext-issues CLI
-│   │   ├── plans.ts          # savecontext-plans CLI
-│   │   ├── migrate.ts        # savecontext-migrate CLI (cloud→local)
-│   │   ├── auth.ts           # savecontext-auth CLI (legacy)
-│   │   ├── device-flow.ts    # OAuth device flow (legacy)
-│   │   └── setup.ts          # --setup-skill, --setup-statusline
+│   │   ├── bridge.ts         # Executes sc commands
+│   │   ├── delegate.ts       # Routes MCP tools to CLI
+│   │   └── mappers.ts        # Maps CLI output to MCP responses
 │   ├── database/
 │   │   ├── index.ts          # DatabaseManager class
-│   │   ├── schema.sql        # SQLite schema
-│   │   └── migrations/       # 10 migration files
-│   ├── tools/
-│   │   └── registry.ts       # Tool definitions (52 MCP tools)
-│   ├── lib/
-│   │   └── embeddings/
-│   │       ├── index.ts      # Provider exports
-│   │       ├── factory.ts    # Provider factory
-│   │       ├── ollama.ts     # Ollama provider
-│   │       ├── huggingface.ts # HuggingFace provider
-│   │       ├── transformers.ts # Transformers.js fallback
-│   │       └── chunker.ts    # Text chunking
-│   ├── types/                # 18 domain type files
-│   └── utils/                # Shared utilities
+│   │   └── schema.sql        # SQLite schema
+│   ├── tools/registry.ts     # Tool definitions (54 MCP tools)
+│   └── lib/embeddings/       # Embedding providers
 └── dist/                     # Compiled JavaScript
+
+migrations/                   # SQL migrations (shared by CLI and server)
 ```
 
 ### Database Schema
@@ -2484,6 +2463,11 @@ pnpm start    # Run compiled version
 ## Contributing
 
 See [CONTRIBUTING.md](https://github.com/greenfieldlabs-inc/savecontext/blob/main/CONTRIBUTING.md) for development guidelines.
+
+## Acknowledgments
+
+- [Jeffrey Emanuel](https://x.com/doodlestein) — Model2Vec approach for the 2-tier embedding system
+- [beads](https://github.com/steveyegge/beads) — CLI-as-agent-interface pattern for AI agents that inspired the SaveContext-CLI skill
 
 ## License
 

@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.29] - 2026-01-30
+
+### Added
+- **Rust CLI as primary implementation** - The `sc` command is now the source of truth for all SaveContext operations
+  - 45+ commands covering sessions, issues, context, memory, plans, checkpoints, sync, and embeddings
+  - MCP server delegates all tool calls to CLI via bridge pattern (`server/src/cli/bridge.ts`)
+  - Background embedding generation after save operations
+  - Shell completions for bash, zsh, fish, and PowerShell
+  - See `cli/README.md` for full command reference
+- **CLI README documentation** - Comprehensive guide for the `sc` command
+- **Unified version management** - `npm run version:patch` now syncs all packages including Rust CLI
+  - Updated `bump-version.cjs` to handle Cargo.toml via regex-based TOML parsing
+- **2-tier embedding system** - Fast local embeddings with quality fallback
+  - Tier 1: Model2Vec for instant local embeddings (~15ms per item, no API calls)
+  - Tier 2: Configurable quality tier (Ollama, HuggingFace) for higher accuracy
+  - Automatic tier selection based on provider availability
+  - Background re-embedding when quality tier becomes available
+  - Credit: Model2Vec approach inspired by Jeffrey Emanuel's research
+- **Error intelligence for agents** — Structured error codes, hints, and similar-ID suggestions
+  - 20 error codes with exit code taxonomy (2=database, 3=not-found, 4=validation, 5=dependency)
+  - Retryable flag for agent self-correction (validation errors, ambiguous IDs)
+  - Similar ID suggestions on not-found errors via Levenshtein distance
+  - Enriched `NoActiveSession` errors list recent resumable sessions with IDs, names, statuses
+- **Intent detection** — Auto-normalize status, type, and priority synonyms
+  - `done`/`complete`/`resolved` → `closed`, `wip`/`working` → `in_progress`, etc.
+  - `defect`/`issue` → `bug`, `story`/`enhancement` → `feature`, etc.
+  - `P0`-`P4`, `critical`/`high`/`medium`/`low` → numeric priorities
+- **Pipeline ergonomics** — Auto-JSON when stdout is non-TTY, `--format json|csv|table`, `--silent` mode, `--dry-run` flag
+- **Multi-ID operations** — `sc issue complete SC-a1b2 SC-c3d4 SC-e5f6`
+- **File-based bulk import** — `sc issue create --file issues.jsonl`
+- **CSV output** — `sc issue list --format csv`
+- **`cli/AGENTS.md`** — Machine-readable agent reference with error codes, synonym tables, output modes
+- **Dual skill system** - SaveContext-MCP and SaveContext-CLI skill variants
+  - `SaveContext-MCP`: For agents with MCP server access (renamed from `SaveContext`)
+  - `SaveContext-CLI`: For agents with only Bash access, using `sc` binary commands
+  - CLI skill uses `allowed-tools: "Bash(sc:*)"` for agent tool authorization
+  - 8 workflow files mapping MCP tools to equivalent `sc` CLI commands
+  - Inspired by beads' CLI-as-agent-interface pattern
+- **Mode-aware skill installation** - `--mode mcp|cli|both` flag for `--setup-skill`
+  - Each tool installation tracks its configured mode in `skill-sync.json`
+  - `--sync` respects per-tool mode configuration
+  - Backward compatible: existing installations default to `mcp` mode
+  - Legacy `SaveContext` directory auto-cleaned on upgrade
+
+### Changed
+- **Migrations moved to repo root** - SQL migrations now shared between CLI and server at `/migrations`
+- **Architecture documentation updated** - README now reflects CLI-first architecture
+- **Go CLI removed** - Rust CLI is the sole implementation
+- **Skill directory renamed** - `skills/SaveContext/` → `skills/SaveContext-MCP/`
+- **Build script cleans stale skills** - `dist/skills/` is now cleaned before copy to prevent orphaned directories
+
+### Fixed
+- **PostToolUse hook fails with TypeError on Python 3.9** - Hook script used Python 3.10+ syntax
+  - Root cause: `dict | None` union type syntax requires Python 3.10+, but macOS ships with Python 3.9.6
+  - Changed to `Optional[dict]` from typing module for backwards compatibility
+  - Affected file: `server/scripts/update-status-cache.py`
+  - Users saw "hook error" in Claude Code output despite successful tool responses
+- **Agents create duplicate sessions instead of resuming** - Skill instructions caused incorrect behavior
+  - Root cause: MCP skill `SessionStart.md` workflow didn't strongly warn against using `context_session_start` for resume
+  - Added critical rules to both MCP and CLI skill files: never use start for resume operations
+  - Affected tool: `context_session_start` / `sc session start`
+- **Project path discovery uses git root** — `discover_project_savecontext_dir()` now anchors to git repo root before walking up, preventing subdirectory `.savecontext/` dirs from shadowing the project root
+- **Session/issue lists find ancestor paths** — List commands now match sessions scoped to parent directories when running from subdirectories
+
 ## [0.1.28] - 2026-01-19
 
 ### Fixed

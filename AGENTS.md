@@ -2,6 +2,10 @@
 
 Template for AI coding agents. Copy this to your project.
 
+> **🦀 CLI Preferred:** The Rust CLI (`sc`) is the **primary implementation** — all MCP tools delegate to it. For agents with Bash access, **prefer using `sc` directly** for the latest features and best performance. See `cli/AGENTS.md` for the CLI agent reference.
+>
+> This file documents MCP tools for agents without Bash access. If you have both, use the CLI.
+
 ## Conversation Start Protocol
 
 **ALWAYS start with session management before any work:**
