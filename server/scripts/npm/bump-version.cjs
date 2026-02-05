@@ -3,10 +3,16 @@
 const fs = require('fs');
 const path = require('path');
 
-const packages = [
+// JSON packages (package.json files)
+const jsonPackages = [
   'package.json',
   'server/package.json',
   'dashboard/package.json'
+];
+
+// TOML packages (Cargo.toml files)
+const tomlPackages = [
+  'cli/Cargo.toml'
 ];
 
 const bumpType = process.argv[2] || 'patch';
@@ -29,10 +35,31 @@ function bumpVersion(version, type) {
   }
 }
 
+function updateJsonPackage(fullPath, newVersion) {
+  const pkg = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+  pkg.version = newVersion;
+  fs.writeFileSync(fullPath, JSON.stringify(pkg, null, 2) + '\n');
+}
+
+function getTomlVersion(content) {
+  const match = content.match(/^version\s*=\s*"([^"]+)"/m);
+  return match ? match[1] : null;
+}
+
+function updateTomlPackage(fullPath, newVersion) {
+  let content = fs.readFileSync(fullPath, 'utf8');
+  content = content.replace(
+    /^(version\s*=\s*)"[^"]+"/m,
+    `$1"${newVersion}"`
+  );
+  fs.writeFileSync(fullPath, content);
+}
+
 const rootDir = path.resolve(__dirname, '../../..');
 let newVersion;
 
-for (const pkgPath of packages) {
+// Process JSON packages first to get the new version
+for (const pkgPath of jsonPackages) {
   const fullPath = path.join(rootDir, pkgPath);
   const pkg = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
 
@@ -40,8 +67,20 @@ for (const pkgPath of packages) {
     newVersion = bumpVersion(pkg.version, bumpType);
   }
 
-  pkg.version = newVersion;
-  fs.writeFileSync(fullPath, JSON.stringify(pkg, null, 2) + '\n');
+  updateJsonPackage(fullPath, newVersion);
+  console.log(`${pkgPath}: ${newVersion}`);
+}
+
+// Process TOML packages with the same version
+for (const pkgPath of tomlPackages) {
+  const fullPath = path.join(rootDir, pkgPath);
+
+  if (!fs.existsSync(fullPath)) {
+    console.log(`${pkgPath}: skipped (file not found)`);
+    continue;
+  }
+
+  updateTomlPackage(fullPath, newVersion);
   console.log(`${pkgPath}: ${newVersion}`);
 }
 

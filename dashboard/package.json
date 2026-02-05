@@ -1,6 +1,6 @@
 {
   "name": "@savecontext/dashboard",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "description": "SaveContext Dashboard - The OS for AI coding agents",
   "bin": {
     "savecontext-dashboard": "./bin/savecontext-dashboard.js"

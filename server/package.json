@@ -1,16 +1,12 @@
 {
   "name": "@savecontext/mcp",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "description": "The OS for AI coding agents",
   "main": "dist/index.js",
   "type": "module",
   "bin": {
     "savecontext": "./scripts/launch.sh",
     "savecontext-mcp": "./dist/index.js",
-    "savecontext-sessions": "./dist/cli/sessions.js",
-    "savecontext-projects": "./dist/cli/projects.js",
-    "savecontext-plans": "./dist/cli/plans.js",
-    "savecontext-issues": "./dist/cli/issues.js",
     "savecontext-embeddings": "./dist/cli/embeddings.js",
     "savecontext-statusline": "./scripts/statusline.sh",
     "mcp": "./scripts/launch.sh"
@@ -24,7 +20,7 @@
     "skills"
   ],
   "scripts": {
-    "build": "tsc && cp src/database/schema.sql dist/database/ && cp -r src/database/migrations dist/database/ && cp -r skills dist/ && chmod +x dist/index.js dist/cli/sessions.js dist/cli/projects.js dist/cli/plans.js dist/cli/issues.js dist/cli/setup.js dist/cli/embeddings.js",
+    "build": "tsc && cp src/database/schema.sql dist/database/ && cp -r ../migrations dist/database/ && rm -r dist/skills 2>/dev/null; cp -r skills dist/ && chmod +x dist/index.js dist/cli/embeddings.js dist/cli/setup.js",
     "dev": "bun --watch src/index.ts",
     "start": "bun dist/index.js",
     "serve": "bun src/index.ts",
