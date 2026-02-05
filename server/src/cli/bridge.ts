@@ -383,7 +383,19 @@ export class CliBridge {
         let errorMessage = err.stderr;
         try {
           const errorJson = JSON.parse(err.stderr);
-          errorMessage = errorJson.error ?? err.stderr;
+          // errorJson.error may be a string or an object with { code, message, hint }
+          if (errorJson.error) {
+            if (typeof errorJson.error === 'string') {
+              errorMessage = errorJson.error;
+            } else if (typeof errorJson.error === 'object') {
+              // Extract message and hint for a more helpful error
+              const errObj = errorJson.error;
+              errorMessage = errObj.message ?? JSON.stringify(errObj);
+              if (errObj.hint) {
+                errorMessage += `\n\nHint: ${errObj.hint}`;
+              }
+            }
+          }
         } catch {
           // JSON parse failed, use raw stderr
         }
