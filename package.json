@@ -13,7 +13,8 @@
     "start": "npm run start -w server",
     "version:patch": "node server/scripts/npm/bump-version.cjs patch",
     "version:minor": "node server/scripts/npm/bump-version.cjs minor",
-    "version:major": "node server/scripts/npm/bump-version.cjs major"
+    "version:major": "node server/scripts/npm/bump-version.cjs major",
+    "sync:migrations": "rm -rf cli/migrations && cp -r migrations cli/ && echo 'Synced migrations to cli/'"
   },
   "repository": {
     "type": "git",

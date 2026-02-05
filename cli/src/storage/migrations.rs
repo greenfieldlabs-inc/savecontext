@@ -1,8 +1,10 @@
 //! Database migrations embedded at compile time.
 //!
-//! Migrations are sourced from `/migrations/` at the repo root and
-//! embedded into the binary using `include_str!`. This ensures the
-//! binary is self-contained with no runtime file dependencies.
+//! Migrations are sourced from `cli/migrations/` and embedded into the
+//! binary using `include_str!`. This ensures the package is self-contained
+//! for crates.io publishing.
+//!
+//! To sync migrations from repo root: `npm run sync:migrations`
 
 use rusqlite::{Connection, Result};
 use tracing::{info, warn};
@@ -20,51 +22,51 @@ struct Migration {
 const MIGRATIONS: &[Migration] = &[
     Migration {
         version: "001_add_session_lifecycle",
-        sql: include_str!("../../../migrations/001_add_session_lifecycle.sql"),
+        sql: include_str!("../../migrations/001_add_session_lifecycle.sql"),
     },
     Migration {
         version: "002_add_multi_path_sessions",
-        sql: include_str!("../../../migrations/002_add_multi_path_sessions.sql"),
+        sql: include_str!("../../migrations/002_add_multi_path_sessions.sql"),
     },
     Migration {
         version: "003_add_agent_sessions",
-        sql: include_str!("../../../migrations/003_add_agent_sessions.sql"),
+        sql: include_str!("../../migrations/003_add_agent_sessions.sql"),
     },
     Migration {
         version: "004_add_memory_and_tasks",
-        sql: include_str!("../../../migrations/004_add_memory_and_tasks.sql"),
+        sql: include_str!("../../migrations/004_add_memory_and_tasks.sql"),
     },
     Migration {
         version: "005_add_checkpoint_grouping",
-        sql: include_str!("../../../migrations/005_add_checkpoint_grouping.sql"),
+        sql: include_str!("../../migrations/005_add_checkpoint_grouping.sql"),
     },
     Migration {
         version: "006_rename_tasks_to_issues",
-        sql: include_str!("../../../migrations/006_rename_tasks_to_issues.sql"),
+        sql: include_str!("../../migrations/006_rename_tasks_to_issues.sql"),
     },
     Migration {
         version: "007_embeddings_support",
-        sql: include_str!("../../../migrations/007_embeddings_support.sql"),
+        sql: include_str!("../../migrations/007_embeddings_support.sql"),
     },
     Migration {
         version: "008_dynamic_vec_dimensions",
-        sql: include_str!("../../../migrations/008_dynamic_vec_dimensions.sql"),
+        sql: include_str!("../../migrations/008_dynamic_vec_dimensions.sql"),
     },
     Migration {
         version: "009_rename_task_to_reminder",
-        sql: include_str!("../../../migrations/009_rename_task_to_reminder.sql"),
+        sql: include_str!("../../migrations/009_rename_task_to_reminder.sql"),
     },
     Migration {
         version: "010_issue_projects",
-        sql: include_str!("../../../migrations/010_issue_projects.sql"),
+        sql: include_str!("../../migrations/010_issue_projects.sql"),
     },
     Migration {
         version: "011_blob_embeddings",
-        sql: include_str!("../../../migrations/011_blob_embeddings.sql"),
+        sql: include_str!("../../migrations/011_blob_embeddings.sql"),
     },
     Migration {
         version: "012_tiered_embeddings",
-        sql: include_str!("../../../migrations/012_tiered_embeddings.sql"),
+        sql: include_str!("../../migrations/012_tiered_embeddings.sql"),
     },
 ];
 
