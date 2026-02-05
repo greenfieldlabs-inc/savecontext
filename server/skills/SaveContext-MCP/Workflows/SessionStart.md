@@ -65,15 +65,9 @@ User: "let's work on the auth feature"
 → Session started (or resumed if exists)
 ```
 
-**Resume existing:**
-```
-User: "continue working on auth"
-→ context_session_start name="auth-feature"
-→ Resumed existing session
-```
-
 ## Do NOT
 
 - Start sessions for quick one-off saves
 - Create multiple sessions in one conversation
 - Skip force_new when user explicitly names a new version/release
+- **Use `context_session_start` when user says "resume" or "continue"** — use the Resume workflow instead (`context_list_sessions` → `context_session_resume`)

@@ -332,6 +332,109 @@ Both agents see each other's context. Use tags to track who did what:
 
 ---
 
+## Subagent Patterns
+
+When a parent agent spawns subagents (via Task tool or similar) to handle subtasks.
+
+### Parent Agent: Spawning a Subagent
+
+Before spawning, save the task context so the subagent can pick it up:
+
+```
+# 1. Create an issue for the subtask
+context_issue_create
+  title="Implement rate limiting middleware"
+  issueType="task"
+  priority=3
+  description="Add sliding window rate limiter to auth endpoints"
+  details="## Context
+Parent is implementing auth feature.
+Use Redis for rate limit storage.
+
+## Acceptance
+- 5 req/min/IP on /login
+- 10 req/min/user on /refresh
+- Return 429 with Retry-After header"
+
+# 2. Tag it for the subagent
+context_tag keys=["rate-limit-task-context"] tags=["subagent-task", "rate-limiting"] action="add"
+
+# 3. In Task tool prompt, tell subagent:
+#    "Claim issue SC-xxxx, implement it, complete when done"
+```
+
+### Subagent: Receiving Work
+
+When spawned as a subagent with a task:
+
+```
+# 1. DON'T start a new session — use the parent's session
+#    The project path auto-joins you to the same session
+
+# 2. Claim the assigned issue
+context_issue_claim issue_ids=["SC-xxxx"]
+
+# 3. Check context the parent left (use low threshold for reliable retrieval)
+context_get query="rate limiting" threshold=0.3
+context_issue_list id="SC-xxxx"
+
+# 4. Do the work...
+
+# 5. Save your implementation decisions
+context_save
+  key="rate-limit-impl"
+  value="## Rate Limiting Implementation
+
+**Approach:** Sliding window via Redis ZSET
+**Key format:** ratelimit:{type}:{identifier}
+
+**Files created:**
+- middleware/rate-limit.ts
+- lib/redis-rate-limiter.ts"
+  category="progress"
+
+# 6. Update issue with verified details
+context_issue_update
+  id="SC-xxxx"
+  issue_title="Implement rate limiting middleware"
+  details="## Implementation
+Used Redis ZSET for sliding window.
+
+## Files
+- middleware/rate-limit.ts (new)
+- lib/redis-rate-limiter.ts (new)
+- Added to auth routes"
+
+# 7. Complete the issue
+context_issue_complete id="SC-xxxx" issue_title="Implement rate limiting middleware"
+```
+
+### Parent Agent: Receiving Results
+
+After subagent completes:
+
+```
+# 1. Check the issue was completed
+context_issue_list id="SC-xxxx"
+
+# 2. Read what the subagent saved
+context_get query="rate limit"
+
+# 3. Continue with the broader feature
+```
+
+### Subagent Isolation Patterns
+
+| Pattern | When to Use | How |
+|---------|-------------|-----|
+| **Shared session** | Subagent is part of same feature | Just claim issue, auto-joins session |
+| **Isolated session** | Subagent is independent research | `context_session_start` with different name |
+| **Tagged isolation** | Same session, but separated context | Tag all subagent items with `subagent-taskid` |
+
+**Default recommendation:** Use shared session with tagged isolation. Subagent's work is visible to parent, but tagged for attribution.
+
+---
+
 ## Branch Switching Workflow
 
 When switching between git branches with different contexts.

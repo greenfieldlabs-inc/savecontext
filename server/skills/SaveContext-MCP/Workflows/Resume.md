@@ -2,12 +2,17 @@
 
 For resuming previous work with full context.
 
+> **IMPORTANT:** NEVER use `context_session_start` to resume. It creates duplicates.
+> ALWAYS use `context_list_sessions` → `context_session_resume`.
+
 ## Triggers
 
 - "resume"
+- "resume our session"
 - "continue where I left off"
 - "pick up where I left off"
 - "resume [topic]"
+- "continue session"
 
 ## Execution Sequence
 

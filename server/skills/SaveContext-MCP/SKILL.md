@@ -1,11 +1,19 @@
 ---
-name: SaveContext
-description: Persistent memory for AI coding agents. USE WHEN user says "save context", "remember this", "checkpoint", "resume session", "prepare for compaction", "wrap up", OR when starting work on a project that may span sessions.
+name: SaveContext-MCP
+description: Persistent memory for AI coding agents via MCP tools. USE WHEN user says "save context", "remember this", "checkpoint", "resume session", "prepare for compaction", "wrap up", OR when starting work on a project that may span sessions.
 ---
 
-# SaveContext
+# SaveContext (MCP)
 
 Save decisions, track progress, and maintain continuity across coding sessions.
+
+## Critical Rules
+
+**NEVER use `context_session_start` when the user says "resume".** The word "resume" (or "continue session", "pick up where I left off") ALWAYS means:
+1. `context_list_sessions` to find the session
+2. `context_session_resume` to resume it
+
+`context_session_start` creates NEW sessions. It has limited auto-resume that only works for active sessions on the exact same project path. Using it to "resume" almost always creates duplicates.
 
 ## Quick Actions
 
@@ -17,7 +25,8 @@ For most requests, use these patterns directly:
 | "remember this" | `context_save key="..." value="..." category="note"` |
 | "checkpoint" | `context_checkpoint name="..."` |
 | "wrap up" | See [WrapUp workflow](#wrap-up) |
-| "resume [topic]" | Search sessions, then `context_session_resume` |
+| "resume [topic]" | **MUST** search sessions, then `context_session_resume` |
+| "start session" / "begin work" | `context_session_start` (new sessions only) |
 
 ## Workflow Routing
 
@@ -30,6 +39,7 @@ For most requests, use these patterns directly:
 | **Compaction** | "prepare for compaction", context getting long | `Workflows/Compaction.md` |
 | **IssueTracking** | "create issue", "track this bug" | `Workflows/IssueTracking.md` |
 | **Planning** | "plan this feature", "implement [complex]", multi-task work | `Workflows/Planning.md` |
+| **Advanced** | Multi-day projects, multi-agent, branch switching, subagents | `Workflows/AdvancedWorkflows.md` |
 
 ## Examples
 
