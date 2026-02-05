@@ -51,20 +51,37 @@ SaveContext is a Model Context Protocol (MCP) server that gives AI coding assist
 
 ### Prerequisites
 
-**[Bun](https://bun.sh) is required** - SaveContext uses `bun:sqlite` for optimal performance:
+**1. [Bun](https://bun.sh)** - Required for the MCP server:
 
 ```bash
 # Install Bun (macOS, Linux, WSL)
 curl -fsSL https://bun.sh/install | bash
 ```
 
-### Using bunx (Recommended)
+**2. [Rust CLI](cli/README.md)** - Required for all operations (MCP delegates to it):
+
+```bash
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install the CLI from crates.io
+cargo install savecontext-cli
+
+# Verify installation
+sc --version
+```
+
+> **Why is the CLI required?** The MCP server is a thin wrapper that delegates all operations to the Rust CLI. This ensures a single source of truth and enables CLI-first development where new features land in `sc` before MCP.
+
+### MCP Server Setup
+
+Once the CLI is installed, add the MCP server to your AI tool:
 
 ```bash
 bunx @savecontext/mcp
 ```
 
-### Global Install
+### Global Install (Alternative)
 
 ```bash
 bun install -g @savecontext/mcp
@@ -74,7 +91,15 @@ bun install -g @savecontext/mcp
 
 ```bash
 git clone https://github.com/greenfieldlabs-inc/savecontext.git
-cd savecontext/server
+cd savecontext
+
+# Build and install CLI
+cd cli
+cargo build --release
+cargo install --path .   # Installs to ~/.cargo/bin/sc
+
+# Build MCP server
+cd ../server
 bun install
 bun run build
 ```
@@ -83,13 +108,17 @@ bun run build
 
 ## ⚡️ Quick Start
 
-Get started with SaveContext in under a minute:
+Get started with SaveContext:
 
 ```bash
-# 1. Install Bun (if not already installed)
-curl -fsSL https://bun.sh/install | bash
+# 1. Install prerequisites (see Installation section above)
+#    - Bun runtime
+#    - Rust CLI (sc)
 
-# 2. Add to your AI tool's MCP config
+# 2. Verify CLI is installed
+sc --version
+
+# 3. Add to your AI tool's MCP config
 ```
 
 Add this to your MCP configuration (Claude Code, Cursor, etc.):
@@ -143,8 +172,24 @@ Common locations:
 
 ```bash
 rm -rf ~/.bun/install/cache/@savecontext*
-bunx @savecontext/mcp@latest --version  # Should show 0.1.27+
+bunx @savecontext/mcp@latest --version  # Should show 0.1.29+
 ```
+
+---
+
+**"SaveContext CLI binary not found"** — The MCP server requires the Rust CLI (`sc`) to be installed.
+
+**Fix:** Install the CLI:
+
+```bash
+# Install from crates.io
+cargo install savecontext-cli
+
+# Or set custom path if installed elsewhere
+export SC_BINARY_PATH=/path/to/your/sc
+```
+
+Verify with: `sc --version`
 
 </details>
 

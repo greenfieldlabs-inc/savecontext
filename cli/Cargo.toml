@@ -1,11 +1,21 @@
 [package]
-name = "sc"
+name = "savecontext-cli"
 version = "0.1.29"
 edition = "2024"
 rust-version = "1.85"
-description = "SaveContext CLI - The OS for AI coding agents"
-authors = ["Shane Monastero"]
-license = "MIT"
+description = "SaveContext CLI - Persistent memory for AI coding agents"
+authors = ["Shane Monastero <https://github.com/ShaneOxM>"]
+license = "AGPL-3.0"
+repository = "https://github.com/greenfieldlabs-inc/savecontext"
+homepage = "https://savecontext.dev"
+documentation = "https://github.com/greenfieldlabs-inc/savecontext/blob/main/cli/README.md"
+readme = "README.md"
+keywords = ["ai", "cli", "context", "agents", "mcp"]
+categories = ["command-line-utilities", "development-tools"]
+
+[lib]
+name = "sc"
+path = "src/lib.rs"
 
 [[bin]]
 name = "sc"
