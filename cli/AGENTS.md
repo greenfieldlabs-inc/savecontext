@@ -247,7 +247,7 @@ sc -q status        # Quiet (errors only)
 RUST_LOG=debug sc status  # Override via env var
 ```
 
-Tracing output always goes to stderr, never polluting stdout.
+Tracing output goes to stderr, never polluting stdout. Note: Debug output is minimal - most commands just output JSON to stdout.
 
 ## Named Flag Aliases
 

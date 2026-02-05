@@ -342,8 +342,9 @@ cargo build --release
 # Run tests
 cargo test
 
-# Run with verbose logging
+# Run with verbose logging (or use -v/-vv flags)
 RUST_LOG=debug cargo run -- session list
+# Note: Debug output is minimal currently - most commands just output JSON
 
 # Check lints
 cargo clippy
