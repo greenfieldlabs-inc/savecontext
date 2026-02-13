@@ -13,6 +13,7 @@ use crate::embeddings::{
     is_embeddings_enabled, prepare_item_text, reset_embedding_settings, save_embedding_settings,
     ChunkConfig, EmbeddingProviderType, EmbeddingSettings,
 };
+use tracing::{debug, info, warn};
 use crate::error::{Error, Result};
 use crate::storage::SqliteStorage;
 use serde::Serialize;
@@ -436,14 +437,22 @@ async fn execute_backfill(
     // Open storage
     let mut storage = SqliteStorage::open(&db_path)?;
 
-    // Get items to process
-    let items = if force {
-        // Get all items (with limit)
-        storage.get_items_without_embeddings(session.as_deref(), Some(limit.unwrap_or(1000) as u32))?
-    } else {
-        // Get only items without embeddings
-        storage.get_items_without_embeddings(session.as_deref(), Some(limit.unwrap_or(1000) as u32))?
-    };
+    // When --force is used, first resync phantom 'complete' items that lack actual
+    // embedding data (status says complete but no rows in embedding_chunks)
+    if force {
+        debug!("Force mode: resyncing phantom embedding statuses");
+        let reset_count = storage.resync_embedding_status()?;
+        if reset_count > 0 {
+            info!(reset_count, "Reset phantom embeddings (status was 'complete' but no data)");
+            if !json {
+                println!("Reset {} phantom embeddings (status was 'complete' but no data)", reset_count);
+            }
+        }
+    }
+
+    // Get items to process (now includes any reset phantom items)
+    let items = storage.get_items_without_embeddings(session.as_deref(), Some(limit.unwrap_or(1000) as u32))?;
+    debug!(items_to_process = items.len(), "Backfill items queried");
 
     if items.is_empty() {
         if json {
@@ -736,27 +745,48 @@ async fn execute_process_pending(
 /// without blocking the main command. The spawned process runs independently
 /// and exits when done.
 pub fn spawn_background_embedder() {
+    use std::fs;
     use std::process::{Command, Stdio};
 
     // Only spawn if embeddings are enabled
     if !is_embeddings_enabled() {
+        debug!("Background embedder skipped: embeddings disabled");
         return;
     }
 
     // Get the current executable path
     let exe = match std::env::current_exe() {
         Ok(path) => path,
-        Err(_) => return, // Can't find ourselves, skip
+        Err(e) => {
+            warn!(error = %e, "Background embedder: can't find executable");
+            return;
+        }
     };
 
-    // Spawn detached process
-    let _ = Command::new(exe)
+    // Set up log file for debugging background failures
+    let log_file = directories::BaseDirs::new()
+        .map(|b| b.home_dir().join(".savecontext").join("logs"))
+        .and_then(|log_dir| {
+            fs::create_dir_all(&log_dir).ok()?;
+            fs::File::create(log_dir.join("embedder.log")).ok()
+        });
+
+    let stderr = match log_file {
+        Some(f) => Stdio::from(f),
+        None => Stdio::null(),
+    };
+
+    // Spawn detached process with stderr going to log file
+    match Command::new(&exe)
         .args(["embeddings", "process-pending", "--quiet"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn();
-    // Ignore errors - if spawn fails, backfill will catch it later
+        .stderr(stderr)
+        .spawn()
+    {
+        Ok(_) => debug!("Background embedder spawned"),
+        Err(e) => warn!(error = %e, exe = %exe.display(), "Background embedder spawn failed"),
+    }
 }
 
 /// Reset embedding settings to defaults.
