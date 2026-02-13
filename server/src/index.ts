@@ -2790,6 +2790,10 @@ async function handlePrime(args: any) {
       () => bridge.prime({
         transcript: args?.include_transcript,
         transcriptLimit: args?.transcript_limit,
+        smart: args?.smart,
+        budget: args?.budget,
+        query: args?.query,
+        decayDays: args?.decay_days,
       }),
       { message: 'Context primed via CLI', operationName: 'prime' }
     );
@@ -4034,6 +4038,7 @@ async function handlePlanCreate(args: any) {
           status: args?.status,
           successCriteria: args?.successCriteria,
           projectPath: args?.project_path,
+          sessionId: currentSessionId || undefined,
         }
       ),
       { message: `Created plan via CLI` }
@@ -4208,7 +4213,12 @@ function generateServerInstructions(): string {
       `Do not proactively monitor or suggest compaction based on context usage.`,
   };
 
-  return `${baseInstructions} ${compactionInstructions[mode]}`;
+  const searchInstructions = ` When searching context, use the query param for semantic search. ` +
+    `Smart search auto-decomposes multi-word queries and adapts thresholds automatically. ` +
+    `Single keywords often work better than long phrases. ` +
+    `Use search_all_sessions: true to search across all sessions.`;
+
+  return `${baseInstructions} ${compactionInstructions[mode]}${searchInstructions}`;
 }
 
 /**

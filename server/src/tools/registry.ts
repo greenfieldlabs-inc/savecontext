@@ -72,13 +72,13 @@ export const tools = [
       },
       {
         name: 'context_get',
-        description: 'Retrieve saved context items. PREFER using query param for semantic search when looking for specific information - searches item values by meaning. Use key for exact retrieval, or filters (category, priority) when browsing.',
+        description: 'Retrieve saved context items. PREFER using query param for smart semantic search - auto-decomposes multi-word queries, adapts thresholds, and expands scope when needed. Single keywords work best. Use key for exact retrieval, or filters (category, priority) when browsing.',
         inputSchema: {
           type: 'object',
           properties: {
             query: {
               type: 'string',
-              description: 'RECOMMENDED: Semantic search query to find items by meaning (e.g., "how did we handle authentication"). Uses embeddings for semantic search when configured, falls back to keyword search.',
+              description: 'RECOMMENDED: Search query. Smart search auto-decomposes multi-word queries, adapts thresholds, and tries broader scopes when needed. Use natural language (e.g., "authentication decisions", "deploy status"). Single keywords often work better than long phrases.',
             },
             search_all_sessions: {
               type: 'boolean',
@@ -1146,7 +1146,7 @@ export const tools = [
       },
       {
         name: 'context_prime',
-        description: 'Read-only context aggregation for agent injection. Returns session state, high-priority items, active issues, project memory, and command reference in a single payload. Optionally parses Claude Code session transcripts for additional context. Use at conversation start or when an agent needs full project awareness.',
+        description: 'Read-only context aggregation for agent injection. Returns session state, context items, active issues, project memory, and command reference in a single payload. Use --smart for relevance-ranked context selection within a token budget — scores items by temporal decay, priority, category, and optional semantic similarity, then applies MMR diversity re-ranking. Use at conversation start or when an agent needs full project awareness.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1157,6 +1157,22 @@ export const tools = [
             transcript_limit: {
               type: 'number',
               description: 'Maximum number of transcript entries to include (default: 5)',
+            },
+            smart: {
+              type: 'boolean',
+              description: 'Enable relevance-ranked context selection with token budget packing and MMR diversity (default: false)',
+            },
+            budget: {
+              type: 'number',
+              description: 'Token budget for smart mode — controls how many context items are included (default: 4000)',
+            },
+            query: {
+              type: 'string',
+              description: 'Topic query for semantic boosting in smart mode — items related to this topic score higher',
+            },
+            decay_days: {
+              type: 'number',
+              description: 'Temporal decay half-life in days for smart mode — lower values favor recent items (default: 14)',
             },
           },
         },

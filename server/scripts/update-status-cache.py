@@ -282,6 +282,28 @@ def extract_session_info(tool_name: str, data: dict, cwd: str) -> Optional[dict]
                 'provider': 'claude-code'
             }
 
+    # context_plan_create - plan created, update cache with plan info
+    if tool_name == 'mcp__savecontext__context_plan_create':
+        plan = data.get('plan', {})
+        plan_id = plan.get('id')
+        if plan_id:
+            return {'update_plan': plan_id, 'planTitle': plan.get('title', '')}
+
+    # context_plan_update - plan updated
+    if tool_name == 'mcp__savecontext__context_plan_update':
+        plan = data.get('plan', {})
+        plan_id = plan.get('id')
+        if plan_id:
+            return {'update_plan': plan_id, 'planTitle': plan.get('title', '')}
+
+    # Plan tools that don't modify session state - explicitly ignore
+    plan_readonly_tools = [
+        'mcp__savecontext__context_plan_list',
+        'mcp__savecontext__context_plan_get',
+    ]
+    if tool_name in plan_readonly_tools:
+        return None
+
     # Checkpoint tools that don't affect session display - explicitly ignore
     # These should NOT clear or modify the status cache
     checkpoint_readonly_tools = [
@@ -312,6 +334,22 @@ def update_cache(status_key: str, session_info: dict) -> bool:
         try:
             cache_file.unlink(missing_ok=True)
             return True
+        except Exception:
+            return False
+
+    # Handle plan update - read existing cache and set active plan
+    if 'update_plan' in session_info:
+        try:
+            if cache_file.exists():
+                with open(cache_file, 'r') as f:
+                    existing = json.load(f)
+                existing['activePlanId'] = session_info['update_plan']
+                existing['planTitle'] = session_info.get('planTitle', '')
+                existing['timestamp'] = int(time.time() * 1000)
+                session_info = existing
+            else:
+                # No existing cache, nothing to update
+                return True
         except Exception:
             return False
 

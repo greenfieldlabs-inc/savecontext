@@ -1232,6 +1232,7 @@ export class CliBridge {
       status?: string;
       successCriteria?: string;
       projectPath?: string;
+      sessionId?: string;
     }
   ): Promise<PlanResult> {
     const args = ['plan', 'create', title, '--content', content];
@@ -1244,6 +1245,9 @@ export class CliBridge {
     if (options?.projectPath) {
       args.push('--project', options.projectPath);
     }
+    if (options?.sessionId) {
+      args.push('--session', options.sessionId);
+    }
     return this.execute<PlanResult>(args);
   }
 
@@ -1255,6 +1259,7 @@ export class CliBridge {
     status?: string;
     projectPath?: string;
     limit?: number;
+    sessionId?: string;
   }): Promise<PlanResult[]> {
     const args = ['plan', 'list'];
     if (options?.status) {
@@ -1265,6 +1270,9 @@ export class CliBridge {
     }
     if (options?.limit) {
       args.push('-l', String(options.limit));
+    }
+    if (options?.sessionId) {
+      args.push('--session', options.sessionId);
     }
     return this.execute<PlanResult[]>(args);
   }
@@ -1313,8 +1321,24 @@ export class CliBridge {
   async prime(options?: {
     transcript?: boolean;
     transcriptLimit?: number;
+    smart?: boolean;
+    budget?: number;
+    query?: string;
+    decayDays?: number;
   }): Promise<PrimeResult> {
     const args = ['prime'];
+    if (options?.smart) {
+      args.push('--smart');
+    }
+    if (options?.budget !== undefined) {
+      args.push('--budget', String(options.budget));
+    }
+    if (options?.query) {
+      args.push('--query', options.query);
+    }
+    if (options?.decayDays !== undefined) {
+      args.push('--decay-days', String(options.decayDays));
+    }
     if (options?.transcript) {
       args.push('--transcript');
     }
