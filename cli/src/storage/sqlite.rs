@@ -35,6 +35,7 @@ pub struct MutationContext {
     pub dirty_sessions: HashSet<String>,
     pub dirty_issues: HashSet<String>,
     pub dirty_items: HashSet<String>,
+    pub dirty_plans: HashSet<String>,
 }
 
 impl MutationContext {
@@ -48,6 +49,7 @@ impl MutationContext {
             dirty_sessions: HashSet::new(),
             dirty_issues: HashSet::new(),
             dirty_items: HashSet::new(),
+            dirty_plans: HashSet::new(),
         }
     }
 
@@ -95,6 +97,11 @@ impl MutationContext {
     pub fn mark_item_dirty(&mut self, item_id: &str) {
         self.dirty_items.insert(item_id.to_string());
     }
+
+    /// Mark a plan as dirty for sync export.
+    pub fn mark_plan_dirty(&mut self, plan_id: &str) {
+        self.dirty_plans.insert(plan_id.to_string());
+    }
 }
 
 /// Statistics from backfilling dirty records for a project.
@@ -109,19 +116,21 @@ pub struct BackfillStats {
     pub issues: usize,
     /// Number of context items marked dirty.
     pub context_items: usize,
+    /// Number of plans marked dirty.
+    pub plans: usize,
 }
 
 impl BackfillStats {
     /// Returns true if any records were marked dirty.
     #[must_use]
     pub fn any(&self) -> bool {
-        self.sessions > 0 || self.issues > 0 || self.context_items > 0
+        self.sessions > 0 || self.issues > 0 || self.context_items > 0 || self.plans > 0
     }
 
     /// Returns total number of records marked dirty.
     #[must_use]
     pub fn total(&self) -> usize {
-        self.sessions + self.issues + self.context_items
+        self.sessions + self.issues + self.context_items + self.plans
     }
 }
 
@@ -729,6 +738,67 @@ impl SqliteStorage {
 
             Ok(())
         })
+    }
+
+    /// Look up the actual item ID by session + key.
+    ///
+    /// Needed after upserts where ON CONFLICT keeps the original ID.
+    pub fn get_item_id_by_key(&self, session_id: &str, key: &str) -> Result<Option<String>> {
+        let id = self.conn.query_row(
+            "SELECT id FROM context_items WHERE session_id = ?1 AND key = ?2",
+            rusqlite::params![session_id, key],
+            |row| row.get(0),
+        ).optional()?;
+        Ok(id)
+    }
+
+    /// Get all context items for a session with their fast-tier embeddings (if any).
+    ///
+    /// Single LEFT JOIN query — items without embeddings get `None`.
+    /// Only fetches chunk_index=0 (the primary embedding per item).
+    pub fn get_items_with_fast_embeddings(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<(ContextItem, Option<Vec<f32>>)>> {
+        let sql = "SELECT ci.id, ci.session_id, ci.key, ci.value, ci.category, ci.priority,
+                          ci.channel, ci.tags, ci.size, ci.created_at, ci.updated_at,
+                          ec.embedding
+                   FROM context_items ci
+                   LEFT JOIN embedding_chunks_fast ec ON ec.item_id = ci.id AND ec.chunk_index = 0
+                   WHERE ci.session_id = ?1
+                   ORDER BY ci.updated_at DESC";
+
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(rusqlite::params![session_id], |row| {
+            let item = ContextItem {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                key: row.get(2)?,
+                value: row.get(3)?,
+                category: row.get(4)?,
+                priority: row.get(5)?,
+                channel: row.get(6)?,
+                tags: row.get(7)?,
+                size: row.get(8)?,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            };
+
+            let embedding: Option<Vec<f32>> = row.get::<_, Option<Vec<u8>>>(11)?
+                .map(|blob| {
+                    blob.chunks_exact(4)
+                        .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                        .collect()
+                });
+
+            Ok((item, embedding))
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+        Ok(results)
     }
 
     /// Get context items for a session.
@@ -1845,6 +1915,248 @@ impl SqliteStorage {
     }
 
     // ======================
+    // Issue Analytics
+    // ======================
+
+    /// Count issues grouped by a field (status, type, priority, assignee).
+    pub fn count_issues_grouped(
+        &self,
+        project_path: &str,
+        group_by: &str,
+    ) -> Result<Vec<(String, i64)>> {
+        let column = match group_by {
+            "status" => "status",
+            "type" => "issue_type",
+            "priority" => "CAST(priority AS TEXT)",
+            "assignee" => "COALESCE(assigned_to_agent, 'unassigned')",
+            _ => return Err(Error::InvalidArgument(
+                format!("Invalid group_by '{group_by}'. Valid: status, type, priority, assignee")
+            )),
+        };
+
+        let sql = format!(
+            "SELECT {column}, COUNT(*) as count FROM issues \
+             WHERE project_path = ?1 GROUP BY {column} ORDER BY count DESC"
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([project_path], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Get stale issues (not updated in N days).
+    pub fn get_stale_issues(
+        &self,
+        project_path: &str,
+        stale_days: u64,
+        limit: u32,
+    ) -> Result<Vec<Issue>> {
+        let cutoff_ms = chrono::Utc::now().timestamp_millis()
+            - (stale_days as i64 * 24 * 60 * 60 * 1000);
+
+        let mut stmt = self.conn.prepare(
+            "SELECT id, short_id, project_path, title, description, details,
+                    status, priority, issue_type, plan_id, created_by_agent,
+                    assigned_to_agent, created_at, updated_at, closed_at
+             FROM issues
+             WHERE project_path = ?1
+               AND status IN ('open', 'in_progress', 'blocked')
+               AND updated_at < ?2
+             ORDER BY updated_at ASC
+             LIMIT ?3",
+        )?;
+
+        let issues = stmt
+            .query_map(rusqlite::params![project_path, cutoff_ms, limit], map_issue_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(issues)
+    }
+
+    /// Get blocked issues with their blockers.
+    pub fn get_blocked_issues(
+        &self,
+        project_path: &str,
+        limit: u32,
+    ) -> Result<Vec<(Issue, Vec<Issue>)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT i.id, i.short_id, i.project_path, i.title, i.description, i.details,
+                    i.status, i.priority, i.issue_type, i.plan_id, i.created_by_agent,
+                    i.assigned_to_agent, i.created_at, i.updated_at, i.closed_at
+             FROM issues i
+             WHERE i.project_path = ?1
+               AND i.status NOT IN ('closed', 'deferred')
+               AND EXISTS (
+                   SELECT 1 FROM issue_dependencies d
+                   JOIN issues dep ON dep.id = d.depends_on_id
+                   WHERE d.issue_id = i.id
+                     AND d.dependency_type = 'blocks'
+                     AND dep.status != 'closed'
+               )
+             ORDER BY i.priority DESC, i.created_at ASC
+             LIMIT ?2",
+        )?;
+
+        let blocked_issues = stmt
+            .query_map(rusqlite::params![project_path, limit], map_issue_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let mut blocker_stmt = self.conn.prepare(
+            "SELECT dep.id, dep.short_id, dep.project_path, dep.title, dep.description, dep.details,
+                    dep.status, dep.priority, dep.issue_type, dep.plan_id, dep.created_by_agent,
+                    dep.assigned_to_agent, dep.created_at, dep.updated_at, dep.closed_at
+             FROM issue_dependencies d
+             JOIN issues dep ON dep.id = d.depends_on_id
+             WHERE d.issue_id = ?1
+               AND d.dependency_type = 'blocks'
+               AND dep.status != 'closed'",
+        )?;
+
+        let mut results = Vec::with_capacity(blocked_issues.len());
+        for issue in blocked_issues {
+            let blockers = blocker_stmt
+                .query_map([&issue.id], map_issue_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            results.push((issue, blockers));
+        }
+
+        Ok(results)
+    }
+
+    /// Get epic progress (child issue counts by status).
+    pub fn get_epic_progress(&self, epic_id: &str) -> Result<EpicProgress> {
+        let mut stmt = self.conn.prepare(
+            "SELECT child.status, COUNT(*) as count
+             FROM issue_dependencies d
+             JOIN issues child ON child.id = d.issue_id
+             WHERE d.depends_on_id = ?1
+               AND d.dependency_type = 'parent-child'
+             GROUP BY child.status",
+        )?;
+
+        let rows = stmt
+            .query_map([epic_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let mut progress = EpicProgress::default();
+        for (status, count) in rows {
+            match status.as_str() {
+                "closed" => progress.closed += count,
+                "in_progress" => progress.in_progress += count,
+                "open" => progress.open += count,
+                "blocked" => progress.blocked += count,
+                "deferred" => progress.deferred += count,
+                _ => progress.open += count,
+            }
+            progress.total += count;
+        }
+
+        Ok(progress)
+    }
+
+    /// Get dependency tree starting from a root issue.
+    /// Returns (issue, depth) pairs in tree order.
+    pub fn get_dependency_tree(&self, root_id: &str) -> Result<Vec<(Issue, i32)>> {
+        // First get the root issue
+        let root = self.get_issue(root_id, None)?
+            .ok_or_else(|| Error::IssueNotFound { id: root_id.to_string() })?;
+
+        let root_full_id = root.id.clone();
+        let mut result = vec![(root, 0)];
+        let mut queue = vec![(root_full_id.clone(), 0i32)];
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(root_full_id);
+
+        let mut child_stmt = self.conn.prepare(
+            "SELECT child.id, child.short_id, child.project_path, child.title,
+                    child.description, child.details, child.status, child.priority,
+                    child.issue_type, child.plan_id, child.created_by_agent,
+                    child.assigned_to_agent, child.created_at, child.updated_at,
+                    child.closed_at
+             FROM issue_dependencies d
+             JOIN issues child ON child.id = d.issue_id
+             WHERE d.depends_on_id = ?1
+               AND d.dependency_type IN ('parent-child', 'blocks')
+             ORDER BY child.priority DESC, child.created_at ASC",
+        )?;
+
+        while let Some((parent_id, depth)) = queue.pop() {
+            let children = child_stmt
+                .query_map([&parent_id], map_issue_row)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+
+            for child in children {
+                if visited.insert(child.id.clone()) {
+                    let child_id = child.id.clone();
+                    result.push((child, depth + 1));
+                    queue.push((child_id, depth + 1));
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Get all epics for a project.
+    pub fn get_epics(&self, project_path: &str) -> Result<Vec<Issue>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, short_id, project_path, title, description, details,
+                    status, priority, issue_type, plan_id, created_by_agent,
+                    assigned_to_agent, created_at, updated_at, closed_at
+             FROM issues
+             WHERE project_path = ?1
+               AND issue_type = 'epic'
+               AND status != 'closed'
+             ORDER BY priority DESC, created_at ASC",
+        )?;
+
+        let issues = stmt
+            .query_map([project_path], map_issue_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(issues)
+    }
+
+    /// Update close_reason on an issue.
+    pub fn set_close_reason(
+        &mut self,
+        id: &str,
+        reason: &str,
+        actor: &str,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.mutate("set_close_reason", actor, |tx, _ctx| {
+            let rows = tx.execute(
+                "UPDATE issues SET close_reason = ?1, updated_at = ?2 WHERE id = ?3 OR short_id = ?3",
+                rusqlite::params![reason, now, id],
+            )?;
+            if rows == 0 {
+                return Err(Error::IssueNotFound { id: id.to_string() });
+            }
+            Ok(())
+        })
+    }
+
+    /// Get close_reason for an issue.
+    pub fn get_close_reason(&self, id: &str) -> Result<Option<String>> {
+        let result = self.conn.query_row(
+            "SELECT close_reason FROM issues WHERE id = ?1 OR short_id = ?1",
+            [id],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(reason) => Ok(reason),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    // ======================
     // Checkpoint Operations
     // ======================
 
@@ -1900,6 +2212,38 @@ impl SqliteStorage {
 
             Ok(())
         })
+    }
+
+    /// Count context items created since the most recent checkpoint for a session.
+    ///
+    /// Returns 0 if no items exist. If no checkpoint exists, counts all items.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails.
+    pub fn count_items_since_last_checkpoint(&self, session_id: &str) -> Result<i64> {
+        let last_checkpoint_time: Option<i64> = self.conn.query_row(
+            "SELECT MAX(created_at) FROM checkpoints WHERE session_id = ?1",
+            [session_id],
+            |row| row.get(0),
+        )?;
+
+        let count = if let Some(ts) = last_checkpoint_time {
+            self.conn.query_row(
+                "SELECT COUNT(*) FROM context_items WHERE session_id = ?1 AND created_at > ?2",
+                rusqlite::params![session_id, ts],
+                |row| row.get(0),
+            )?
+        } else {
+            // No checkpoints yet — count all items
+            self.conn.query_row(
+                "SELECT COUNT(*) FROM context_items WHERE session_id = ?1",
+                [session_id],
+                |row| row.get(0),
+            )?
+        };
+
+        Ok(count)
     }
 
     /// List checkpoints for a session.
@@ -3068,10 +3412,18 @@ impl SqliteStorage {
             rusqlite::params![now, project_path],
         )?;
 
+        // Backfill plans
+        let plans_count = self.conn.execute(
+            "INSERT OR IGNORE INTO dirty_plans (plan_id, marked_at)
+             SELECT id, ?1 FROM plans WHERE project_path = ?2",
+            rusqlite::params![now, project_path],
+        )?;
+
         Ok(BackfillStats {
             sessions: sessions_count,
             issues: issues_count,
             context_items: context_items_count,
+            plans: plans_count,
         })
     }
 
@@ -3566,8 +3918,8 @@ impl SqliteStorage {
     pub fn create_plan(&mut self, plan: &Plan, actor: &str) -> Result<()> {
         self.mutate("create_plan", actor, |tx, ctx| {
             tx.execute(
-                "INSERT INTO plans (id, short_id, project_id, project_path, title, content, status, success_criteria, created_in_session, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                "INSERT INTO plans (id, short_id, project_id, project_path, title, content, status, success_criteria, session_id, created_in_session, source_path, source_hash, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 rusqlite::params![
                     plan.id,
                     plan.short_id,
@@ -3577,7 +3929,10 @@ impl SqliteStorage {
                     plan.content,
                     plan.status.as_str(),
                     plan.success_criteria,
+                    plan.session_id,
                     plan.created_in_session,
+                    plan.source_path,
+                    plan.source_hash,
                     plan.created_at,
                     plan.updated_at,
                 ],
@@ -3597,7 +3952,7 @@ impl SqliteStorage {
         let plan = self
             .conn
             .query_row(
-                "SELECT id, short_id, project_id, project_path, title, content, status, success_criteria, created_in_session, completed_in_session, created_at, updated_at, completed_at
+                "SELECT id, short_id, project_id, project_path, title, content, status, success_criteria, session_id, created_in_session, completed_in_session, source_path, source_hash, created_at, updated_at, completed_at
                  FROM plans WHERE id = ?1",
                 [id],
                 map_plan_row,
@@ -3614,13 +3969,13 @@ impl SqliteStorage {
     pub fn list_plans(&self, project_path: &str, status: Option<&str>, limit: usize) -> Result<Vec<Plan>> {
         let sql = if let Some(status) = status {
             if status == "all" {
-                "SELECT id, short_id, project_id, project_path, title, content, status, success_criteria, created_in_session, completed_in_session, created_at, updated_at, completed_at
+                "SELECT id, short_id, project_id, project_path, title, content, status, success_criteria, session_id, created_in_session, completed_in_session, source_path, source_hash, created_at, updated_at, completed_at
                  FROM plans WHERE project_path = ?1
                  ORDER BY updated_at DESC
                  LIMIT ?2".to_string()
             } else {
                 format!(
-                    "SELECT id, short_id, project_id, project_path, title, content, status, success_criteria, created_in_session, completed_in_session, created_at, updated_at, completed_at
+                    "SELECT id, short_id, project_id, project_path, title, content, status, success_criteria, session_id, created_in_session, completed_in_session, source_path, source_hash, created_at, updated_at, completed_at
                      FROM plans WHERE project_path = ?1 AND status = '{}'
                      ORDER BY updated_at DESC
                      LIMIT ?2",
@@ -3629,7 +3984,7 @@ impl SqliteStorage {
             }
         } else {
             // Default: show active plans only
-            "SELECT id, short_id, project_id, project_path, title, content, status, success_criteria, created_in_session, completed_in_session, created_at, updated_at, completed_at
+            "SELECT id, short_id, project_id, project_path, title, content, status, success_criteria, session_id, created_in_session, completed_in_session, source_path, source_hash, created_at, updated_at, completed_at
              FROM plans WHERE project_path = ?1 AND status = 'active'
              ORDER BY updated_at DESC
              LIMIT ?2".to_string()
@@ -3720,6 +4075,113 @@ impl SqliteStorage {
             ctx.record_event("plan", id, event_type);
             Ok(())
         })
+    }
+
+    /// Get all plans for a specific project (for JSONL sync export).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails.
+    pub fn get_plans_by_project(&self, project_path: &str) -> Result<Vec<Plan>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, short_id, project_id, project_path, title, content, status, success_criteria, session_id, created_in_session, completed_in_session, source_path, source_hash, created_at, updated_at, completed_at
+             FROM plans WHERE project_path = ?1 ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map([project_path], map_plan_row)?;
+        let plans: Vec<Plan> = rows.collect::<std::result::Result<_, _>>()?;
+        Ok(plans)
+    }
+
+    /// Find a plan by source hash (for capture deduplication).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails.
+    pub fn find_plan_by_source_hash(&self, source_hash: &str) -> Result<Option<Plan>> {
+        let plan = self
+            .conn
+            .query_row(
+                "SELECT id, short_id, project_id, project_path, title, content, status, success_criteria, session_id, created_in_session, completed_in_session, source_path, source_hash, created_at, updated_at, completed_at
+                 FROM plans WHERE source_hash = ?1 LIMIT 1",
+                [source_hash],
+                map_plan_row,
+            )
+            .optional()?;
+        Ok(plan)
+    }
+
+    /// Upsert a plan (for sync import).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the upsert fails.
+    pub fn upsert_plan(&mut self, plan: &Plan) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO plans (id, short_id, project_id, project_path, title, content, status, success_criteria, session_id, created_in_session, completed_in_session, source_path, source_hash, created_at, updated_at, completed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             ON CONFLICT(id) DO UPDATE SET
+               short_id = excluded.short_id,
+               title = excluded.title,
+               content = excluded.content,
+               status = excluded.status,
+               success_criteria = excluded.success_criteria,
+               session_id = excluded.session_id,
+               source_path = excluded.source_path,
+               source_hash = excluded.source_hash,
+               updated_at = excluded.updated_at,
+               completed_at = excluded.completed_at",
+            rusqlite::params![
+                plan.id,
+                plan.short_id,
+                plan.project_id,
+                plan.project_path,
+                plan.title,
+                plan.content,
+                plan.status.as_str(),
+                plan.success_criteria,
+                plan.session_id,
+                plan.created_in_session,
+                plan.completed_in_session,
+                plan.source_path,
+                plan.source_hash,
+                plan.created_at,
+                plan.updated_at,
+                plan.completed_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get dirty plan IDs by project (for JSONL sync export).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails.
+    pub fn get_dirty_plans_by_project(&self, project_path: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT dp.plan_id
+             FROM dirty_plans dp
+             INNER JOIN plans p ON dp.plan_id = p.id
+             WHERE p.project_path = ?1",
+        )?;
+        let rows = stmt.query_map([project_path], |row| row.get(0))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Clear dirty flags for plans after successful export.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the delete fails.
+    pub fn clear_dirty_plans(&mut self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!("DELETE FROM dirty_plans WHERE plan_id IN ({placeholders})");
+        let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        self.conn.execute(&sql, params.as_slice())?;
+        Ok(())
     }
 
     // ======================
@@ -3840,7 +4302,7 @@ impl SqliteStorage {
             format!(
                 "SELECT id, session_id, key, value, category, priority, channel, tags, size, created_at, updated_at
                  FROM context_items
-                 WHERE session_id = '{}' AND (embedding_status IS NULL OR embedding_status = 'none')
+                 WHERE session_id = '{}' AND (embedding_status IS NULL OR embedding_status IN ('none', 'pending', 'error'))
                  ORDER BY created_at DESC
                  LIMIT {}",
                 sid, limit
@@ -3849,7 +4311,7 @@ impl SqliteStorage {
             format!(
                 "SELECT id, session_id, key, value, category, priority, channel, tags, size, created_at, updated_at
                  FROM context_items
-                 WHERE embedding_status IS NULL OR embedding_status = 'none'
+                 WHERE embedding_status IS NULL OR embedding_status IN ('none', 'pending', 'error')
                  ORDER BY created_at DESC
                  LIMIT {}",
                 limit
@@ -3890,7 +4352,7 @@ impl SqliteStorage {
                 |row| row.get(0),
             )?;
             let without: i64 = self.conn.query_row(
-                "SELECT COUNT(*) FROM context_items WHERE session_id = ?1 AND (embedding_status IS NULL OR embedding_status = 'none')",
+                "SELECT COUNT(*) FROM context_items WHERE session_id = ?1 AND (embedding_status IS NULL OR embedding_status IN ('none', 'pending', 'error'))",
                 [sid],
                 |row| row.get(0),
             )?;
@@ -3902,7 +4364,7 @@ impl SqliteStorage {
                 |row| row.get(0),
             )?;
             let without: i64 = self.conn.query_row(
-                "SELECT COUNT(*) FROM context_items WHERE embedding_status IS NULL OR embedding_status = 'none'",
+                "SELECT COUNT(*) FROM context_items WHERE embedding_status IS NULL OR embedding_status IN ('none', 'pending', 'error')",
                 [],
                 |row| row.get(0),
             )?;
@@ -3913,6 +4375,27 @@ impl SqliteStorage {
             with_embeddings: with_embeddings as usize,
             without_embeddings: without_embeddings as usize,
         })
+    }
+
+    /// Resync embedding status for items claiming 'complete' but lacking actual data.
+    ///
+    /// Migration 011 dropped the old vec_context_chunks table and reset statuses to
+    /// 'pending', but subsequent logic set them back to 'complete' without actual
+    /// embedding data. This method detects and fixes that mismatch.
+    ///
+    /// Returns the number of items reset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails.
+    pub fn resync_embedding_status(&self) -> Result<usize> {
+        let count = self.conn.execute(
+            "UPDATE context_items SET embedding_status = 'pending'
+             WHERE embedding_status = 'complete'
+             AND id NOT IN (SELECT DISTINCT item_id FROM embedding_chunks)",
+            [],
+        )?;
+        Ok(count)
     }
 
     /// Perform semantic search using cosine similarity.
@@ -4328,11 +4811,14 @@ fn map_plan_row(row: &rusqlite::Row) -> rusqlite::Result<Plan> {
         content: row.get(5)?,
         status: PlanStatus::from_str(&status_str),
         success_criteria: row.get(7)?,
-        created_in_session: row.get(8)?,
-        completed_in_session: row.get(9)?,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
-        completed_at: row.get(12)?,
+        session_id: row.get(8)?,
+        created_in_session: row.get(9)?,
+        completed_in_session: row.get(10)?,
+        source_path: row.get(11)?,
+        source_hash: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+        completed_at: row.get(15)?,
     })
 }
 
@@ -4427,6 +4913,17 @@ pub struct Issue {
     pub created_at: i64,
     pub updated_at: i64,
     pub closed_at: Option<i64>,
+}
+
+/// Progress tracking for an epic (child issue counts by status).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct EpicProgress {
+    pub total: usize,
+    pub closed: usize,
+    pub in_progress: usize,
+    pub open: usize,
+    pub blocked: usize,
+    pub deferred: usize,
 }
 
 /// A checkpoint record.
@@ -4728,5 +5225,118 @@ mod tests {
         let issue = storage.get_issue("issue_1", None).unwrap().unwrap();
         assert_eq!(issue.status, "closed");
         assert!(issue.closed_at.is_some());
+    }
+
+    // --- Embeddings storage tests ---
+
+    #[test]
+    fn test_get_items_without_embeddings_includes_pending() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        storage
+            .create_session("sess_1", "Test", None, None, None, "actor")
+            .unwrap();
+
+        // Create items with different embedding statuses
+        for (id, key, status) in [
+            ("item_1", "none-status", "none"),
+            ("item_2", "pending-status", "pending"),
+            ("item_3", "error-status", "error"),
+            ("item_4", "complete-status", "complete"),
+        ] {
+            storage
+                .save_context_item(id, "sess_1", key, "test value", Some("note"), Some("normal"), "actor")
+                .unwrap();
+            storage.conn.execute(
+                "UPDATE context_items SET embedding_status = ?1 WHERE id = ?2",
+                rusqlite::params![status, id],
+            ).unwrap();
+        }
+
+        // Also create one with NULL status (never processed)
+        storage
+            .save_context_item("item_5", "sess_1", "null-status", "test", Some("note"), Some("normal"), "actor")
+            .unwrap();
+        storage.conn.execute(
+            "UPDATE context_items SET embedding_status = NULL WHERE id = 'item_5'",
+            [],
+        ).unwrap();
+
+        let items = storage.get_items_without_embeddings(None, None).unwrap();
+        let keys: Vec<&str> = items.iter().map(|i| i.key.as_str()).collect();
+
+        // Should include: none, pending, error, NULL
+        assert!(keys.contains(&"none-status"), "missing 'none' status");
+        assert!(keys.contains(&"pending-status"), "missing 'pending' status");
+        assert!(keys.contains(&"error-status"), "missing 'error' status");
+        assert!(keys.contains(&"null-status"), "missing NULL status");
+
+        // Should NOT include: complete
+        assert!(!keys.contains(&"complete-status"), "'complete' should be excluded");
+        assert_eq!(items.len(), 4);
+    }
+
+    #[test]
+    fn test_get_items_without_embeddings_session_filter() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        storage.create_session("sess_1", "Session 1", None, None, None, "actor").unwrap();
+        storage.create_session("sess_2", "Session 2", None, None, None, "actor").unwrap();
+
+        storage.save_context_item("item_1", "sess_1", "s1-item", "val", Some("note"), Some("normal"), "actor").unwrap();
+        storage.save_context_item("item_2", "sess_2", "s2-item", "val", Some("note"), Some("normal"), "actor").unwrap();
+
+        // Reset both to pending
+        storage.conn.execute("UPDATE context_items SET embedding_status = 'pending'", []).unwrap();
+
+        // Filter by session
+        let s1_items = storage.get_items_without_embeddings(Some("sess_1"), None).unwrap();
+        assert_eq!(s1_items.len(), 1);
+        assert_eq!(s1_items[0].key, "s1-item");
+
+        // No filter returns both
+        let all_items = storage.get_items_without_embeddings(None, None).unwrap();
+        assert_eq!(all_items.len(), 2);
+    }
+
+    #[test]
+    fn test_resync_embedding_status() {
+        let mut storage = SqliteStorage::open_memory().unwrap();
+        storage.create_session("sess_1", "Test", None, None, None, "actor").unwrap();
+
+        // Create items
+        storage.save_context_item("item_1", "sess_1", "phantom", "val", Some("note"), Some("normal"), "actor").unwrap();
+        storage.save_context_item("item_2", "sess_1", "real", "val", Some("note"), Some("normal"), "actor").unwrap();
+        storage.save_context_item("item_3", "sess_1", "pending-already", "val", Some("note"), Some("normal"), "actor").unwrap();
+
+        // Mark all as complete
+        storage.conn.execute("UPDATE context_items SET embedding_status = 'complete'", []).unwrap();
+        // Mark item_3 as pending (shouldn't be touched)
+        storage.conn.execute("UPDATE context_items SET embedding_status = 'pending' WHERE id = 'item_3'", []).unwrap();
+
+        // Add actual embedding data ONLY for item_2
+        storage.conn.execute(
+            "INSERT INTO embedding_chunks (id, item_id, chunk_index, chunk_text, embedding, dimensions, provider, model, created_at)
+             VALUES ('ec_1', 'item_2', 0, 'test', X'00000000', 1, 'test', 'test-model', 1000)",
+            [],
+        ).unwrap();
+
+        // Resync: item_1 claims complete but has no data -> should reset to pending
+        let count = storage.resync_embedding_status().unwrap();
+        assert_eq!(count, 1, "only item_1 should be reset (phantom complete)");
+
+        // Verify states
+        let status_1: String = storage.conn.query_row(
+            "SELECT embedding_status FROM context_items WHERE id = 'item_1'", [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(status_1, "pending", "phantom complete should be reset");
+
+        let status_2: String = storage.conn.query_row(
+            "SELECT embedding_status FROM context_items WHERE id = 'item_2'", [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(status_2, "complete", "real complete should be untouched");
+
+        let status_3: String = storage.conn.query_row(
+            "SELECT embedding_status FROM context_items WHERE id = 'item_3'", [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(status_3, "pending", "already-pending should be untouched");
     }
 }

@@ -68,6 +68,14 @@ const MIGRATIONS: &[Migration] = &[
         version: "012_tiered_embeddings",
         sql: include_str!("../../migrations/012_tiered_embeddings.sql"),
     },
+    Migration {
+        version: "013_plan_session_binding",
+        sql: include_str!("../../migrations/013_plan_session_binding.sql"),
+    },
+    Migration {
+        version: "014_close_reason",
+        sql: include_str!("../../migrations/014_close_reason.sql"),
+    },
 ];
 
 /// Run all pending migrations on the database.
@@ -153,7 +161,7 @@ mod tests {
         // This test verifies that all include_str! paths are valid
         // If any path is wrong, compilation will fail
         assert!(!MIGRATIONS.is_empty());
-        assert_eq!(MIGRATIONS.len(), 12);
+        assert_eq!(MIGRATIONS.len(), 14);
     }
 
     #[test]
@@ -168,7 +176,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 12);
+        assert_eq!(count, 14);
     }
 
     #[test]
@@ -180,12 +188,12 @@ mod tests {
         run_migrations(&conn).expect("First run should succeed");
         run_migrations(&conn).expect("Second run should succeed (idempotent)");
 
-        // Still only 12 migrations recorded
+        // Still only 13 migrations recorded
         let count: i32 = conn
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 12);
+        assert_eq!(count, 14);
     }
 }
