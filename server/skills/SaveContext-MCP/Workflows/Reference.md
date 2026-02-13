@@ -1036,6 +1036,60 @@ Search tips:
 - Lower threshold (0.3) for more results, higher (0.7) for precision
 - Add `search_all_sessions=true` to search across all your sessions
 
+## Context Injection (Prime)
+
+Use `context_prime` for full project awareness in a single call. Returns session state, high-priority items, decisions, active issues, memory, and a command reference.
+
+### Basic Usage
+
+```
+context_prime()                    # Full context dump (all items, fixed-limit buckets)
+```
+
+### Smart Mode
+
+Relevance-ranked context selection with token-budget packing. Scores every item and selects the optimal subset for a token-limited context window.
+
+```
+context_prime(smart=true)                          # Ranked context, 4000 token budget
+context_prime(smart=true, budget=2000)             # Tighter budget (fewer, higher-relevance items)
+context_prime(smart=true, query="authentication")  # Boost auth-related items via embeddings
+context_prime(smart=true, decay_days=7)            # Aggressive recency bias (7-day half-life)
+```
+
+### Scoring Formula
+
+Each item is scored: `temporal_decay * priority_weight * category_weight * semantic_boost`
+
+| Factor | Values |
+|--------|--------|
+| Temporal decay | Exponential: today=1.0, 7d=0.71, 14d=0.5, 28d=0.25 |
+| Priority | high=3.0x, normal=1.0x, low=0.5x |
+| Category | decision=2.0x, reminder=1.5x, progress=1.0x, note=0.5x |
+| Semantic boost | 0.5x-2.5x (only with `query`, uses embedding similarity) |
+
+After scoring, MMR (Maximal Marginal Relevance) diversity re-ranking prevents near-duplicate items from dominating. Items are then packed greedily into the token budget.
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `smart` | boolean | false | Enable relevance-ranked selection |
+| `budget` | number | 4000 | Token budget for smart mode |
+| `query` | string | — | Topic query for semantic boosting |
+| `decay_days` | number | 14 | Temporal decay half-life in days |
+
+### When to Use
+
+| Scenario | Call |
+|----------|------|
+| Start of session, need full context | `context_prime()` |
+| Injecting into limited context window | `context_prime(smart=true, budget=2000)` |
+| Focused on specific topic | `context_prime(smart=true, query="payments")` |
+| Only recent items matter | `context_prime(smart=true, decay_days=3)` |
+
+**Key:** `context_prime` is purely read-only — it never creates checkpoints or modifies the database.
+
 ## Quick Reference
 
 ### Sessions & Context
@@ -1050,6 +1104,8 @@ Search tips:
 | Pause session | `context_session_pause` |
 | Prepare for compaction | `context_prepare_compaction` |
 | Restore from checkpoint | `context_restore` |
+| Full context dump | `context_prime` |
+| Smart context injection | `context_prime smart=true budget=2000` |
 
 ### Projects & Issues
 | Task | Tool |

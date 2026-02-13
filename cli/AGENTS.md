@@ -127,6 +127,9 @@ sc issue list                            # Human-readable (TTY)
 sc issue list --json                     # Force JSON in TTY
 ```
 
+> **Note:** In non-TTY (piped) mode, auto-JSON overrides `--format table`.
+> Use `--format csv` for non-JSON piped output.
+
 ### Output Format Flag
 
 ```bash
@@ -237,6 +240,107 @@ sc issue batch '{"issues":[
 sc issue ready
 ```
 
+## Creating Epics with Subtasks
+
+### Single-Command Pattern (for 1-3 subtasks)
+
+```bash
+# 1. Create the epic
+sc issue create "Epic: Auth System" -t epic -p 3 -d "Implement JWT auth"
+
+# 2. Create subtasks linked to parent
+sc issue create "Add JWT types" -t task --parent SC-xxxx
+sc issue create "Add auth middleware" -t task --parent SC-xxxx
+sc issue create "Add login endpoint" -t task --parent SC-xxxx
+```
+
+### Batch Pattern (for 3+ subtasks or dependencies)
+
+```bash
+sc issue batch --json-input '{
+  "issues": [
+    { "title": "Epic: Auth System", "issueType": "epic", "priority": 3 },
+    { "title": "Add JWT types", "parentId": "$0", "issueType": "task" },
+    { "title": "Add auth middleware", "parentId": "$0", "issueType": "task" },
+    { "title": "Add login endpoint", "parentId": "$0", "issueType": "task" }
+  ],
+  "dependencies": [
+    { "issueIndex": 2, "dependsOnIndex": 1, "dependencyType": "blocks" },
+    { "issueIndex": 3, "dependsOnIndex": 2, "dependencyType": "blocks" }
+  ]
+}'
+```
+
+`$N` references the Nth issue (0-indexed) in the batch. Use `parentId: "$0"` to make subtasks children of the first issue (the epic).
+
+### Type Rules
+
+| Creating | Use Type | NOT |
+|----------|----------|-----|
+| Work container with subtasks | `-t epic` | `-t feature` |
+| Standalone feature request | `-t feature` | `-t epic` |
+| Implementation step | `-t task` | `-t feature` |
+| Something broken | `-t bug` | `-t task` |
+
+**Epics are containers.** Features are standalone deliverables. If it has subtasks, it's an epic.
+
+### Issue Analytics
+
+```bash
+# Count issues grouped by field
+sc issue count                           # Group by status (default)
+sc issue count --group-by type           # Group by issue type
+sc issue count --group-by priority       # Group by priority
+sc issue count --group-by assignee       # Group by assigned agent
+
+# Find stale issues (not updated recently)
+sc issue stale                           # Not updated in 7+ days (default)
+sc issue stale --days 3                  # Not updated in 3+ days
+sc issue stale --limit 10               # Limit results
+
+# List blocked issues with blockers
+sc issue blocked                         # Shows each blocked issue + its blockers
+sc issue blocked --limit 10             # Limit results
+
+# Dependency tree (ASCII visualization)
+sc issue dep tree SC-xxxx               # Tree for specific issue
+sc issue dep tree                        # Trees for all epics in project
+```
+
+### Close Reason
+
+```bash
+sc issue complete SC-a1b2 --reason "Superseded by new approach"
+sc issue complete SC-a1b2 SC-c3d4 --reason "Batch close: sprint cleanup"
+```
+
+The `--reason` (or `-r`) flag records why issues were closed. Shown in `sc issue show` output and included in JSON responses.
+
+### Epic Progress
+
+Epic progress is shown automatically:
+
+```bash
+sc issue show SC-xxxx                    # Shows progress section for epics
+# Progress: 3/5 tasks (60%)
+#   Closed:      3
+#   In progress: 1
+#   Open:        1
+
+sc issue list -t epic                    # Shows inline progress
+# Epic: Auth System [in_progress] SC-xxxx 3/5 (60%)
+```
+
+JSON output includes a `progress` object with `total`, `closed`, `in_progress`, `open`, `blocked`, `deferred` counts.
+
+### Listing Hierarchy
+
+```bash
+sc issue list -t epic                    # List all epics
+sc issue list --parent SC-xxxx           # List subtasks of an epic
+sc issue list --plan <plan_id>           # List all issues in a plan
+```
+
 ## Verbosity & Debugging
 
 ```bash
@@ -247,11 +351,11 @@ sc -q status        # Quiet (errors only)
 RUST_LOG=debug sc status  # Override via env var
 ```
 
-Tracing output goes to stderr, never polluting stdout. Note: Debug output is minimal - most commands just output JSON to stdout.
+Tracing output goes to stderr, never polluting stdout. Debug shows search pipeline stages, session/project resolution, and embedding operations.
 
 ## Named Flag Aliases
 
-Agents can use `--title`, `--id`, `--key` etc. as flags instead of positional args:
+Agents can use `--title`, `--id`, `--key`, `--value`, `--name`, `--path` as flags instead of positional args:
 
 ```bash
 # Both work identically:
@@ -260,7 +364,14 @@ sc issue create --title "Fix bug"
 
 sc issue show SC-a1b2
 sc issue show --id SC-a1b2
+
+sc save my-key "some value"
+sc save --key my-key --value "some value"
 ```
+
+Context-aware: some flags are named (not positional) in certain commands:
+- `--value` is preserved as a named flag for `update` (use: `sc update key --value "new"`)
+- `--key` is preserved as a named flag for `get` (use: `sc get --key "exact-key"`)
 
 ## Repeatable Flags
 

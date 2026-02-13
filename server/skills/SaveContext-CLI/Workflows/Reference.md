@@ -297,11 +297,15 @@ sc get -l 5                                # Limit results
 
 | Flag | Description |
 |------|-------------|
-| `-s, --search <query>` | Semantic search query |
+| `-s, --search <query>` | Semantic search query (smart auto-decomposition) |
 | `-k, --key <key>` | Exact key lookup |
 | `-c, --category <cat>` | Filter by category |
 | `-P, --priority <pri>` | Filter by priority (capital P) |
+| `--search-all-sessions` | Search across all sessions, not just current |
+| `--search-mode <mode>` | Search mode: fast, quality, tiered (default: tiered) |
+| `--threshold <0.0-1.0>` | Semantic search threshold (lower = more results) |
 | `-l, --limit <n>` | Max results |
+| `--offset <n>` | Pagination offset |
 
 ### `sc update <key>`
 Update an existing context item.
@@ -576,7 +580,12 @@ Mark issue as complete.
 
 ```bash
 sc issue complete SC-a1b2
+sc issue complete SC-a1b2 --reason "Implemented in v0.1.30"
 ```
+
+| Flag | Description |
+|------|-------------|
+| `-r, --reason <text>` | Reason for closing |
 
 ### `sc issue claim <id>`
 Claim an issue (sets in_progress + assigns to you).
@@ -675,6 +684,39 @@ Remove labels.
 sc issue label remove SC-a1b2 -l "urgent"
 ```
 
+### `sc issue dep tree [id]`
+Show dependency tree.
+
+```bash
+sc issue dep tree SC-a1b2                      # Tree for specific issue
+sc issue dep tree                              # Trees for all epics
+```
+
+### `sc issue count`
+Count issues by status (or other grouping).
+
+```bash
+sc issue count                                 # Count by status
+sc issue count --group-by type                 # Count by type
+sc issue count --group-by priority             # Count by priority
+sc issue count --group-by assignee             # Count by assignee
+```
+
+### `sc issue stale`
+Find stale issues (no updates in N days).
+
+```bash
+sc issue stale                                 # Stale 7+ days (default)
+sc issue stale --days 3                        # Stale 3+ days
+```
+
+### `sc issue blocked`
+List blocked issues and what's blocking them.
+
+```bash
+sc issue blocked
+```
+
 ---
 
 ## Plans
@@ -716,6 +758,22 @@ Update a plan.
 sc plan update plan_abc123 -s completed
 sc plan update plan_abc123 --title "Updated Title" --content "New content"
 ```
+
+### `sc plan capture`
+Import a plan from an AI coding agent's plan file (e.g., Claude Code `.claude/plans/` files).
+
+```bash
+sc plan capture                                # Auto-discover recent plan files
+sc plan capture --agent claude                 # Only look at Claude's plans
+sc plan capture --max-age 60                   # Plans modified within 60 minutes
+sc plan capture --file /path/to/plan.md        # Import a specific file
+```
+
+| Flag | Description |
+|------|-------------|
+| `--agent <name>` | Only look in a specific agent's directory (claude, gemini, opencode, cursor) |
+| `--max-age <minutes>` | Max age in minutes (default: 30) |
+| `--file <path>` | Explicit plan file path (skip discovery) |
 
 ---
 
@@ -807,18 +865,28 @@ Read-only aggregation of all project context into a single payload. Use at conve
 sc prime                                    # Colored terminal output
 sc prime --json                             # JSON for programmatic use
 sc prime --compact                          # Markdown for agent injection
+sc prime --smart --compact                  # Relevance-ranked within token budget
+sc prime --smart --compact --budget 2000    # Custom token budget
+sc prime --smart --compact --query "auth"   # Semantic boost for topic
+sc prime --smart --compact --decay-days 7   # Aggressive recency bias
+sc prime --smart --json                     # JSON with scoring stats
 sc prime --transcript                       # Include Claude Code transcripts
 sc prime --transcript --transcript-limit 10 # More transcript entries
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--compact` | Markdown output for agent system prompts |
+| `--compact` | Markdown output for agent context injection |
+| `--smart` | Relevance-ranked context selection with token budget |
+| `--budget <n>` | Token budget for smart mode (default: 4000) |
+| `--query <text>` | Semantic boost for a topic in smart mode |
+| `--decay-days <n>` | Temporal decay half-life in days (default: 14) |
 | `--transcript` | Parse Claude Code session transcripts |
 | `--transcript-limit <n>` | Max transcript entries (default: 5) |
 
 Returns: session state, git info, high-priority items, decisions, reminders, active issues, project memory, command reference, and optionally parsed transcripts.
 
 **Default output** is colored terminal (human-readable).
-**`--compact`** outputs markdown suitable for injecting into agent prompts.
+**`--compact`** outputs markdown with fixed-limit category buckets.
+**`--smart --compact`** outputs a single ranked list scored by `temporal_decay * priority_weight * category_weight * semantic_boost`, with MMR diversity re-ranking and greedy token-budget packing.
 **`--json`** outputs structured JSON with all fields for programmatic use.

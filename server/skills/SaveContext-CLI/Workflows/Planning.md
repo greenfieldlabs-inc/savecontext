@@ -2,6 +2,8 @@
 
 For multi-task features, releases, or work spanning 5+ issues.
 
+> **This workflow covers plan creation.** For the full plan-to-completion cycle with user review, see `FeatureLifecycle.md`.
+
 ## When to Use
 
 - Feature with multiple subtasks

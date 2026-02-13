@@ -5,6 +5,109 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.30] - 2026-02-07
+
+### Added
+- **Plans session binding** - Plans are now first-class session-bound entities
+  - `session_id` FK on plans table links plans to the session that created them
+  - Auto-binds to active TTY session on `sc plan create` and MCP `context_plan_create`
+  - `sc plan list --session current` filters plans by active session
+  - Migration 013 adds `session_id`, `source_path`, `source_hash` columns with dirty tracking
+- **Plans JSONL sync** - Plans now export/import via `plans.jsonl` like all other entities
+  - `PlanRecord` type with content hashing for merge-safe sync
+  - `sc sync export` includes plans, `sc sync import` handles plan records
+  - Dirty tracking triggers (`mark_plan_dirty_insert`/`mark_plan_dirty_update`)
+  - Backfill support for existing plans without dirty flags
+- **Multi-agent plan capture** (`sc plan capture`) - Import plan files from any AI coding agent
+  - Discovers plan files from Claude Code (`~/.claude/plans/`), Gemini CLI, OpenCode, Cursor
+  - SHA-256 content hash deduplication (second capture updates, never duplicates)
+  - `--agent` flag to target specific agent, `--file` for explicit path, `--max-age` filter
+  - Extracts title from first `# ` heading or humanizes filename
+  - Designed for hook-driven capture (e.g., Claude Code `PostToolUse` on `ExitPlanMode`)
+- **Status cache plan tracking** - `activePlanId` and `planTitle` fields in TTY status cache
+  - `update-status-cache.py` hook handles `context_plan_create` and `context_plan_update` events
+- **DB-aware project resolution** (`resolve_project()` / `resolve_project_path()`)
+  - All project-scoped commands (issues, memory, plans, sessions, prime) now resolve via DB
+  - CWD auto-detection matches against registered projects using longest-prefix matching
+  - Subdirectory resolution (e.g., `/project/src/deep/` resolves to `/project/`)
+  - `--project` flag accepts project IDs in addition to paths
+  - `NoProjectForDirectory` error lists known projects and suggests `sc project create`
+- **Issue analytics commands** - Four new read-only commands for issue visibility
+  - `sc issue count` — Count issues grouped by status, type, priority, or assignee
+  - `sc issue stale` — Find issues not updated in N days (default: 7)
+  - `sc issue blocked` — List blocked issues with their blocker details
+  - `sc issue dep tree [id]` — ASCII dependency tree for an issue or all epics
+  - All support `--json`, `--format csv`, and human-readable output modes
+- **Epic progress tracking** — Inline completion percentages for epics
+  - `sc issue show` displays progress section for epics (closed/total with percentage)
+  - `sc issue list -t epic` shows inline progress (e.g., `3/5 (60%)`)
+  - JSON output includes `progress` object with per-status counts
+- **Close reason tracking** — Record why issues were closed
+  - `sc issue complete <id> --reason "Superseded by new approach"` stores close reason
+  - `sc issue show` displays close reason for closed issues
+  - Migration 014 adds `close_reason` column to issues table
+- **Smart semantic search** — 4-stage cascading pipeline replaces single-shot search
+  - Stage 1: Adaptive threshold (`max(0.25, top_score * 0.6)`) instead of fixed 0.5
+  - Stage 2: Sub-query decomposition + Reciprocal Rank Fusion — multi-word queries split into terms + bigrams, searched individually, fused with RRF scoring
+  - Stage 3: Automatic scope expansion to all sessions when scoped search returns empty
+  - Stage 4: Nearest-miss suggestions when nothing matches
+  - `strategy` field in JSON output tells agents which approach found results
+- **Hook integration guide** (`docs/HOOKS.md`) — Works with any tool that supports lifecycle hooks
+  - Templates for Claude Code, Cursor, Windsurf, Kiro, GitHub Copilot CLI, and OpenCode
+  - Copy-paste hook configs calling `sc` commands for session start, pre-compact, and progress tracking
+  - Tools without hooks (Codex, Cline, Continue, Aider) noted with MCP server fallback
+- **Smart context injection** (`sc prime --smart`) — 5-stage pipeline for relevance-ranked context selection
+  - Composite scoring: `temporal_decay * priority_weight * category_weight * semantic_boost`
+  - MMR diversity re-ranking (lambda=0.7) prevents near-duplicate items in output
+  - Token-budget packing with configurable budget (default 4000 tokens)
+  - `--query` for semantic boosting, `--decay-days` for recency control
+  - `--compact`, `--json`, and colored terminal output modes
+  - 23 unit tests covering all scoring functions
+- **MCP `context_prime` smart mode** — `smart`, `budget`, `query`, `decay_days` parameters forwarded through bridge
+  - MCP server delegates to `sc prime --smart --json` via CLI bridge
+  - Auto-JSON when stdout is non-TTY ensures clean MCP responses
+- **CLI tracing instrumentation** — `-v`, `-vv`, `-vvv` flags now produce useful output
+  - Search pipeline: shows stage progression, adaptive thresholds, sub-query decomposition, RRF fusion scores
+  - Session resolution: shows which source resolved the session (explicit, env, TTY cache)
+  - Project resolution: shows CWD matching against registered projects
+  - Embeddings: provider initialization, fast embedding storage, background spawner status, backfill progress
+  - Filtered to `sc=` crate only — no reqwest/hyper/rustls noise at `-vv`
+  - `RUST_LOG` env var overrides verbosity flags for full control
+
+### Changed
+- **MCP server search instructions** — `generateServerInstructions()` now includes search guidance for agents
+- **Updated `context_get` tool description** — Query param reflects smart search auto-decomposition
+
+### Fixed
+- **Session search returns empty results** - `sc session list --search` now widens scope
+  - Root cause: `--search` intersected with default `status=active` and CWD project filter
+  - When `--search` is provided, status defaults to `all` and project scope goes global
+  - Explicit `-s` or `-p` flags still narrow the search as expected
+- **All project-scoped commands resolved to wrong project** - Filesystem walk always found `~/.savecontext/`, resolving to `/Users/shane` instead of the actual project
+  - Replaced 17 `current_project_path()` call sites across 5 command files with `resolve_project_path()`
+  - Session `--project` with a project ID stored the ID as a literal path string (now resolves via DB)
+  - Missing projects defaulted to `"."` (now requires a registered project or errors with suggestions)
+- **`sc project create` defaults to `"."`** - Now uses canonicalized CWD instead of literal dot
+- **Semantic search `-s` flag broken** — `-s` alone didn't trigger semantic search
+  - Root cause: gate condition required `--threshold` to also be passed (`args.threshold.is_some() && args.query.is_some()`)
+  - `-s "query"` now triggers semantic search without needing `--threshold`
+- **Phantom embedding completions** — 1822 items had `embedding_status = 'complete'` with no actual embedding data
+  - Root cause: `get_items_without_embeddings()` WHERE clause only matched `NULL`/`'none'`, missing `'pending'`/`'error'`
+  - Added `resync_embedding_status()` to detect and reset phantom entries
+  - `sc embeddings backfill --force` now resyncs status before backfilling
+- **`--force` backfill was a no-op** — Both `if force` and `else` code paths called the same function
+  - `--force` now calls `resync_embedding_status()` first, resetting phantom completions before backfill
+- **Background embedder silently failed** — All stdio was null, errors invisible
+  - Now logs to `~/.savecontext/logs/embedder.log`
+- **`sc update --value` broken** — `preprocess_args` stripped `--value` globally, but `update` uses it as a named flag
+  - Root cause: stateless preprocessor didn't know which subcommand was running
+  - Now command-aware: `--value` only stripped for `save` (positional), preserved for `update` (named)
+  - Same fix for `--key`: preserved for `get` (named), stripped for `save/update/delete/tag` (positional)
+  - Added 10 unit tests covering all preprocess_args edge cases
+- **Fast embedding FK constraint failure** — `sc save` to existing key triggered FK error on fast embedding INSERT
+  - Root cause: Upsert path resolved wrong `item_id` when updating existing context items
+  - Now resolves actual item ID after upsert before storing embedding
+
 ## [0.1.29] - 2026-01-30
 
 ### Added

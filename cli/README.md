@@ -99,6 +99,8 @@ sc session remove-path /path/to/project             # Remove path from session
 ```bash
 sc save auth-decision "Using JWT tokens" -c decision -p high
 sc get --query "authentication"                     # Semantic search
+sc get --query "auth" --search-all-sessions         # Search all sessions
+sc get --query "auth" --search-mode fast            # Fast mode (Model2Vec only)
 sc get --key auth-decision                          # Get by key
 sc get --category decision                          # Filter by category
 sc update auth-decision --value "Updated reasoning"
@@ -121,6 +123,14 @@ sc issue clone SC-a1b2                              # Clone issue
 sc issue duplicate SC-a1b2 --of SC-c3d4             # Mark as duplicate
 sc issue ready                                      # List ready issues
 sc issue next-block -c 3                            # Claim next batch
+sc issue complete SC-a1b2 --reason "Done"           # Complete with reason
+sc issue count                                      # Count by status
+sc issue count --group-by type                      # Count by type
+sc issue stale                                      # Stale issues (7+ days)
+sc issue stale --days 3                             # Stale issues (3+ days)
+sc issue blocked                                    # Blocked issues + blockers
+sc issue dep tree SC-a1b2                           # Dependency tree
+sc issue dep tree                                   # Trees for all epics
 sc issue label add SC-a1b2 -l frontend,urgent
 sc issue dep add SC-a1b2 --depends-on SC-c3d4
 ```
@@ -160,6 +170,8 @@ sc plan create "Q1 Features" -c "## Goals\n- Feature 1\n- Feature 2"
 sc plan list
 sc plan show <id>
 sc plan update <id> --status completed
+sc plan capture                                # Import plan from AI agent's plan file
+sc plan capture --agent claude --max-age 60    # Specific agent, 60min max age
 ```
 
 #### Embeddings
@@ -177,6 +189,34 @@ sc sync status
 sc sync export
 sc sync import
 ```
+
+#### Prime (Context Injection)
+```bash
+sc prime --compact                                  # Fixed-limit category buckets
+sc prime --smart --compact                          # Ranked by relevance within token budget
+sc prime --smart --compact --budget 2000            # Custom token budget
+sc prime --smart --compact --query "auth"           # Semantic boost for topic
+sc prime --smart --compact --decay-days 7           # Aggressive recency bias
+sc prime --smart --json                             # JSON with scoring stats
+sc prime --transcript                               # Include Claude Code transcripts
+```
+
+Smart prime flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--smart` | off | Enable relevance-ranked selection |
+| `--budget <n>` | 4000 | Token budget for context items |
+| `--query <text>` | none | Semantic boost for a topic |
+| `--decay-days <n>` | 14 | Temporal decay half-life in days |
+
+Scoring: `temporal_decay * priority_weight * category_weight * semantic_boost`
+
+- **Temporal decay**: exponential (`today=1.0, 7d=0.71, 14d=0.5, 28d=0.25`)
+- **Priority**: `high=3.0, normal=1.0, low=0.5`
+- **Category**: `decision=2.0, reminder=1.5, progress=1.0, note=0.5`
+- **Semantic boost**: `0.5x-2.5x` based on cosine similarity to `--query`
+- **MMR diversity**: penalizes near-duplicate items by embedding similarity
 
 #### Other
 ```bash
@@ -344,7 +384,7 @@ cargo test
 
 # Run with verbose logging (or use -v/-vv flags)
 RUST_LOG=debug cargo run -- session list
-# Note: Debug output is minimal currently - most commands just output JSON
+# Note: Debug output shows search pipeline stages, session/project resolution, and embedding operations
 
 # Check lints
 cargo clippy

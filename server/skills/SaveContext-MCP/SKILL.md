@@ -28,6 +28,20 @@ For most requests, use these patterns directly:
 | "resume [topic]" | **MUST** search sessions, then `context_session_resume` |
 | "start session" / "begin work" | `context_session_start` (new sessions only) |
 
+## Context Injection
+
+Use `context_prime` to get full project awareness in a single call.
+
+```
+context_prime()                                    # Full context dump
+context_prime(smart=true)                          # Relevance-ranked within token budget
+context_prime(smart=true, budget=2000)             # Custom token budget
+context_prime(smart=true, query="authentication")  # Boost auth-related items
+context_prime(smart=true, decay_days=7)            # Aggressive recency bias
+```
+
+Smart mode scores items by `temporal_decay * priority * category * semantic_boost`, applies MMR diversity re-ranking, and packs into the token budget.
+
 ## Workflow Routing
 
 | Workflow | Trigger | File |
@@ -38,7 +52,8 @@ For most requests, use these patterns directly:
 | **Resume** | "resume", "continue", "pick up where I left off" | `Workflows/Resume.md` |
 | **Compaction** | "prepare for compaction", context getting long | `Workflows/Compaction.md` |
 | **IssueTracking** | "create issue", "track this bug" | `Workflows/IssueTracking.md` |
-| **Planning** | "plan this feature", "implement [complex]", multi-task work | `Workflows/Planning.md` |
+| **Planning** | "plan this feature" | `Workflows/Planning.md` |
+| **FeatureLifecycle** | "implement", "build this", "plan and execute" | `Workflows/FeatureLifecycle.md` |
 | **Advanced** | Multi-day projects, multi-agent, branch switching, subagents | `Workflows/AdvancedWorkflows.md` |
 
 ## Examples

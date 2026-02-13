@@ -14,7 +14,25 @@ Compound workflow for ending a work session.
 
 Execute these in order:
 
-### 1. Save Current Progress
+### 1. Triage Issues
+
+**Before wrapping up, clean up issue state:**
+
+```
+# Check for issues you claimed but didn't finish
+context_issue_list status="in_progress"
+
+# Complete anything that's done
+context_issue_complete id="<id>" issue_title="..."
+
+# Defer work that won't happen this session
+context_issue_update id="<id>" issue_title="..." status="deferred"
+
+# File issues for any remaining work or follow-ups discovered
+context_issue_create title="Follow-up: thing noticed during work" issueType="task" priority=2
+```
+
+### 2. Save Current Progress
 
 ```
 context_save
@@ -23,7 +41,7 @@ context_save
   category="progress"
 ```
 
-### 2. Tag Recent Items (Optional)
+### 3. Tag Recent Items (Optional)
 
 If items should be grouped:
 
@@ -34,7 +52,7 @@ context_tag
   action="add"
 ```
 
-### 3. Create Checkpoint
+### 4. Create Checkpoint
 
 ```
 context_checkpoint
@@ -42,7 +60,7 @@ context_checkpoint
   include_git=true
 ```
 
-### 4. Pause Session
+### 5. Pause Session
 
 ```
 context_session_pause

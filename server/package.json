@@ -1,6 +1,6 @@
 {
   "name": "@savecontext/mcp",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "description": "The OS for AI coding agents",
   "main": "dist/index.js",
   "type": "module",

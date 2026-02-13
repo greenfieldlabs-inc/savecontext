@@ -14,7 +14,25 @@ Compound workflow for ending a work session.
 
 Execute these in order:
 
-### 1. Save Current Progress
+### 1. Triage Issues
+
+**Before wrapping up, clean up issue state:**
+
+```bash
+# Check for issues you claimed but didn't finish
+sc issue list -s in_progress
+
+# Complete anything that's done
+sc issue complete <id>
+
+# Defer work that won't happen this session
+sc issue update <id> -s deferred
+
+# File issues for any remaining work or follow-ups discovered
+sc issue create "Follow-up: thing noticed during work" -t task -p 2
+```
+
+### 2. Save Current Progress
 
 ```bash
 sc save "session-wrapup-$(date +%Y%m%d)" \
@@ -27,7 +45,7 @@ sc save "session-wrapup-$(date +%Y%m%d)" \
 - [next steps]" -c progress
 ```
 
-### 2. Tag Recent Items (Optional)
+### 3. Tag Recent Items (Optional)
 
 If items should be grouped:
 
@@ -35,13 +53,13 @@ If items should be grouped:
 sc tag add "feature-name" --keys "item1,item2"
 ```
 
-### 3. Create Checkpoint
+### 4. Create Checkpoint
 
 ```bash
 sc checkpoint create "wrapup-$(date +%Y-%m-%d)" --include-git
 ```
 
-### 4. Pause Session
+### 5. Pause Session
 
 ```bash
 sc session pause

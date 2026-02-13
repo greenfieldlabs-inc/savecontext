@@ -5,123 +5,486 @@
 **The OS for AI coding agents**
 
 [![npm version](https://img.shields.io/npm/v/@savecontext/mcp?color=brightgreen)](https://www.npmjs.com/package/@savecontext/mcp)
+[![crates.io](https://img.shields.io/crates/v/savecontext-cli)](https://crates.io/crates/savecontext-cli)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-orange)](https://modelcontextprotocol.io)
 
-[Website](https://savecontext.dev) • [NPM](https://www.npmjs.com/package/@savecontext/mcp) • [Changelog](https://savecontext.dev/changelog)
+[Website](https://savecontext.dev) • [NPM](https://www.npmjs.com/package/@savecontext/mcp) • [Crates.io](https://crates.io/crates/savecontext-cli) • [Changelog](https://savecontext.dev/changelog)
 
 </div>
 
 ---
 
-## Overview
+SaveContext gives AI coding agents the operational layer they're missing — sessions, issue tracking, plans, semantic search, and multi-agent coordination, all stored locally in SQLite and available through a native CLI (`sc`) or any MCP-compatible client.
 
-SaveContext is a Model Context Protocol (MCP) server that gives AI coding assistants persistent memory across sessions. It combines context management, issue tracking, and project planning into a single local-first tool that works with any MCP-compatible client.
+No cloud account. No API keys. No rate limits.
 
-**Core capabilities:**
-- **Context & Memory** — Save decisions, progress, and notes that persist across conversations
-- **Issue Tracking** — Manage tasks, bugs, and epics with dependencies and hierarchies
-- **Plans & PRDs** — Create specs and link them to implementation issues
-- **Semantic Search** — Find past decisions by meaning, not just keywords
-- **Checkpoints** — Snapshot and restore session state at any point
-
-> **🦀 CLI-First Development:** The Rust CLI (`sc`) is the **primary implementation** — all business logic lives there, and the MCP server delegates to it via a bridge pattern. **New features land in the CLI first**, often weeks before MCP support. For the best experience, latest capabilities, and fastest performance, **prefer using `sc` directly**. See [`cli/README.md`](cli/README.md) for the full command reference.
-
-## 🛠️ Features
-
-- **2-Tier Semantic Search**: Instant local embeddings via Model2Vec (~15ms) with optional quality tier (Ollama, HuggingFace)
-- **Multi-Agent Support**: Run multiple CLI/IDE instances simultaneously with agent-scoped session tracking
-- **Automatic Provider Detection**: Detects 30+ MCP clients including coding tools (Claude Code, Cursor, Cline, VS Code, JetBrains, etc.) and desktop apps (Claude Desktop, Perplexity, ChatGPT, Raycast, etc.)
-- **Session Lifecycle Management**: Full session state management with pause, resume, end, switch, and delete operations
-- **Multi-Path Sessions**: Sessions can span multiple related directories (monorepos, frontend/backend, etc.)
-- **Project Isolation**: Automatically filters sessions by project path - only see sessions from your current repository
-- **Auto-Resume**: If an active session exists for your project, automatically resume it instead of creating duplicates
-- **Session Management**: Organize work by sessions with automatic channel detection from git branches
-- **Checkpoints**: Create named snapshots of session state with optional git status capture
-- **Checkpoint Search**: Lightweight keyword search across all checkpoints with project/session filtering to find historical decisions
-- **Smart Compaction**: Analyze priority items and generate restoration summaries when approaching context limits
-- **Channel System**: Automatically derive channels from git branches (e.g., `feature/auth` → `feature-auth`)
-- **Local Storage**: SQLite database with WAL mode for fast, reliable persistence
-- **Cross-Tool Compatible**: Works with any MCP-compatible client (Claude Code, Cursor, Factory, Codex, Cline, etc.)
-- **Fully Offline**: No cloud account required, all data stays on your machine
-- **Plans System**: Create PRDs and specs, link issues to plans, track implementation progress
-- **Dashboard UI**: Local Next.js web interface for visual session, context, and issue management
-
-## 📦 Installation
-
-### Prerequisites
-
-**1. [Bun](https://bun.sh)** - Required for the MCP server:
+<div align="center">
+<h3>Quick Install</h3>
 
 ```bash
-# Install Bun (macOS, Linux, WSL)
-curl -fsSL https://bun.sh/install | bash
+cargo install savecontext-cli && sc init
 ```
 
-**2. [Rust CLI](cli/README.md)** - Required for all operations (MCP delegates to it):
+<p><em>Requires Rust. See <a href="#installation">Installation</a> for alternatives.</em></p>
+</div>
+
+---
+
+## Quick Start
 
 ```bash
-# Install Rust (if not already installed)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+# Start a session
+sc session start "building auth system"
 
-# Install the CLI from crates.io
-cargo install savecontext-cli
+# Save context as you work
+sc save auth-choice "JWT with refresh tokens" -c decision -p high
+sc save login-done "Login endpoint complete with rate limiting" -c progress
 
-# Verify installation
-sc --version
+# Track work with issues
+sc issue create "Add auth middleware" -t task -p 3
+sc issue create "Fix token refresh bug" -t bug -p 4
+sc issue claim SC-a1b2
+
+# Check current state
+sc status
 ```
 
-> **Why is the CLI required?** The MCP server is a thin wrapper that delegates all operations to the Rust CLI. This ensures a single source of truth and enables CLI-first development where new features land in `sc` before MCP.
-
-### MCP Server Setup
-
-Once the CLI is installed, add the MCP server to your AI tool:
+To connect an MCP-compatible client (Claude Code, Cursor, Codex, Gemini, etc.):
 
 ```bash
 bunx @savecontext/mcp
 ```
 
-### Global Install (Alternative)
+Then add it to your client's MCP configuration — see [Configuration](#configuration).
+
+---
+
+## Why SaveContext?
+
+### The Problem
+
+AI coding agents lose all context between conversations. Decisions, progress, and rationale vanish when the window closes. Issue tracking lives in external tools that agents can't use natively. And when multiple agents work on the same project, there's no coordination — they duplicate work, create conflicts, and have no shared state.
+
+### The Solution
+
+SaveContext is a local operational layer that runs alongside your AI coding agent. It provides sessions to scope work, issues to track tasks, plans to spec features, semantic search to find past decisions by meaning, and coordination primitives so multiple agents can work without stepping on each other. Everything stored in a single SQLite database on your machine.
+
+### How It Compares
+
+| Feature | SaveContext | GitHub Issues | Linear/Jira | Beads | TODO comments |
+|---------|:-----------:|:-------------:|:-----------:|:-----:|:-------------:|
+| Works offline | **Yes** | No | No | Yes | Yes |
+| Sessions & context | **Yes** | No | No | No | No |
+| Issue tracking | **Yes** | Yes | Yes | Yes | No |
+| Plans & specs | **Yes** | Projects | Yes | No | No |
+| Semantic search | **Yes** | No | No | No | No |
+| Smart context injection | **Yes** | No | No | No | No |
+| Dependencies | **Yes** | Limited | Yes | Yes | No |
+| Multi-agent coordination | **Yes** | No | Limited | No | No |
+| MCP protocol | **Yes** | No | No | No | No |
+| CLI + MCP access | **Yes** | API only | API only | CLI only | N/A |
+| Zero setup cost | **Yes** | Free tier | $$/user | Yes | Yes |
+| Checkpoints & restore | **Yes** | No | No | No | No |
+
+---
+
+## What You Can Do
+
+### Sessions & Context
+
+Sessions organize your work and scope context to what matters. Context items persist across conversations — your agent never loses track of decisions, progress, or notes.
 
 ```bash
-bun install -g @savecontext/mcp
+sc session start "payment integration"
+sc save stripe-approach "Event-driven with webhooks, not polling" -c decision -p high
+sc save api-keys "Use test key sk_test_..." -c config
+sc checkpoint create "pre-refactor" --include-git
+
+# Later — resume where you left off
+sc session list --search "payment"
+sc session resume sess_abc123
+
+# Find past context by meaning, not exact keywords
+sc get -s "how do we handle stripe webhooks"
 ```
 
-### From source (Development)
+### Issue Tracking
+
+Full issue tracking with epics, dependencies, priorities, labels, and multi-agent coordination. Agents can claim work, track blockers, and see what's ready.
 
 ```bash
-git clone https://github.com/greenfieldlabs-inc/savecontext.git
-cd savecontext
+# Create an epic with subtasks
+sc issue create "Epic: Auth System" -t epic -p 3
+sc issue create "Add JWT types" -t task --parent SC-a1b2
+sc issue create "Auth middleware" -t task --parent SC-a1b2
+sc issue create "Login endpoint" -t task --parent SC-a1b2
 
-# Build and install CLI
-cd cli
-cargo build --release
-cargo install --path .   # Installs to ~/.cargo/bin/sc
+# Add dependencies between issues
+sc issue dep add SC-c3d4 --depends-on SC-a1b2
 
-# Build MCP server
-cd ../server
-bun install
-bun run build
+# See what's ready to work on (unblocked + unassigned)
+sc issue ready
+
+# Claim and complete
+sc issue claim SC-c3d4
+sc issue complete SC-c3d4 --reason "Implemented with RS256 signing"
+
+# Analytics
+sc issue count --group-by status
+sc issue stale --days 7
+sc issue blocked
+sc issue dep tree
+```
+
+### Plans & Epics
+
+Create specs, link them to implementation issues, and track progress through epic completion.
+
+```bash
+sc plan create "Q1 Auth Overhaul" -c "## Goals
+- Replace session auth with JWT
+- Add MFA support
+- SSO integration"
+
+# Link issues to plans
+sc issue create "Epic: JWT Migration" -t epic --plan-id plan_xyz
+
+# Epic progress tracked automatically
+sc issue show SC-a1b2
+# Progress: 3/5 tasks (60%)
+#   Closed:      3
+#   In progress: 1
+#   Open:        1
+```
+
+### Semantic Search
+
+Find past decisions by meaning, not keywords. Smart search auto-decomposes multi-word queries, adapts thresholds, and expands scope when needed.
+
+```bash
+sc get -s "database connection pooling strategy"
+sc get -s "auth middleware rate limiting"   # Auto-decomposes into terms + bigrams
+sc get -s "postgres" --search-all-sessions  # Search across all sessions
+
+# Optional: higher quality search
+ollama pull nomic-embed-text
+```
+
+### Smart Context Injection
+
+Inject the most relevant context into your AI agent's current context window. Smart prime scores every context item using temporal decay, priority, category weight, and optional semantic boosting, then applies MMR diversity re-ranking and packs items into a token budget.
+
+```bash
+# Ranked context within 4000 token budget (default)
+sc prime --smart --compact
+
+# Tight budget — only the most important items
+sc prime --smart --compact --budget 1000
+
+# Boost items related to a specific topic
+sc prime --smart --compact --query "authentication"
+
+# Aggressive recency bias (3-day half-life vs default 14)
+sc prime --smart --compact --decay-days 3
+
+# JSON output with scoring stats
+sc prime --smart --json
+```
+
+Scoring formula: `temporal_decay * priority_weight * category_weight * semantic_boost`
+
+| Factor | Values |
+|--------|--------|
+| Temporal decay | Exponential: today=1.0, 7d=0.71, 14d=0.5, 28d=0.25 |
+| Priority | high=3.0x, normal=1.0x, low=0.5x |
+| Category | decision=2.0x, reminder=1.5x, progress=1.0x, note=0.5x |
+| Semantic boost | 0.5x to 2.5x based on cosine similarity to `--query` |
+
+### Multi-Agent Coordination
+
+Multiple agents can work on the same project simultaneously. Each agent claims work from a shared queue, preventing conflicts.
+
+```bash
+# Agent 1 claims work
+SC_ACTOR=claude-agent-1 sc issue next-block --count 3
+
+# Agent 2 claims different work
+SC_ACTOR=codex-agent-2 sc issue next-block --count 3
+
+# See who's working on what
+sc issue list -s in_progress
 ```
 
 ---
 
-## ⚡️ Quick Start
+## Design Principles
 
-Get started with SaveContext:
+### 1. CLI-First
+
+All business logic lives in Rust. The MCP server is a thin wrapper that delegates every call to the CLI. Use `sc` directly from your terminal, or connect any MCP-compatible client — same behavior either way.
 
 ```bash
-# 1. Install prerequisites (see Installation section above)
-#    - Bun runtime
-#    - Rust CLI (sc)
-
-# 2. Verify CLI is installed
-sc --version
-
-# 3. Add to your AI tool's MCP config
+sc issue list              # Direct CLI
+bunx @savecontext/mcp     # MCP clients get the same commands
 ```
 
-Add this to your MCP configuration (Claude Code, Cursor, etc.):
+### 2. Local-Only
+
+No cloud, no accounts, no sync. All data lives in a single SQLite database with WAL mode for fast concurrent reads and crash-safe writes.
+
+```
+~/.savecontext/
+└── data/
+    └── savecontext.db    # Everything lives here
+```
+
+### 3. Agent-First
+
+Every command supports `--json` for structured output. When stdout is piped, output is automatically JSON — no flag needed. `--silent` returns only IDs for scripting. Structured errors include machine-readable codes, hints, and similar ID suggestions.
+
+```bash
+sc issue list              # TTY → human-readable table
+sc issue list | jq         # Piped → auto-JSON
+sc issue create "Bug" --silent  # Returns: SC-a1b2
+```
+
+Intent detection normalizes common synonyms so agents don't need to memorize canonical values:
+
+| Input | Normalized to |
+|-------|---------------|
+| `done`, `resolved`, `fixed` | `closed` |
+| `wip`, `working` | `in_progress` |
+| `defect` | `bug` |
+| `story` | `feature` |
+| `P0`, `critical` | priority `4` |
+
+### 4. Non-Invasive
+
+SaveContext never runs git commands, never auto-commits, and never installs hooks. It only touches `~/.savecontext/`. Your repo stays clean.
+
+### 5. Smart Search
+
+Built-in Model2Vec embeddings work immediately with zero configuration. Multi-word queries are auto-decomposed into terms and bigrams, searched individually, and fused via Reciprocal Rank Fusion. Thresholds adapt dynamically. Install Ollama for higher quality results. No API keys needed for either tier.
+
+```bash
+sc get -s "authentication strategy"          # Built-in embeddings, adaptive threshold
+sc get -s "auth middleware rate limiting"     # Auto-decomposes into subqueries + RRF
+ollama pull nomic-embed-text                 # Optional: upgrade quality
+sc get -s "authentication strategy"          # Now uses Ollama automatically
+```
+
+---
+
+## Commands
+
+Full flag reference in [`cli/README.md`](cli/README.md). Agent integration patterns in [`cli/AGENTS.md`](cli/AGENTS.md).
+
+### Sessions
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `session start` | Start session | `sc session start "auth feature"` |
+| `session list` | Find sessions | `sc session list --search "auth"` |
+| `session resume` | Resume session | `sc session resume sess_abc123` |
+| `session pause` | Pause session | `sc session pause` |
+| `session end` | End session | `sc session end` |
+| `session rename` | Rename session | `sc session rename "better name"` |
+| `session switch` | Switch session | `sc session switch sess_xyz` |
+| `session delete` | Delete session | `sc session delete sess_abc123` |
+| `session add-path` | Add project path | `sc session add-path /backend` |
+| `session remove-path` | Remove project path | `sc session remove-path /backend` |
+
+### Context Items
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `save` | Save context item | `sc save auth-choice "JWT tokens" -c decision -p high` |
+| `get` | Search / retrieve | `sc get -s "how we handle auth"` |
+| `update` | Update item | `sc update auth-choice --value "Updated reasoning"` |
+| `delete` | Delete item | `sc delete auth-choice` |
+| `tag add` | Add tags | `sc tag add auth-choice -t important,security` |
+| `tag remove` | Remove tags | `sc tag remove auth-choice -t security` |
+
+### Issues
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `issue create` | Create issue | `sc issue create "Fix bug" -t bug -p 3` |
+| `issue list` | List issues | `sc issue list -s open` |
+| `issue show` | Show details | `sc issue show SC-a1b2` |
+| `issue update` | Update issue | `sc issue update SC-a1b2 -s in_progress` |
+| `issue complete` | Close with reason | `sc issue complete SC-a1b2 --reason "Done"` |
+| `issue claim` | Claim work | `sc issue claim SC-a1b2` |
+| `issue release` | Release work | `sc issue release SC-a1b2` |
+| `issue ready` | Ready queue | `sc issue ready` |
+| `issue next-block` | Claim batch | `sc issue next-block -c 3` |
+| `issue batch` | Bulk create | `sc issue batch --json-input '{...}'` |
+| `issue clone` | Clone issue | `sc issue clone SC-a1b2` |
+| `issue duplicate` | Mark duplicate | `sc issue duplicate SC-a1b2 --of SC-c3d4` |
+| `issue delete` | Delete issue | `sc issue delete SC-a1b2` |
+
+### Issue Analytics
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `issue count` | Count with grouping | `sc issue count --group-by status` |
+| `issue stale` | Stale issues | `sc issue stale --days 7` |
+| `issue blocked` | Blocked + blockers | `sc issue blocked` |
+
+### Dependencies & Labels
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `issue dep add` | Add dependency | `sc issue dep add SC-a1b2 --depends-on SC-c3d4` |
+| `issue dep remove` | Remove dependency | `sc issue dep remove SC-a1b2 --depends-on SC-c3d4` |
+| `issue dep tree` | Dependency tree | `sc issue dep tree SC-a1b2` |
+| `issue label add` | Add labels | `sc issue label add SC-a1b2 -l frontend,urgent` |
+| `issue label remove` | Remove labels | `sc issue label remove SC-a1b2 -l urgent` |
+
+### Checkpoints
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `checkpoint create` | Create snapshot | `sc checkpoint create "pre-refactor" --include-git` |
+| `checkpoint list` | Find checkpoints | `sc checkpoint list -s "refactor"` |
+| `checkpoint show` | Show details | `sc checkpoint show ckpt_abc` |
+| `checkpoint restore` | Restore state | `sc checkpoint restore ckpt_abc` |
+| `checkpoint delete` | Delete checkpoint | `sc checkpoint delete ckpt_abc` |
+| `checkpoint items` | List items in checkpoint | `sc checkpoint items ckpt_abc` |
+| `checkpoint add-items` | Add items to checkpoint | `sc checkpoint add-items ckpt_abc -k key1,key2` |
+| `checkpoint remove-items` | Remove items | `sc checkpoint remove-items ckpt_abc -k key1` |
+
+### Memory (persistent across sessions)
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `memory save` | Save memory item | `sc memory save test-cmd "npm test" -c command` |
+| `memory get` | Get memory item | `sc memory get test-cmd` |
+| `memory list` | List memory | `sc memory list -c command` |
+| `memory delete` | Delete memory | `sc memory delete test-cmd` |
+
+### Plans
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `plan create` | Create plan/PRD | `sc plan create "Q1 Auth" -c "## Goals..."` |
+| `plan list` | List plans | `sc plan list` |
+| `plan show` | Show plan + epics | `sc plan show plan_abc` |
+| `plan update` | Update plan | `sc plan update plan_abc -s completed` |
+| `plan capture` | Capture agent's plan file | `sc plan capture` |
+
+### Projects
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `project create` | Register project | `sc project create /path/to/project -n "My App"` |
+| `project list` | List projects | `sc project list` |
+| `project show` | Show project details | `sc project show proj_abc` |
+| `project update` | Update project | `sc project update proj_abc --name "New Name"` |
+| `project delete` | Delete project | `sc project delete proj_abc` |
+
+### System
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `status` | Current session state | `sc status` |
+| `prime` | Context dump | `sc prime --compact` |
+| `prime --smart` | Smart ranked context | `sc prime --smart --compact --budget 2000` |
+| `compaction` | Prepare for compaction | `sc compaction` |
+| `init` | Initialize database | `sc init` |
+| `embeddings status` | Search config | `sc embeddings status` |
+| `embeddings configure` | Set up provider | `sc embeddings configure --provider ollama --enable` |
+| `embeddings backfill` | Generate missing embeddings | `sc embeddings backfill` |
+| `embeddings test` | Test provider connectivity | `sc embeddings test "Hello world"` |
+| `embeddings upgrade-quality` | Upgrade to quality tier | `sc embeddings upgrade-quality` |
+| `sync status` | Check sync state | `sc sync status` |
+| `sync export` | Export to JSONL | `sc sync export` |
+| `sync import` | Import from JSONL | `sc sync import` |
+| `completions` | Shell completions | `sc completions bash` |
+| `version` | Show version | `sc version` |
+
+### Global Flags
+
+| Flag | Description |
+|------|-------------|
+| `--json` | JSON output |
+| `--format <fmt>` | Output format: `json`, `csv`, `table` |
+| `--silent` | ID-only output (for scripting) |
+| `--dry-run` | Preview without writing |
+| `--db <path>` | Custom database path |
+| `--actor <name>` | Agent identity for audit trail |
+| `--session <id>` | Override active session |
+| `-v` / `-vv` / `-vvv` | Verbose logging (info / debug / trace) |
+| `-q` / `--quiet` | Suppress output |
+| `--no-color` | Disable colors |
+| `--robot` | Alias for `--json` |
+
+---
+
+## Installation
+
+### CLI (Primary)
+
+The Rust CLI (`sc`) is the source of truth for all SaveContext operations.
+
+```bash
+# From crates.io
+cargo install savecontext-cli
+
+# Or build from source
+git clone https://github.com/greenfieldlabs-inc/savecontext.git
+cd savecontext/cli && cargo build --release
+cp target/release/sc /usr/local/bin/sc
+
+# Verify
+sc --version
+```
+
+### MCP Server
+
+The MCP server wraps the CLI for clients that speak the [Model Context Protocol](https://modelcontextprotocol.io). Requires [Bun](https://bun.sh) and the CLI above.
+
+```bash
+curl -fsSL https://bun.sh/install | bash   # Install Bun (if needed)
+bunx @savecontext/mcp                       # Run the MCP server
+```
+
+### Semantic Search (Optional)
+
+```bash
+ollama pull nomic-embed-text   # Higher quality search via Ollama
+```
+
+SaveContext includes built-in local embeddings (~15ms) that work immediately. Ollama adds a higher quality tier (~50ms) when available. See [`cli/README.md`](cli/README.md#embedding-configuration) for HuggingFace and other providers.
+
+---
+
+## Configuration
+
+Add SaveContext to your MCP client:
+
+<details>
+<summary><b>Claude Code</b></summary>
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "type": "stdio",
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
+    }
+  }
+}
+```
+
+Config locations: `~/.claude.json` (global) or `.mcp.json` (project)
+
+</details>
+
+<details>
+<summary><b>Cursor</b></summary>
 
 ```json
 {
@@ -134,14 +497,96 @@ Add this to your MCP configuration (Claude Code, Cursor, etc.):
 }
 ```
 
-That's it! Your AI assistant now has persistent memory across sessions.
+</details>
 
 <details>
-<summary><b>⚠️ Troubleshooting: MCP connection fails</b></summary>
+<summary><b>VS Code</b></summary>
 
-**"bunx not found"** — GUI apps (Claude Desktop) and some terminals (Ghostty, tmux) don't inherit your shell's PATH.
+```json
+{
+  "mcp": {
+    "servers": {
+      "savecontext": {
+        "type": "stdio",
+        "command": "bunx",
+        "args": ["@savecontext/mcp"]
+      }
+    }
+  }
+}
+```
 
-**Fix:** Use the full path to bunx and include PATH in env:
+</details>
+
+<details>
+<summary><b>OpenAI Codex</b></summary>
+
+```toml
+[mcp_servers.savecontext]
+args = ["@savecontext/mcp"]
+command = "bunx"
+startup_timeout_ms = 20_000
+```
+
+</details>
+
+<details>
+<summary><b>Gemini CLI</b></summary>
+
+```bash
+gemini mcp add savecontext --command "bunx" --args "@savecontext/mcp"
+```
+
+</details>
+
+<details>
+<summary><b>Factory</b></summary>
+
+```bash
+droid mcp add savecontext "bunx @savecontext/mcp"
+```
+
+</details>
+
+<details>
+<summary><b>Zed</b></summary>
+
+```json
+{
+  "context_servers": {
+    "SaveContext": {
+      "source": "custom",
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Other MCP clients (Cline, Windsurf, JetBrains, Roo Code, Augment, Kilo Code, etc.)</b></summary>
+
+Most MCP clients use the same JSON format:
+
+```json
+{
+  "mcpServers": {
+    "savecontext": {
+      "command": "bunx",
+      "args": ["@savecontext/mcp"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>GUI apps (Claude Desktop, Perplexity, LM Studio, BoltAI)</b></summary>
+
+GUI apps may not inherit your shell's PATH. Use the full path to bunx:
 
 ```json
 {
@@ -159,1032 +604,12 @@ That's it! Your AI assistant now has persistent memory across sessions.
 
 Find your bun path with: `which bunx`
 
-Common locations:
-- macOS/Linux: `~/.bun/bin/bunx`
-- Homebrew: `/opt/homebrew/bin/bunx`
-- npm global: `/usr/local/bin/bunx`
-
----
-
-**"Module not found" error** — If you see `Module not found "/opt/homebrew/bin/../dist/index.js"` or similar, you have a cached older version.
-
-**Fix:** Clear the bunx cache:
-
-```bash
-rm -rf ~/.bun/install/cache/@savecontext*
-bunx @savecontext/mcp@latest --version  # Should show 0.1.29+
-```
-
----
-
-**"SaveContext CLI binary not found"** — The MCP server requires the Rust CLI (`sc`) to be installed.
-
-**Fix:** Install the CLI:
-
-```bash
-# Install from crates.io
-cargo install savecontext-cli
-
-# Or set custom path if installed elsewhere
-export SC_BINARY_PATH=/path/to/your/sc
-```
-
-Verify with: `sc --version`
-
-</details>
-
-**Optional:** Install [Ollama](https://ollama.com) for AI-powered semantic search:
-```bash
-ollama pull nomic-embed-text
-```
-
----
-
-## 📊 Dashboard
-
-A local web interface for visual session, context, memory, plan, and issue management.
-
-```bash
-# Run the dashboard (starts on port 3333)
-bunx @savecontext/dashboard
-
-# Or specify a custom port
-bunx @savecontext/dashboard -p 4000
-```
-
-> **Requires [Bun](https://bun.sh):** Install with `curl -fsSL https://bun.sh/install | bash`
-
-**Features:**
-- **Projects View**: See all projects with session counts
-- **Sessions**: Browse sessions, view context items, manage checkpoints
-- **Memory**: View and manage project memory (commands, configs, notes)
-- **Issues**: Track tasks, bugs, features with Linear-style interface
-- **Plans**: Create and manage PRDs/specs linked to issues
-
-> **Note**: The dashboard reads from the same SQLite database as the MCP server (`~/.savecontext/data/savecontext.db`).
-
-<details>
-<summary><b>Running from source (Development)</b></summary>
-
-```bash
-git clone https://github.com/greenfieldlabs-inc/savecontext.git
-cd savecontext/dashboard
-bun install
-bun dev          # runs on port 3333
-bun dev -p 4000  # or specify a custom port
-```
-
-</details>
-
----
-
-## Status Line
-
-Display real-time SaveContext session info directly in your terminal.
-
-| Tool | Status |
-|------|--------|
-| **Claude Code** | Supported (native statusline) |
-| **OpenCode** | Coming soon (tmux integration) |
-| **Other CLI tools** | Coming soon (tmux integration) |
-
-> **Note:** IDE-based tools like Cursor, Windsurf, VS Code, etc. show MCP connection status in their own UI - this terminal status line feature is for CLI-based tools.
-
-### What You See
-
-| Metric | Description |
-|--------|-------------|
-| **Session Name** | Your current SaveContext session |
-| **Context** | Token count + visual progress bar + percentage |
-| **Cost** | Running cost for the session |
-| **Duration** | How long the session has been active |
-| **Lines** | Net lines changed (+/-) |
-
-### Quick Setup
-
-```bash
-# Auto-detect and configure Claude Code
-bunx @savecontext/mcp@latest --setup-statusline
-
-# Or specify the tool explicitly
-bunx @savecontext/mcp@latest --setup-statusline --tool claude-code
-
-# Remove statusline configuration
-bunx @savecontext/mcp@latest --uninstall-statusline
-```
-
-Then restart Claude Code. That's it.
-
-### Claude Code
-
-![Claude Code Status Line](https://pub-4304173ae3f74a77852a77192ab0b3e3.r2.dev/claude-statusline.png)
-
-Claude Code has native statusline support. The setup script:
-1. Installs `statusline.py` to `~/.savecontext/`
-2. Installs `update-status-cache.py` hook to `~/.savecontext/hooks/`
-3. Updates `~/.claude/settings.json` with statusline and hook configuration
-
-**Requires Python 3.x** - see [Troubleshooting](#troubleshooting) if Python isn't detected.
-
-### How It Works
-
-```
-┌─────────────────┐
-│   Claude Code   │
-│  (PostToolUse   │
-│   Python hook)  │
-└────────┬────────┘
-         │
-         ▼
-┌────────────────────────────────────┐
-│  ~/.savecontext/status-cache/      │
-│     (shared JSON cache)            │
-└────────────────┬───────────────────┘
-                 │
-                 ▼
-┌─────────────────┐
-│  statusline.py  │
-│ (Claude native) │
-└─────────────────┘
-```
-
-1. **Hook Intercepts MCP Responses**: When SaveContext tools execute, a PostToolUse Python hook writes session info to a local cache file (`~/.savecontext/status-cache/<key>.json`)
-2. **Status Display Reads Cache**: Claude Code's native statusline runs `statusline.py` on each prompt to read from the cache
-3. **Terminal Isolation**: Each terminal instance gets its own cache key, so multiple windows show their own sessions without overlap
-
-### Cross-Platform Support
-
-The statusline scripts automatically detect your platform and terminal to generate a unique session key:
-
-| Platform | Detection Method | Example Key |
-|----------|------------------|-------------|
-| **Windows Terminal** | `WT_SESSION` env var | `wt-abc123-def` |
-| **ConEmu/Cmder** | `ConEmuPID` env var | `conemu-12345` |
-| **Windows CMD/PS** | `SESSIONNAME` + PPID | `win-Console-1234` |
-| **WSL** | Kernel contains "microsoft" | `wt-*` or `wslpid-*` |
-| **macOS Terminal.app** | `TERM_SESSION_ID` | `term-abc123` |
-| **iTerm2** | `ITERM_SESSION_ID` | `iterm-xyz789` |
-| **GNOME Terminal** | `GNOME_TERMINAL_SERVICE` | `gnome-12345` |
-| **Konsole** | `KONSOLE_DBUS_SESSION` | `konsole-12345` |
-| **Kitty** | `KITTY_PID` | `kitty-12345` |
-| **Tilix** | `TILIX_ID` | `tilix-session-1` |
-| **Alacritty** | `ALACRITTY_SOCKET` | `alacritty-12345` |
-| **TTY (SSH, etc.)** | `ps -o tty=` command | `tty-pts_0` |
-| **Fallback** | Parent process ID | `linuxpid-*`, `macpid-*`, `winpid-*` |
-
-**Manual Override**: Set `SAVECONTEXT_STATUS_KEY` environment variable to use a custom key:
-```bash
-export SAVECONTEXT_STATUS_KEY="my-custom-session"
-```
-
-### Troubleshooting
-
-1. **Check Python is installed**: Claude Code scripts require Python 3.x
-   - Windows: Install from [python.org](https://python.org) or run `winget install Python.Python.3`
-   - macOS: Run `brew install python3` or use system Python
-   - Linux: Run `apt install python3` or equivalent
-
-2. **Verify scripts are installed**: Check `~/.savecontext/` contains:
-   - `statusline.py`
-   - `hooks/update-status-cache.py`
-
-3. **Restart Claude Code**: Changes to `settings.json` require a restart
-
-4. **Check Claude Code settings**: Run `cat ~/.claude/settings.json` and verify the `statusLine` and `hooks` sections exist
-
-**Still not working?** Please [open an issue](https://github.com/greenfieldlabs-inc/savecontext/issues) with:
-- Your OS and terminal (e.g., "Windows 11 + Windows Terminal", "macOS + iTerm2")
-- Output of `python3 --version` (or `py -3 --version` on Windows)
-- Any error messages
-
-### What Gets Tracked
-
-The hooks monitor SaveContext tool calls and update the status cache when:
-- Sessions start, resume, or switch (`context_session_start`, `context_session_resume`, `context_session_switch`)
-- Sessions are renamed (`context_session_rename`)
-- Sessions pause or end (`context_session_pause`, `context_session_end`) - clears status
-- Status is checked (`context_status`)
-- Context items are saved or deleted (`context_save`, `context_delete`) - updates item count
-- Checkpoints are created (`context_checkpoint`) - updates item count
-
-This ensures the status display always reflects your current session state.
-
-### Script Locations
-
-| Script | Location | Purpose |
-|--------|----------|---------|
-| Statusline display | `~/.savecontext/statusline.py` | Reads cache and displays session info |
-| Cache update hook | `~/.savecontext/hooks/update-status-cache.py` | Intercepts MCP responses, updates cache |
-
-Source available at [`server/scripts/`](https://github.com/greenfieldlabs-inc/savecontext/blob/main/server/scripts/).
-
----
-
-## Agent Templates
-
-We provide starter templates you can copy to your project to guide AI agents on using SaveContext:
-
-| File | Purpose |
-|------|---------|
-| [`AGENTS.md`](./AGENTS.md) | Generic template - copy to any project |
-| [`CLAUDE.md`](./CLAUDE.md) | Example with project-specific context |
-
-**Usage:** Copy `AGENTS.md` to your project root. AI coding tools will read it automatically and follow the SaveContext workflows. For Claude Code copy and rename to CLAUDE.md. 
-
-The templates include:
-- Session management (start, resume, rename, pause)
-- Issue tracking (create, claim, complete)
-- Context saving (decisions, progress, reminders, notes)
-- Semantic search and retrieval
-- Checkpoints and restoration
-- Project memory
-
----
-
-## Skills
-
-SaveContext includes a skill system that teaches AI coding assistants how to use SaveContext effectively. Skills are markdown files containing workflows, best practices, and usage patterns.
-
-### Skill Modes
-
-SaveContext offers two skill variants:
-
-| Mode | Skill | For |
-|------|-------|-----|
-| `mcp` (default) | SaveContext-MCP | Agents with MCP server access (Claude Code, Cursor, etc.) |
-| `cli` | SaveContext-CLI | Agents with only Bash access, using the `sc` binary |
-| `both` | Both installed | Agents that may use either method |
-
-### Setup Skills
-
-```bash
-# Install MCP skill (default)
-bunx @savecontext/mcp@latest --setup-skill
-
-# Install CLI skill (for bash-only agents)
-bunx @savecontext/mcp@latest --setup-skill --mode cli
-
-# Install both
-bunx @savecontext/mcp@latest --setup-skill --mode both
-```
-
-### Supported Tools
-
-We natively support **Claude Code**, **OpenAI Codex**, and **Gemini CLI** with automatic path detection:
-
-| Tool | Default Location |
-|------|------------------|
-| Claude Code | `~/.claude/skills/SaveContext-MCP/` (or `SaveContext-CLI/`) |
-| OpenAI Codex | `~/.codex/skills/SaveContext-MCP/` (or `SaveContext-CLI/`) |
-| Gemini CLI | `~/.gemini/skills/SaveContext-MCP/` (or `SaveContext-CLI/`) |
-
-### Custom Tool Locations
-
-You can add skills to any AI tool that supports a skills directory:
-
-```bash
-# Install to a custom path
-bunx @savecontext/mcp@latest --setup-skill --path ~/.my-ai-tool/skills --mode both
-```
-
-Your custom locations are saved to `~/.savecontext/skill-sync.json` and will be updated automatically when you run `--setup-skill --sync` in the future.
-
-### Syncing Skills
-
-To update skills across all your configured tools:
-
-```bash
-bunx @savecontext/mcp@latest --setup-skill --sync
-```
-
-This re-installs skills to every location in your sync config, respecting each tool's configured mode.
-
-**Want native support for another AI tool?** [Open an issue](https://github.com/greenfieldlabs-inc/savecontext/issues) with the tool name and its skills directory path.
-
----
-
-### Manual Configuration
-
-<details>
-<summary><b>Claude Code Manual Setup</b></summary>
-
-<br>
-
-Add to `~/.claude/settings.json`:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "python3 ~/.savecontext/statusline.py"
-  },
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "mcp__savecontext__.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 ~/.savecontext/hooks/update-status-cache.py",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Then copy the scripts from the package to `~/.savecontext/`:
-```bash
-# Get script paths from installed package
-SCRIPTS=$(npm root -g)/@savecontext/mcp/scripts
-cp "$SCRIPTS/statusline.py" ~/.savecontext/
-mkdir -p ~/.savecontext/hooks
-cp "$SCRIPTS/update-status-cache.py" ~/.savecontext/hooks/
-chmod +x ~/.savecontext/statusline.py ~/.savecontext/hooks/update-status-cache.py
-```
-
-</details>
-
----
-
-## CLI (`sc`) — Primary Implementation
-
-The Rust-native CLI is the **source of truth** for all SaveContext operations. The MCP server is a thin wrapper that delegates every tool call to `sc` via a bridge pattern. This architecture ensures:
-
-- **Single source of truth** — Business logic lives in Rust, not duplicated in TypeScript
-- **CLI-first features** — New capabilities land in the CLI first, often weeks before MCP
-- **Direct performance** — No MCP overhead when using `sc` directly
-- **Agent flexibility** — Works with any agent that has Bash access, not just MCP clients
-
-### Installation
-
-```bash
-# Build from source
-cd cli && cargo build --release
-
-# Add to PATH
-cp target/release/sc /usr/local/bin/sc
-```
-
-### Quick Start
-
-```bash
-sc init                                    # Initialize database
-sc session start "working on auth"         # Start a session
-sc save auth-choice "Using JWT" -c decision -p high  # Save context
-sc issue create "Fix login bug" -t bug -p 3          # Create issue
-sc status                                  # Check current state
-```
-
-### For AI Agents
-
-Agents with Bash access can use `sc` directly — no MCP server required:
-
-```bash
-# Agent-friendly JSON output (auto-enabled when stdout is non-TTY)
-sc issue list --format json
-sc get -s "authentication" --threshold 0.3 --json
-
-# Structured error codes for agent self-correction
-sc issue complete invalid-id  # Returns error code + hint + similar IDs
-```
-
-See [`cli/README.md`](cli/README.md) for the full command reference and [`cli/AGENTS.md`](cli/AGENTS.md) for agent integration patterns.
-
-## Configuration
-
-<details>
-<summary><b>Install in Claude Code</b></summary>
-
-<br>
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "type": "stdio",
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-**Config File Locations:**
-- User config (all projects): `~/.claude.json`
-- Project config (shared): `.mcp.json` in project root
-- Local config (private): `~/.claude.json` (with project scope)
-
 </details>
 
 <details>
-<summary><b>Install in Cursor</b></summary>
+<summary><b>Compaction Settings</b></summary>
 
-<br>
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-**Config File Location:**
-- macOS: `~/Library/Application Support/Cursor/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json`
-- Windows: `%APPDATA%\Cursor\User\globalStorage\rooveterinaryinc.roo-cline\settings\cline_mcp_settings.json`
-- Linux: `~/.config/Cursor/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json`
-
-</details>
-
-<details>
-<summary><b>Install in Cline</b></summary>
-
-<br>
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in VS Code</b></summary>
-
-<br>
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "savecontext": {
-        "type": "stdio",
-        "command": "bunx",
-        "args": ["@savecontext/mcp"]
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in Factory</b></summary>
-
-<br>
-
-Factory's droid supports MCP servers through its CLI.
-
-```bash
-droid mcp add savecontext "bunx @savecontext/mcp"
-```
-
-</details>
-
-<details>
-<summary><b>Install in OpenAI Codex</b></summary>
-
-<br>
-
-```toml
-[mcp_servers.savecontext]
-args = ["@savecontext/mcp"]
-command = "bunx"
-startup_timeout_ms = 20_000
-```
-
-</details>
-
-<details>
-<summary><b>Install in Google Antigravity</b></summary>
-
-<br>
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in Zed</b></summary>
-
-<br>
-
-Add this to your Zed `settings.json`:
-
-```json
-{
-  "context_servers": {
-    "SaveContext": {
-      "source": "custom",
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in Claude Desktop</b></summary>
-
-<br>
-
-Open Claude Desktop developer settings and edit your `claude_desktop_config.json` file.
-
-> **Important:** Claude Desktop is a GUI app and doesn't inherit your shell's PATH. You must use the full path to bunx.
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "/Users/YOUR_USERNAME/.bun/bin/bunx",
-      "args": ["@savecontext/mcp"],
-      "env": {
-        "PATH": "/Users/YOUR_USERNAME/.bun/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
-      }
-    }
-  }
-}
-```
-
-Replace `YOUR_USERNAME` with your actual username. Find the path with `which bunx`.
-
-**Config File Location:**
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-- Linux: `~/.config/Claude/claude_desktop_config.json`
-
-</details>
-
-<details>
-<summary><b>Install in JetBrains AI Assistant</b></summary>
-
-<br>
-
-1. In JetBrains IDEs, go to `Settings` → `Tools` → `AI Assistant` → `Model Context Protocol (MCP)`
-2. Click `+ Add`
-3. Click on `Command` in the top-left corner and select `As JSON`
-4. Add this configuration:
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-5. Click `Apply` to save changes
-
-</details>
-
-<details>
-<summary><b>Install in Roo Code</b></summary>
-
-<br>
-
-Roo Code natively supports MCP servers.
-
-Edit Roo Code's MCP settings:
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in Augment Code</b></summary>
-
-<br>
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "savecontext": {
-        "type": "stdio",
-        "command": "bunx",
-        "args": ["@savecontext/mcp"]
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in Kilo Code</b></summary>
-
-<br>
-
-Add to your Kilo Code MCP configuration:
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in Gemini CLI</b></summary>
-
-<br>
-
-Add SaveContext to your Gemini CLI configuration:
-
-```bash
-gemini mcp add savecontext \
-  --command "bunx" \
-  --args "@savecontext/mcp"
-```
-
-</details>
-
-<details>
-<summary><b>Install in Perplexity Desktop</b></summary>
-
-<br>
-
-Navigate to Perplexity Desktop Settings → Integrations → MCP Servers:
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in LM Studio</b></summary>
-
-<br>
-
-In LM Studio, go to Settings → Tools → MCP and add:
-
-```json
-{
-  "servers": {
-    "savecontext": {
-      "type": "stdio",
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in GitHub Copilot Coding Agent</b></summary>
-
-<br>
-
-Add to your Copilot Coding Agent configuration:
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "savecontext": {
-        "command": "bunx",
-        "args": ["@savecontext/mcp"]
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in Copilot CLI</b></summary>
-
-<br>
-
-Configure via GitHub Copilot CLI settings:
-
-```bash
-gh copilot config set mcp.servers.savecontext.command "bunx"
-gh copilot config set mcp.servers.savecontext.args "@savecontext/mcp"
-```
-
-</details>
-
-<details>
-<summary><b>Install in Warp AI</b></summary>
-
-<br>
-
-In Warp terminal, navigate to Settings → AI → MCP Servers:
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in Qodo Gen</b></summary>
-
-<br>
-
-Add to Qodo Gen MCP configuration file:
-
-```json
-{
-  "servers": {
-    "savecontext": {
-      "type": "stdio",
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in Replit AI</b></summary>
-
-<br>
-
-In your Replit project, add to `.replit` configuration:
-
-```toml
-[mcp.servers.savecontext]
-command = "bunx"
-args = ["@savecontext/mcp"]
-```
-
-</details>
-
-<details>
-<summary><b>Install in Amazon Q Developer</b></summary>
-
-<br>
-
-Configure in Amazon Q Developer settings:
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in Sourcegraph Cody</b></summary>
-
-<br>
-
-Add to Cody's MCP server configuration:
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "savecontext": {
-        "command": "bunx",
-        "args": ["@savecontext/mcp"]
-      }
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in Tabnine</b></summary>
-
-<br>
-
-In Tabnine settings, navigate to Extensions → MCP:
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in BoltAI</b></summary>
-
-<br>
-
-Open the "Settings" page of the app, navigate to "Plugins," and enter the following JSON:
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-For more information, see [BoltAI's Documentation](https://docs.boltai.com/docs/plugins/mcp-servers). For BoltAI on iOS, [see this guide](https://docs.boltai.com/docs/boltai-mobile/mcp-servers).
-
-</details>
-
-<details>
-<summary><b>Install in Opencode</b></summary>
-
-<br>
-
-Add this to your Opencode configuration file. See [Opencode MCP docs](https://opencode.ai/docs/mcp-servers) for more info.
-
-```json
-{
-  "mcp": {
-    "savecontext": {
-      "type": "local",
-      "command": ["bunx", "@savecontext/mcp"],
-      "enabled": true
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>Install in Qwen Coder</b></summary>
-
-<br>
-
-See [Qwen Coder MCP Configuration](https://qwenlm.github.io/qwen-code-docs/en/tools/mcp-server/#how-to-set-up-your-mcp-server) for details.
-
-1. Open the Qwen Coder settings file at `~/.qwen/settings.json`
-2. Add the following to the `mcpServers` object:
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-If the `mcpServers` object does not exist, create it.
-
-</details>
-
-<details>
-<summary><b>Install in Visual Studio 2022</b></summary>
-
-<br>
-
-Configure SaveContext MCP in Visual Studio 2022 by following the [Visual Studio MCP Servers documentation](https://learn.microsoft.com/visualstudio/ide/mcp-servers?view=vs-2022).
-
-Add this to your Visual Studio MCP config file:
-
-```json
-{
-  "mcp": {
-    "servers": {
-      "savecontext": {
-        "type": "stdio",
-        "command": "bunx",
-        "args": ["@savecontext/mcp"]
-      }
-    }
-  }
-}
-```
-
-For more information and troubleshooting, refer to the [Visual Studio MCP Servers documentation](https://learn.microsoft.com/visualstudio/ide/mcp-servers?view=vs-2022).
-
-</details>
-
-<details>
-<summary><b>Install in Windsurf</b></summary>
-
-<br>
-
-Add this to your Windsurf MCP config file. See [Windsurf MCP docs](https://docs.windsurf.com/windsurf/cascade/mcp) for more info.
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "command": "bunx",
-      "args": ["@savecontext/mcp"]
-    }
-  }
-}
-```
-
-</details>
-
-<details>
-<summary><b>From Source (Development)</b></summary>
-
-<br>
-
-For local development (running from source). **Requires [Bun](https://bun.sh)** runtime due to `bun:sqlite` dependency:
-
-```json
-{
-  "mcpServers": {
-    "savecontext": {
-      "type": "stdio",
-      "command": "bun",
-      "args": ["/path/to/savecontext/server/dist/index.js"]
-    }
-  }
-}
-```
-
-</details>
-
-> **Note**: Compaction settings are experimental. See [Compaction Settings](#compaction-settings) for configuration options.
-
-The server communicates via stdio using the MCP protocol.
-
-### Advanced Configuration
-
-SaveContext can be configured via environment variables in your MCP server settings to control compaction behavior.
-#### Compaction Settings
-
-> ⚠️ **EXPERIMENTAL FEATURE**: Compaction configuration only validated with Claude Code - requires CLI restart when env vars change. Other MCP clients may not support the instructions field.
-
-Control when and how SaveContext preserves context before your conversation window fills up:
+Control when SaveContext preserves context before your conversation window fills up:
 
 ```json
 {
@@ -1201,177 +626,128 @@ Control when and how SaveContext preserves context before your conversation wind
 }
 ```
 
-**`SAVECONTEXT_COMPACTION_THRESHOLD`** (default: `70`)
-- Context usage percentage (50-90) that triggers compaction behavior
-- When conversation reaches this % of context window, compaction activates
-- Lower values = more frequent compaction, higher values = longer conversations before compaction
+| Setting | Options | Default |
+|---------|---------|---------|
+| `COMPACTION_THRESHOLD` | 50-90 (% of context window) | 70 |
+| `COMPACTION_MODE` | `auto`, `remind`, `manual` | `remind` |
 
-**`SAVECONTEXT_COMPACTION_MODE`** (default: `remind`)
-- `auto` - Automatically calls `context_prepare_compaction` at threshold (no user interaction needed)
-- `remind` - AI suggests compaction to user and explains what will be preserved
-- `manual` - Only compacts when user explicitly requests it
+</details>
 
-**Recommended Settings:**
-- Long technical sessions: `threshold=70, mode=auto`
-- Pair programming: `threshold=80, mode=remind`
-- Short tasks: `threshold=90, mode=manual`
+---
 
-#### Local Semantic Search
+## Dashboard
 
-SaveContext uses a 2-tier embedding system for semantic search. When you save context items, embeddings are generated in the background and used by `context_get` to find items by meaning.
-
-**2-Tier Architecture:**
-
-| Tier | Provider | Speed | Quality | Setup |
-|------|----------|-------|---------|-------|
-| **Tier 1 (Fast)** | Model2Vec | ~15ms | Good | Automatic (built-in) |
-| **Tier 2 (Quality)** | Ollama or HuggingFace | ~50-200ms | Best | Optional configuration |
-
-- **Tier 1** runs instantly with no external dependencies — every item gets an embedding immediately
-- **Tier 2** provides higher quality embeddings when configured and available
-- Items are automatically re-embedded in the background when Tier 2 becomes available
-- Search uses the highest quality embedding available for each item
-
-**Setting Up Tier 2 with Ollama (Recommended):**
-
-[Ollama](https://ollama.ai) provides fast, local embedding generation:
+A local web interface for visual management of sessions, issues, plans, and memory.
 
 ```bash
-# Install Ollama
-brew install ollama  # macOS
-# or download from https://ollama.ai
-
-# Pull the embedding model
-ollama pull nomic-embed-text
-
-# Ollama runs automatically in the background
+bunx @savecontext/dashboard         # Starts on port 3333
+bunx @savecontext/dashboard -p 4000  # Custom port
 ```
 
-SaveContext will automatically detect and use Ollama when available.
+Reads from the same SQLite database as the CLI (`~/.savecontext/data/savecontext.db`).
 
-**Setting Up Tier 2 with HuggingFace:**
+---
 
-Use any embedding model from HuggingFace Hub:
+## Status Line
+
+Display real-time session info in your terminal. Works with any tool that supports lifecycle hooks — see [`docs/HOOKS.md`](docs/HOOKS.md) for templates.
 
 ```bash
-# Set your HuggingFace token
-export HF_TOKEN=hf_your_token_here
+bunx @savecontext/mcp@latest --setup-statusline
 
-# Optionally specify a custom model
-export HF_MODEL=BAAI/bge-base-en-v1.5
+# To remove
+bunx @savecontext/mcp@latest --uninstall-statusline
 ```
 
-Supported models include: `sentence-transformers/all-MiniLM-L6-v2`, `BAAI/bge-*`, `thenlper/gte-*`, `intfloat/e5-*`, `nomic-ai/nomic-embed-text-v1.5`, and any HuggingFace embedding model.
+Shows: session name, context usage, cost, duration, and lines changed.
 
-**Provider Comparison:**
+![Claude Code Status Line](https://pub-4304173ae3f74a77852a77192ab0b3e3.r2.dev/claude-statusline.png)
 
-| Feature | Model2Vec (Tier 1) | Ollama (Tier 2) | HuggingFace (Tier 2) |
-|---------|-------------------|-----------------|---------------------|
-| Speed | ~15ms | ~50ms | ~200ms |
-| Quality | Good | Best | Best |
-| Model | Built-in | nomic-embed-text | Any HF model |
-| Setup | Automatic | Requires install | HF_TOKEN env |
-| Location | In-process | Local | Cloud API |
+<details>
+<summary><b>How it works</b></summary>
 
-**Environment Variables:**
+A PostToolUse Python hook writes session info to a local cache file on every SaveContext operation. Claude Code's native statusline reads from the cache on each prompt. Each terminal gets its own cache key for isolation.
 
-| Variable | Description |
-|----------|-------------|
-| `SAVECONTEXT_EMBEDDINGS_ENABLED` | Set to `false` to disable embeddings |
-| `SAVECONTEXT_EMBEDDING_PROVIDER` | Force provider: `ollama`, `huggingface`, or `transformers` |
-| `OLLAMA_ENDPOINT` | Ollama API URL (default: `http://localhost:11434`) |
-| `OLLAMA_MODEL` | Ollama model (default: `nomic-embed-text`) |
-| `HF_TOKEN` | HuggingFace API token (required for HF provider) |
-| `HF_MODEL` | HuggingFace model ID (default: `sentence-transformers/all-MiniLM-L6-v2`) |
+**Supported terminals:** Terminal.app, iTerm2, Kitty, Alacritty, GNOME Terminal, Konsole, Windows Terminal, and more.
 
-**Embeddings CLI:**
+**Manual override:** `export SAVECONTEXT_STATUS_KEY="my-session"`
 
-Manage embeddings with the `savecontext-embeddings` command:
+**Requires Python 3.x.** The setup script installs `statusline.py` and `update-status-cache.py` to `~/.savecontext/`.
+
+</details>
+
+---
+
+## Skills & Agent Templates
+
+Skills teach AI agents how to use SaveContext. Install them so your agent knows the workflows automatically.
 
 ```bash
-# Check embedding status and coverage
-savecontext-embeddings status
-
-# Generate embeddings for items without them
-savecontext-embeddings backfill
-savecontext-embeddings backfill --limit 500         # Process up to 500 items
-savecontext-embeddings backfill --provider ollama   # Force specific provider
-savecontext-embeddings backfill --dry-run           # Preview without generating
-
-# View and configure providers
-savecontext-embeddings providers                    # List available providers
-savecontext-embeddings models                       # List supported HuggingFace models
-savecontext-embeddings config                       # View current configuration
-savecontext-embeddings config --provider ollama     # Set preferred provider
-savecontext-embeddings config --enabled false       # Disable embeddings
-
-# Reset embeddings (useful when switching models)
-savecontext-embeddings reset                        # Prompts for confirmation
-savecontext-embeddings reset --force                # Skip confirmation
+bunx @savecontext/mcp@latest --setup-skill              # MCP mode (default)
+bunx @savecontext/mcp@latest --setup-skill --mode cli    # CLI mode
+bunx @savecontext/mcp@latest --setup-skill --mode both   # Both
+bunx @savecontext/mcp@latest --setup-skill --sync        # Update all configured tools
 ```
 
-**Config File:**
+| Tool | Skills location |
+|------|----------------|
+| Claude Code | `~/.claude/skills/SaveContext-*/` |
+| OpenAI Codex | `~/.codex/skills/SaveContext-*/` |
+| Gemini CLI | `~/.gemini/skills/SaveContext-*/` |
+| Custom | `--path ~/.my-tool/skills` |
 
-Settings persist in `~/.savecontext/config.json`. The CLI's `config` command manages this file.
+**Agent templates:** Copy [`AGENTS.md`](./AGENTS.md) to your project root for a generic reference, or use [`CLAUDE.md`](./CLAUDE.md) as a Claude Code-specific example.
 
-**Keyword Fallback:**
-
-When no embedding provider is available, `context_get` with a `query` parameter uses keyword matching instead:
-- Splits query into keywords (3+ characters)
-- Scores items by keyword matches in key and value
-- Returns top matches sorted by score
-- Response includes `search_mode: "keyword"` and a tip to install Ollama
-
-**Using Semantic Search:**
-
-```javascript
-// Find items by meaning
-context_get({ query: "how did we handle authentication" })
-
-// Combine with filters
-context_get({ query: "database decisions", category: "decision" })
-
-// Adjust threshold (lower = more results)
-context_get({ query: "API endpoints", threshold: 0.3 })
-
-// Search across all sessions
-context_get({ query: "payment integration", search_all_sessions: true })
-```
+---
 
 ## Architecture
 
-All data is stored locally on your machine in SQLite:
+```
+AI Coding Agents (Claude Code, Cursor, Codex, Gemini, etc.)
+          |                              |
+          | MCP Protocol                 | Direct Bash
+          v                              v
++-----------------------+    +---------------------+
+|  MCP Server (TS)      |    |                     |
+|  @savecontext/mcp     |--->|   Rust CLI (`sc`)   |
+|  (thin wrapper)       |    |   Source of truth   |
++-----------------------+    |   45+ commands      |
+                             +----------+----------+
+                                        |
+                                        v
+                             +-----------------------+
+                             |  SQLite Database      |
+                             |  ~/.savecontext/      |
+                             |  data/savecontext.db  |
+                             +-----------------------+
+```
+
+### Data Flow
 
 ```
-┌────────────────────────────────────────────────────────┐
-│  Your Machine                                          │
-│                                                        │
-│  ┌──────────────────┐    ┌───────────────────────────┐ │
-│  │  AI Coding Tool  │◄──►│  SaveContext MCP Server   │ │
-│  │  (Claude Code,   │    │  (stdio process)          │ │
-│  │   Cursor, etc.)  │    └─────────────┬─────────────┘ │
-│  └──────────────────┘                  │               │
-│                                        ▼               │
-│                          ┌───────────────────────────┐ │
-│                          │  SQLite Database          │ │
-│                          │  ~/.savecontext/data/     │ │
-│                          │  savecontext.db           │ │
-│                          └───────────────────────────┘ │
-└────────────────────────────────────────────────────────┘
+Action                     Command                  Storage
+────────────────────────────────────────────────────────────────────
+Start session       →   sc session start      →   SQLite INSERT
+Save context        →   sc save               →   SQLite INSERT + embed queue
+Search context      →   sc get -s "query"     →   Vector search + SQLite
+Create issue        →   sc issue create       →   SQLite INSERT
+Claim issue         →   sc issue claim        →   Atomic UPDATE (assign + status)
+MCP tool call       →   bridge.ts → sc        →   Same path as direct CLI
 ```
 
-- **No account required** - completely self-hosted
-- **No network calls** - all data stays local
-- **Unlimited usage** - no rate limits
+### Principles
 
-### Server Implementation
+- **CLI-first** — All business logic lives in Rust. New features land in `sc` first.
+- **Local-only** — No cloud, no accounts. All data stays on your machine.
+- **SQLite + WAL** — Fast concurrent reads, single-writer, crash-safe.
+- **MCP bridge** — The TypeScript server delegates every tool call to the CLI via `server/src/cli/bridge.ts`.
 
-The MCP server is built on `@modelcontextprotocol/sdk` and provides 54 tools for context management. The server delegates all operations to the Rust CLI (`sc`) via a bridge pattern, ensuring a single source of truth for business logic.
+### Project Structure
 
 ```
-cli/                          # Rust CLI (primary implementation)
+cli/                          # Rust CLI (source of truth)
 ├── src/
-│   ├── main.rs               # CLI entry point
+│   ├── main.rs               # Entry point
 │   ├── cli/commands/         # 45+ command implementations
 │   ├── storage/              # SQLite database layer
 │   ├── embeddings/           # Embedding providers (Ollama, HF)
@@ -1381,1128 +757,197 @@ cli/                          # Rust CLI (primary implementation)
 server/                       # MCP server (delegates to CLI)
 ├── src/
 │   ├── index.ts              # MCP server entry point
-│   ├── cli/
-│   │   ├── bridge.ts         # Executes sc commands
-│   │   ├── delegate.ts       # Routes MCP tools to CLI
-│   │   └── mappers.ts        # Maps CLI output to MCP responses
-│   ├── database/
-│   │   ├── index.ts          # DatabaseManager class
-│   │   └── schema.sql        # SQLite schema
-│   ├── tools/registry.ts     # Tool definitions (54 MCP tools)
-│   └── lib/embeddings/       # Embedding providers
-└── dist/                     # Compiled JavaScript
+│   ├── cli/bridge.ts         # Executes sc commands
+│   ├── tools/registry.ts     # MCP tool definitions
+│   └── lib/embeddings/       # Tier 1 (Model2Vec) embeddings
+└── dist/
 
-migrations/                   # SQL migrations (shared by CLI and server)
+dashboard/                    # Local web UI
+└── src/
 ```
 
-### Database Schema
+---
 
-The server uses SQLite with the following schema:
+## Documentation
 
-**sessions** - Tracks coding sessions
-- `id` (TEXT PRIMARY KEY) - Unique session identifier
-- `name` (TEXT) - Session name
-- `description` (TEXT) - Optional description
-- `channel` (TEXT) - Derived from git branch or session name
-- `branch` (TEXT) - Git branch name if available
-- `project_path` (TEXT) - Absolute path to project/repository
-- `status` (TEXT) - Session state: 'active', 'paused', or 'completed'
-- `ended_at` (INTEGER) - Timestamp when paused or completed
-- `created_at` (INTEGER) - Timestamp
-- `updated_at` (INTEGER) - Timestamp
+| Doc | What's in it |
+|-----|-------------|
+| [`cli/README.md`](cli/README.md) | Full CLI command reference, output modes, embedding config |
+| [`cli/AGENTS.md`](cli/AGENTS.md) | Machine-readable agent reference — error codes, synonyms, patterns |
+| [`docs/MCP-TOOLS.md`](docs/MCP-TOOLS.md) | MCP tool reference — all tool input/output schemas |
+| [`docs/HOOKS.md`](docs/HOOKS.md) | Hook integration — templates for any tool with lifecycle hooks |
+| [`docs/SCHEMA.md`](docs/SCHEMA.md) | Database schema — all tables, columns, and migrations |
+| [`CHANGELOG.md`](CHANGELOG.md) | Release history |
 
-**context_items** - Stores individual context entries
-- `id` (TEXT PRIMARY KEY)
-- `session_id` (TEXT) - Foreign key to sessions
-- `key` (TEXT) - Unique identifier within session
-- `value` (TEXT) - Context content
-- `category` (TEXT) - One of: reminder, decision, progress, note
-- `priority` (TEXT) - One of: high, normal, low
-- `channel` (TEXT) - Channel for filtering
-- `size` (INTEGER) - Character count
-- `embedding_status` (TEXT) - Embedding state: none, pending, complete, failed
-- `embedding_provider` (TEXT) - Which provider generated the embedding
-- `embedding_model` (TEXT) - Model used for embedding
-- `embedding_dimensions` (INTEGER) - Vector dimensions (768 for Ollama, 384 for Transformers.js)
-- `embedded_at` (INTEGER) - Timestamp when embedding was generated
-- `created_at` (INTEGER)
-- `updated_at` (INTEGER)
+---
 
-**checkpoints** - Session snapshots
-- `id` (TEXT PRIMARY KEY)
-- `session_id` (TEXT)
-- `name` (TEXT)
-- `description` (TEXT)
-- `item_count` (INTEGER) - Number of items in checkpoint
-- `total_size` (INTEGER) - Total character count
-- `git_status` (TEXT) - Optional git working tree status
-- `git_branch` (TEXT) - Optional git branch
-- `created_at` (INTEGER)
+## Debugging
 
-**checkpoint_items** - Links checkpoints to context items
-- `checkpoint_id` (TEXT)
-- `item_id` (TEXT)
-- `item_snapshot` (TEXT) - JSON snapshot of context_item
+Use verbosity flags to trace what the CLI is doing. Output goes to stderr so it doesn't interfere with JSON on stdout.
 
-**agent_sessions** - Tracks which agent is currently working on each session
-- `agent_id` (TEXT PRIMARY KEY) - Format depends on client type:
-  - Coding tools: `{projectName}-{branch}-{provider}` (e.g., `savecontext-main-claude-code`)
-  - Desktop apps: `global-{provider}` (e.g., `global-claude-desktop`) - no project/branch since they can't detect working directory
-- `session_id` (TEXT) - Foreign key to sessions
-- `project_path` (TEXT) - Full project path (or "global" for desktop apps)
-- `git_branch` (TEXT) - Git branch name (null for desktop apps)
-- `provider` (TEXT) - MCP client provider:
-  - Coding tools: claude-code, cursor, windsurf, vscode, jetbrains, cline, copilot, factory-ai, etc.
-  - Desktop apps: claude-desktop, perplexity, chatgpt, lm-studio, bolt-ai, raycast
-- `last_active_at` (INTEGER) - Timestamp of last activity
-
-This enables multi-agent support: multiple tools can work on the same session simultaneously (e.g., Claude Code and Claude Desktop), each tracked as a separate agent.
-
-**project_memory** - Stores project-specific commands, configs, and notes
-- `id` (TEXT PRIMARY KEY)
-- `project_path` (TEXT) - Project directory path
-- `key` (TEXT) - Unique identifier within project
-- `value` (TEXT) - The stored value (command, URL, note, etc.)
-- `category` (TEXT) - Type: command, config, or note
-- `created_at` (INTEGER)
-- `updated_at` (INTEGER)
-- UNIQUE constraint on (project_path, key)
-
-Memory persists across sessions and is accessible by all agents working on the project. Useful for storing frequently used commands, API endpoints, deployment instructions, etc.
-
-**vec_context_items** - Vector embeddings for semantic search (sqlite-vec virtual table)
-- `item_id` (TEXT PRIMARY KEY) - Foreign key to context_items
-- `embedding` (float[768]) - Vector embedding for similarity search
-
-**embeddings_config** - Stores embedding provider configuration
-- `id` (TEXT PRIMARY KEY)
-- `provider` (TEXT) - Provider name: ollama or transformers
-- `model` (TEXT) - Model name (e.g., nomic-embed-text, all-MiniLM-L6-v2)
-- `dimensions` (INTEGER) - Vector dimensions
-- `endpoint` (TEXT) - API endpoint (for Ollama)
-- `created_at` (INTEGER)
-- `updated_at` (INTEGER)
-
-**issues** - Issue tracking for managing work across sessions
-- `id` (TEXT PRIMARY KEY)
-- `short_id` (TEXT) - Human-readable ID (e.g., PROJ-123)
-- `project_path` (TEXT) - Project directory path
-- `title` (TEXT) - Issue title
-- `description` (TEXT) - Optional issue description
-- `details` (TEXT) - Implementation details or notes
-- `status` (TEXT) - backlog, open, in_progress, blocked, closed, or deferred
-- `priority` (INTEGER) - 0=lowest, 1=low, 2=medium, 3=high, 4=critical
-- `issue_type` (TEXT) - task, bug, feature, epic, or chore
-- `parent_id` (TEXT) - Parent issue ID for subtasks
-- `created_in_session` (TEXT) - Session ID where issue was created
-- `closed_in_session` (TEXT) - Session ID where issue was closed
-- `created_at` (INTEGER)
-- `updated_at` (INTEGER)
-- `closed_at` (INTEGER) - Timestamp when closed
-- `deferred_at` (INTEGER) - Timestamp when deferred
-
-Issues are project-scoped and persist across all sessions for that project. Supports hierarchies (Epic > Task > Subtask), labels, and dependencies.
-
-### Channel System
-
-Channels provide automatic organization of context based on git branches:
-
-1. When starting a session, the server checks for the current git branch
-2. Branch name is normalized to a channel identifier (e.g., `feature/auth` → `feature-auth`)
-3. All context items inherit the session's channel by default
-4. Context can be filtered by channel when retrieving
-
-This allows context to be automatically scoped to the current branch without manual tagging.
-
-### Git Integration
-
-The server integrates with git through Node.js child processes:
-
-- **Branch Detection**: Executes `git rev-parse --abbrev-ref HEAD` to get current branch
-- **Status Capture**: Executes `git status --porcelain` for checkpoint metadata
-- **Graceful Fallback**: Works in non-git directories by skipping git features
-
-Git information is optional and only captured when `include_git: true` is specified.
-
-## Tool Reference
-
-### Session Management
-
-**context_session_start**
-```javascript
-{
-  name: string,           // Required: session name
-  description?: string,   // Optional: session description
-  channel?: string,       // Optional: override auto-derived channel
-  project_path?: string,  // Optional: override auto-detected project path
-  force_new?: boolean     // Optional: force new session instead of resuming
-}
-```
-Creates a new session and sets it as active. Auto-derives channel from git branch and detects project path from current working directory. If an active session already exists for the current project, automatically resumes it instead of creating a duplicate. Use `force_new: true` to always create a fresh session (pauses any existing active session so it can be resumed later).
-
-**context_save**
-```javascript
-{
-  key: string,                              // Required: unique identifier
-  value: string,                            // Required: context content
-  category?: 'reminder'|'decision'|'progress'|'note',  // Default: 'note'
-  priority?: 'high'|'normal'|'low',        // Default: 'normal'
-  channel?: string                          // Default: session channel
-}
-```
-Saves a context item to the active session.
-
-**context_get**
-```javascript
-{
-  query?: string,              // RECOMMENDED: semantic search by meaning (e.g., "how did we handle auth")
-  search_all_sessions?: boolean,  // Search across ALL sessions (default: false)
-  threshold?: number,          // Semantic search threshold 0-1, lower = more results (default: 0.5)
-  key?: string,                // Exact key to retrieve specific item (bypasses search)
-  category?: string,           // Filter by category
-  priority?: string,           // Filter by priority
-  channel?: string,            // Filter by channel
-  limit?: number,              // Default: 100
-  offset?: number              // Default: 0
-}
-```
-Retrieves context items with optional filtering. Use `query` for semantic search by meaning, or `key` for exact retrieval.
-
-**context_delete**
-```javascript
-{
-  key: string  // Required: key of the context item to delete
-}
-```
-Deletes a context item from the current session. Use to remove outdated information, fix mistakes, or clean up test data.
-
-Returns:
-```javascript
-{
-  deleted: true,
-  key: "item_key",
-  session_id: "sess_..."
-}
+```bash
+sc get -s "auth decisions" -v      # info:  high-level actions (search started, stage matched)
+sc get -s "auth decisions" -vv     # debug: decision points (thresholds, RRF scores, resolution sources)
+sc get -s "auth decisions" -vvv    # trace: per-item details (sub-query hits, embedding dimensions)
 ```
 
-**context_update**
-```javascript
-{
-  key: string,                                      // Required: key of item to update
-  value?: string,                                   // Optional: new value
-  category?: 'reminder'|'decision'|'progress'|'note',  // Optional: new category
-  priority?: 'high'|'normal'|'low',                // Optional: new priority
-  channel?: string                                  // Optional: new channel
-}
-```
-Updates an existing context item. Change the value, category, priority, or channel of a previously saved item. At least one field to update is required.
+Example `-vv` output for a semantic search:
 
-Returns:
-```javascript
-{
-  updated: true,
-  key: "item_key",
-  value: "updated content",
-  category: "decision",
-  priority: "high",
-  channel: "feature-auth",
-  updated_at: 1730577600000
-}
+```
+DEBUG sc::config: Session resolved session=sess_abc source="TTY status cache"
+INFO  sc::cli::commands::context: Starting semantic search query="auth decisions" search_mode=Tiered
+DEBUG sc::cli::commands::context: Stage 1: adaptive threshold search
+DEBUG sc::cli::commands::context: Adaptive threshold computed top_score=0.138 adaptive_threshold=0.25 candidates=15 above_threshold=0
+DEBUG sc::cli::commands::context: Stage 2: decomposition sub_query_count=3 sub_queries=["auth", "decisions", "auth decisions"]
+DEBUG sc::cli::commands::context: RRF fusion complete unique_items=5 top_rrf_score=0.032
+INFO  sc::cli::commands::context: Stage 2 matched (decomposed query) count=5
 ```
 
-**context_status**
+Override with `RUST_LOG` for full control (including third-party crate output):
 
-Returns session statistics including item count, size, checkpoint count, status, and compaction recommendations.
-
-Returns:
-```javascript
-{
-  current_session_id: "sess_...",
-  session_name: "Implementing Auth",
-  channel: "feature-auth",
-  project_path: "/Users/you/project",
-  status: "active",
-  item_count: 47,
-  total_size: 12456,
-  checkpoint_count: 3,
-  last_updated: 1730577600000,  // Unix timestamp in milliseconds
-  session_duration_ms: 3600000,  // Time from created_at to ended_at or now
-  should_compact: true,
-  compaction_reason: "High item count (47 items, recommended: prepare at 40+ items)"
-}
+```bash
+RUST_LOG=debug sc get -s "test"          # Everything at debug (includes reqwest, hyper, rustls)
+RUST_LOG=sc=trace sc save "key" "value"  # Only sc crate at trace
 ```
 
-**context_session_rename**
-```javascript
+---
+
+## Troubleshooting
+
+Errors include machine-readable codes, hints, and similar ID suggestions. Use `--json` for structured error output.
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| "No active session" | No session started or resumed | `sc session list` then `sc session resume <id>` |
+| "Issue not found: SC-xxxx" | Typo or wrong prefix | Check the hint — it suggests similar IDs |
+| "bunx not found" | Bun not in PATH | Use full path to bunx (find with `which bunx`) |
+| "Module not found" | Stale npm cache | `rm -rf ~/.bun/install/cache/@savecontext*` |
+| "SaveContext CLI binary not found" | `sc` not installed | `cargo install savecontext-cli` or set `SC_BINARY_PATH` |
+| "Database locked" | Another process has the DB open | Check for running `sc` processes |
+
+```json
 {
-  current_name: string,  // Required: current session name (get from context_status)
-  new_name: string       // Required: new session name
-}
-```
-Renames the current active session. Requires `current_name` for verification to prevent accidental renames.
-
-**context_list_sessions**
-```javascript
-{
-  search?: string,             // RECOMMENDED: keyword search on name and description
-  limit?: number,              // Default: 10
-  project_path?: string,       // Optional: filter by project path (defaults to current directory)
-  status?: string,             // Optional: 'active', 'paused', 'completed', or 'all'
-  include_completed?: boolean  // Default: false
-}
-```
-Lists recent sessions ordered by most recently updated. Use `search` to find sessions by name or description. By default, filters to show only sessions from the current project path and excludes completed sessions.
-
-**context_session_end**
-
-Ends (completes) the current session. Marks the session as completed with a timestamp and clears it as the active session.
-
-Returns:
-```javascript
-{
-  session_id: "sess_...",
-  session_name: "Implementing Auth",
-  duration_ms: 3600000,
-  item_count: 47,
-  checkpoint_count: 3,
-  total_size: 12456
-}
-```
-
-**context_session_pause**
-
-Pauses the current session to resume later. Preserves all session state and can be resumed with `context_session_resume`. Use when switching contexts or taking a break.
-
-Returns:
-```javascript
-{
-  session_id: "sess_...",
-  session_name: "Implementing Auth",
-  resume_instructions: "To resume: use context_session_resume with session_id: sess_..."
-}
-```
-
-**context_session_resume**
-```javascript
-{
-  session_id: string  // Required: ID of the session to resume
-}
-```
-Resumes a previously paused session. Restores session state and sets it as the active session. Cannot resume completed sessions.
-
-Returns:
-```javascript
-{
-  session_id: "sess_...",
-  session_name: "Implementing Auth",
-  channel: "feature-auth",
-  project_path: "/Users/you/project",
-  item_count: 47,
-  created_at: 1730577600000
-}
-```
-
-**context_session_switch**
-```javascript
-{
-  session_id: string  // Required: ID of the session to switch to
-}
-```
-Switches between sessions atomically. Pauses the current session (if any) and resumes the specified session. Use when working on multiple projects.
-
-Returns:
-```javascript
-{
-  previous_session: "Old Session Name",
-  current_session: "New Session Name",
-  session_id: "sess_...",
-  item_count: 23
-}
-```
-
-**context_session_delete**
-```javascript
-{
-  session_id: string  // Required: ID of the session to delete
-}
-```
-Deletes a session permanently. Cannot delete active sessions (must pause or end first). Cascade deletes all context items and checkpoints. Use to clean up accidentally created sessions.
-
-Returns:
-```javascript
-{
-  session_id: "sess_...",
-  session_name: "Old Session"
-}
-```
-
-**context_session_add_path**
-```javascript
-{
-  project_path?: string  // Optional: defaults to current working directory
-}
-```
-Adds a project path to the current session, enabling sessions to span multiple related directories (e.g., monorepo folders like `/frontend` and `/backend`, or `/app` and `/dashboard`). If the path already exists in the session, returns success without modification. Requires an active session.
-
-Returns:
-```javascript
-{
-  session_id: "sess_...",
-  session_name: "Implementing Auth",
-  project_path: "/Users/you/project/backend",
-  all_paths: ["/Users/you/project/frontend", "/Users/you/project/backend"],
-  path_count: 2,
-  already_existed: false
-}
-```
-
-**context_session_remove_path**
-```javascript
-{
-  project_path: string  // Required: path to remove from session
-}
-```
-Removes a project path from the current session. Cannot remove the last path (sessions must have at least one project path). Use to clean up stale paths or paths added by mistake.
-
-Returns:
-```javascript
-{
-  session_id: "sess_...",
-  session_name: "Implementing Auth",
-  removed_path: "/Users/you/project/old-path",
-  remaining_paths: ["/Users/you/project/frontend"],
-  path_count: 1
-}
-```
-
-### Project Memory & Issues
-
-**context_memory_save**
-```javascript
-{
-  key: string,                        // Required: unique identifier within project
-  value: string,                      // Required: the value to remember
-  category?: 'command'|'config'|'note'  // Default: 'command'
-}
-```
-Saves project memory (command, config, or note) for the current project. Memory persists across all sessions and is accessible by all agents working on this project. Useful for storing frequently used commands, API endpoints, deployment instructions, etc.
-
-If a memory item with the same key already exists, it will be overwritten with the new value.
-
-Returns:
-```javascript
-{
-  success: true,
-  memory: {
-    id: "mem_...",
-    key: "build_command",
-    value: "npm run build:prod",
-    category: "command",
-    project_path: "/Users/you/project"
-  },
-  message: "Saved memory 'build_command' to project"
-}
-```
-
-**context_memory_get**
-```javascript
-{
-  key: string  // Required: key of the memory item to retrieve
-}
-```
-Retrieves a specific memory item by key from the current project.
-
-Returns:
-```javascript
-{
-  success: true,
-  memory: {
-    key: "api_endpoint",
-    value: "https://api.example.com/v1",
-    category: "config",
-    created_at: 1730577600000
+  "error": {
+    "code": "ISSUE_NOT_FOUND",
+    "message": "Issue not found: SC-xxxx",
+    "retryable": false,
+    "exit_code": 3,
+    "hint": "Did you mean: SC-a1b2, SC-a1b3?"
   }
 }
 ```
 
-**context_memory_list**
-```javascript
-{
-  category?: 'command'|'config'|'note'  // Optional: filter by category
-}
-```
-Lists all memory items for the current project with optional category filtering.
+See [`cli/AGENTS.md`](cli/AGENTS.md) for the full error code table and exit code categories.
 
-Returns:
-```javascript
-{
-  success: true,
-  memory: [
-    {
-      key: "test_command",
-      value: "npm test -- --coverage",
-      category: "command",
-      created_at: 1730577600000
-    },
-    {
-      key: "db_url",
-      value: "postgresql://localhost:5432/mydb",
-      category: "config",
-      created_at: 1730577600000
-    }
-  ],
-  count: 2,
-  project_path: "/Users/you/project"
-}
+---
+
+## FAQ
+
+### Where is data stored?
+
+All data lives in a single SQLite database:
+
+```
+~/.savecontext/
+└── data/
+    └── savecontext.db    # Sessions, context, issues, plans, memory, embeddings
 ```
 
-**context_memory_delete**
-```javascript
-{
-  key: string  // Required: key of the memory item to delete
-}
-```
-Deletes a memory item from the current project. Use to remove outdated commands or configurations.
+No cloud sync — your data never leaves your machine.
 
-Returns:
-```javascript
-{
-  success: true,
-  deleted: true,
-  key: "old_command",
-  message: "Deleted memory 'old_command' from project"
-}
-```
+### Can I use `sc` without the MCP server?
 
-**context_issue_create**
-```javascript
-{
-  title: string,                            // Required: issue title
-  description?: string,                     // Optional: issue description
-  details?: string,                         // Optional: implementation details
-  priority?: number,                        // Optional: 0-4 (default: 2=medium)
-  issueType?: 'task'|'bug'|'feature'|'epic'|'chore',  // Default: 'task'
-  parentId?: string,                        // Optional: parent issue ID for subtasks
-  labels?: string[],                        // Optional: labels for categorization
-  planId?: string,                          // Optional: link to a plan
-  status?: 'backlog'|'open'|'in_progress'|'blocked'|'closed'|'deferred'  // Default: 'open'
-}
-```
-Creates a new issue for the current project. Issues persist across all sessions and are accessible by all agents working on this project. Supports hierarchies (Epic > Task > Subtask), priority levels, labels, and dependencies.
+Yes. The CLI is standalone and fully functional. The MCP server is only needed if you want to connect AI coding tools (Claude Code, Cursor, etc.) via the MCP protocol.
 
-Returns:
-```javascript
-{
-  success: true,
-  issue: {
-    id: "issue_...",
-    shortId: "PROJ-1",
-    title: "Implement user authentication",
-    description: "Add JWT-based auth with refresh tokens",
-    status: "open",
-    priority: 2,
-    issueType: "feature",
-    projectPath: "/Users/you/project",
-    createdAt: 1730577600000
-  },
-  message: "Created issue: Implement user authentication"
-}
+### How do I use SaveContext with AI coding agents?
+
+Two ways:
+
+1. **MCP protocol** — Add `bunx @savecontext/mcp` to your client's config. The agent gets 50+ tools automatically.
+2. **Direct CLI** — Agents that support bash can call `sc` commands directly with `--json` for structured output.
+
+See [`cli/AGENTS.md`](cli/AGENTS.md) for integration patterns and workflows.
+
+### How do dependencies work?
+
+```bash
+# Issue A depends on Issue B (A is blocked until B is closed)
+sc issue dep add SC-a1b2 --depends-on SC-c3d4
+
+# Now SC-a1b2 won't appear in `sc issue ready` until SC-c3d4 is closed
+sc issue ready  # Only shows SC-c3d4
+
+# Close the blocker
+sc issue complete SC-c3d4
+
+# Now SC-a1b2 is unblocked
+sc issue ready  # Shows SC-a1b2
 ```
 
-**context_issue_update**
-```javascript
-{
-  id: string,                               // Required: ID of issue to update
-  issue_title: string,                      // Required: current title for verification
-  title?: string,                           // Optional: new title
-  description?: string,                     // Optional: new description
-  details?: string,                         // Optional: new implementation details
-  status?: 'backlog'|'open'|'in_progress'|'blocked'|'closed'|'deferred',  // Optional: new status
-  priority?: number,                        // Optional: new priority (0-4)
-  issueType?: 'task'|'bug'|'feature'|'epic'|'chore',  // Optional: new type
-  parentId?: string | null,                 // Optional: new parent (null to remove)
-  planId?: string | null,                   // Optional: link to plan (null to remove)
-  add_project_path?: string,                // Optional: add issue to additional project
-  remove_project_path?: string              // Optional: remove issue from project
-}
-```
-Updates an existing issue. Can modify title, description, status, priority, type, parent, or plan link. Supports multi-project issues via `add_project_path`/`remove_project_path`. When changing status to 'closed', automatically sets the `closed_at` timestamp.
+### Can sessions span multiple directories?
 
-Returns:
-```javascript
-{
-  success: true,
-  issue: {
-    id: "issue_...",
-    shortId: "PROJ-1",
-    title: "Implement user authentication",
-    description: "Add JWT-based auth with refresh tokens",
-    status: "closed",
-    updatedAt: 1730577600000,
-    closedAt: 1730577600000
-  },
-  message: "Updated issue"
-}
+Yes. Use `session add-path` for monorepo or multi-project workflows:
+
+```bash
+sc session start "full-stack feature"
+sc session add-path /app/frontend
+sc session add-path /app/backend
+sc session add-path /shared/types
 ```
 
-**context_issue_list**
-```javascript
-{
-  status?: 'backlog'|'open'|'in_progress'|'blocked'|'closed'|'deferred',  // Optional: filter by status
-  priority?: number,                        // Optional: filter by exact priority (0-4)
-  priority_min?: number,                    // Optional: minimum priority
-  priority_max?: number,                    // Optional: maximum priority
-  issueType?: 'task'|'bug'|'feature'|'epic'|'chore',  // Optional: filter by type
-  parentId?: string,                        // Optional: filter by parent issue
-  planId?: string,                          // Optional: filter by plan (issues linked to a plan)
-  labels?: string[],                        // Optional: filter by labels (all must match)
-  labels_any?: string[],                    // Optional: filter by labels (any must match)
-  has_subtasks?: boolean,                   // Optional: filter by has subtasks
-  has_dependencies?: boolean,               // Optional: filter by has dependencies
-  all_projects?: boolean,                   // Optional: search all projects (default: false)
-  sortBy?: 'priority'|'createdAt'|'updatedAt',  // Default: 'createdAt'
-  sortOrder?: 'asc'|'desc',                 // Default: 'desc'
-  limit?: number                            // Optional: max results
-}
-```
-Lists issues for the current project with filtering and sorting. Use `planId` to find issues linked to a specific plan. Use `all_projects: true` to search across all projects. Returns issues ordered by creation date (newest first) by default.
+Context and issues are scoped to all paths in the session.
 
-Returns:
-```javascript
-{
-  success: true,
-  issues: [
-    {
-      id: "issue_...",
-      shortId: "PROJ-2",
-      title: "Fix login bug",
-      description: "Users can't login with special characters in password",
-      status: "open",
-      priority: 3,
-      issueType: "bug",
-      createdAt: 1730577600000,
-      updatedAt: 1730577600000
-    },
-    {
-      id: "issue_...",
-      shortId: "PROJ-1",
-      title: "Add password reset",
-      status: "closed",
-      priority: 2,
-      issueType: "feature",
-      createdAt: 1730577500000,
-      closedAt: 1730577800000
-    }
-  ],
-  count: 2,
-  projectPath: "/Users/you/project"
-}
+### How does semantic search work?
+
+SaveContext uses a two-tier embedding system with smart search:
+
+- **Tier 1 (built-in):** Model2Vec embeddings, ~15ms per query, works immediately with zero setup
+- **Tier 2 (optional):** Ollama with `nomic-embed-text`, ~50ms per query, higher quality results
+
+When Ollama is available, SaveContext uses it automatically. If not, it falls back to built-in embeddings. No API keys or cloud services needed for either tier.
+
+Smart search runs a 4-stage cascade: (1) full query with adaptive threshold, (2) sub-query decomposition + Reciprocal Rank Fusion for multi-word queries, (3) scope expansion to all sessions, (4) nearest-miss suggestions. This means `sc get -s "auth middleware decisions"` finds results even when no single item matches the full phrase.
+
+The same embedding infrastructure powers **smart prime** (`sc prime --smart`), which scores and ranks all context items for optimal injection into an agent's context window — see [Smart Context Injection](#smart-context-injection).
+
+### What environment variables does SaveContext use?
+
+| Variable | Where | Description |
+|----------|-------|-------------|
+| `SC_ACTOR` | CLI | Agent identity for multi-agent coordination |
+| `SC_SESSION` | CLI | Override active session ID |
+| `SAVECONTEXT_DB` | CLI | Custom database path (overrides default) |
+| `SC_BINARY_PATH` | MCP Server | Custom path to `sc` binary (if not in PATH) |
+| `SC_DEBUG` | MCP Server | Enable debug logging (`true`) |
+| `SAVECONTEXT_COMPACTION_THRESHOLD` | MCP Server | Context window % to trigger compaction (50-90) |
+| `SAVECONTEXT_COMPACTION_MODE` | MCP Server | Compaction mode: `auto`, `remind`, `manual` |
+| `SAVECONTEXT_STATUS_KEY` | MCP Server | Override status line cache key |
+| `HF_TOKEN` | CLI | HuggingFace API token for quality embeddings |
+| `RUST_LOG` | CLI | Override verbosity flags: `sc=debug`, `sc=trace`, or `debug` for all crates |
+
+### How do I back up my data?
+
+```bash
+# Option 1: JSONL export
+sc sync export
+
+# Option 2: Copy the database file
+cp ~/.savecontext/data/savecontext.db ~/backups/
 ```
 
-**context_issue_complete**
-```javascript
-{
-  id: string,          // Required: ID of issue to mark as closed
-  issue_title: string  // Required: issue title for verification
-}
-```
-Quick convenience method to mark an issue as closed. Equivalent to `context_issue_update` with `status: 'closed'`, but more concise. Automatically sets the `closed_at` timestamp and unblocks dependent issues.
-
-Returns:
-```javascript
-{
-  success: true,
-  issue: {
-    id: "issue_...",
-    shortId: "PROJ-1",
-    title: "Implement user authentication",
-    status: "closed",
-    closedAt: 1730577600000
-  },
-  message: "Issue marked as closed"
-}
-```
-
-**context_issue_claim**
-```javascript
-{
-  issue_ids: string[]  // Required: IDs of issues to claim
-}
-```
-Claim issues for the current agent. Marks them as in_progress and assigns to the current agent. Use for coordinating work across multiple agents.
-
-**context_issue_release**
-```javascript
-{
-  issue_ids: string[]  // Required: IDs of issues to release
-}
-```
-Release claimed issues back to the pool. Unassigns and sets status back to open.
-
-**context_issue_get_ready**
-```javascript
-{
-  limit?: number,                           // Optional: max results (default: 10)
-  sortBy?: 'priority'|'createdAt'           // Optional: sort field (default: 'priority')
-}
-```
-Get issues that are ready to work on (open, no blocking dependencies, not assigned to another agent).
-
-**context_issue_get_next_block**
-```javascript
-{
-  count?: number,                           // Optional: number to claim (default: 3)
-  priority_min?: number,                    // Optional: minimum priority
-  labels?: string[]                         // Optional: filter by labels
-}
-```
-Get next block of ready issues and claim them. Smart issue assignment for agents working through a backlog.
-
-**context_issue_create_batch**
-```javascript
-{
-  issues: [                                 // Required: array of issues to create
-    {
-      title: string,
-      description?: string,
-      details?: string,
-      priority?: number,
-      issueType?: string,
-      labels?: string[],
-      parentId?: string,                    // Can use "$N" to reference by array index
-      planId?: string
-    }
-  ],
-  dependencies?: [                          // Optional: dependencies between issues
-    {
-      issueIndex: number,                   // Index of issue in array
-      dependsOnIndex: number,               // Index of dependency in array
-      dependencyType?: 'blocks'|'related'|'parent-child'|'discovered-from'
-    }
-  ],
-  planId?: string                           // Optional: link all issues to a plan
-}
-```
-Create multiple issues at once with dependencies. Useful for breaking down plans into issue hierarchies. Supports referencing other issues in the batch by index.
-
-**context_issue_add_dependency**
-```javascript
-{
-  issueId: string,                          // Required: issue that will have the dependency
-  dependsOnId: string,                      // Required: issue it depends on
-  dependencyType?: 'blocks'|'related'|'parent-child'|'discovered-from'  // Default: 'blocks'
-}
-```
-Add a dependency between issues. The issue will depend on another issue.
-
-**context_issue_remove_dependency**
-```javascript
-{
-  issueId: string,                          // Required: issue with the dependency
-  dependsOnId: string                       // Required: issue it depends on
-}
-```
-Remove a dependency between issues.
-
-**context_issue_add_labels**
-```javascript
-{
-  id: string,                               // Required: issue ID
-  labels: string[]                          // Required: labels to add
-}
-```
-Add labels to an issue for categorization.
-
-**context_issue_remove_labels**
-```javascript
-{
-  id: string,                               // Required: issue ID
-  labels: string[]                          // Required: labels to remove
-}
-```
-Remove labels from an issue.
-
-**context_issue_delete**
-```javascript
-{
-  id: string,          // Required: ID of issue to delete
-  issue_title: string  // Required: issue title for verification
-}
-```
-Delete an issue permanently. Also removes all dependencies. Cannot be undone.
-
-Returns:
-```javascript
-{
-  success: true,
-  deleted: true,
-  id: "issue_...",
-  shortId: "PROJ-1",
-  title: "Old issue title"
-}
-```
-
-### Plan Management
-
-**context_plan_create**
-```javascript
-{
-  title: string,             // Required: plan title
-  content: string,           // Required: plan content in markdown
-  status?: 'draft'|'active'|'completed',  // Default: 'draft'
-  successCriteria?: string,  // Optional: success criteria
-  project_path?: string      // Optional: defaults to current directory
-}
-```
-Create a new plan (PRD/specification) for the current project. Plans organize work into epics and tasks.
-
-Returns:
-```javascript
-{
-  success: true,
-  plan: {
-    id: "plan_...",
-    shortId: "PLAN-1",
-    title: "User Authentication System",
-    status: "draft",
-    projectPath: "/Users/you/project",
-    createdAt: 1730577600000
-  }
-}
-```
-
-**context_plan_list**
-```javascript
-{
-  status?: 'draft'|'active'|'completed'|'all',  // Default: 'active'
-  project_path?: string,     // Optional: filter by project
-  limit?: number             // Default: 50
-}
-```
-List plans for the current project with filtering.
-
-**context_plan_get**
-```javascript
-{
-  plan_id: string  // Required: ID of plan to retrieve
-}
-```
-Get details of a specific plan including linked epics and issues.
-
-**context_plan_update**
-```javascript
-{
-  id: string,                // Required: ID of plan to update
-  title?: string,            // Optional: new title
-  content?: string,          // Optional: new content
-  status?: 'draft'|'active'|'completed',  // Optional: new status
-  successCriteria?: string   // Optional: new success criteria
-}
-```
-Update a plan's title, content, status, or success criteria.
-
-### Project Management
-
-**context_project_create**
-```javascript
-{
-  project_path: string,      // Required: absolute path to project
-  name?: string,             // Optional: display name (defaults to folder name)
-  description?: string,      // Optional: project description
-  issue_prefix?: string      // Optional: prefix for issue IDs (e.g., "SC" creates SC-1)
-}
-```
-Create a new project. Projects must be created before starting sessions.
-
-**context_project_list**
-```javascript
-{
-  include_session_count?: boolean,  // Default: false
-  limit?: number                    // Default: 50
-}
-```
-List all projects with optional session counts.
-
-**context_project_get**
-```javascript
-{
-  project_path: string  // Required: absolute path to project
-}
-```
-Get details of a specific project by path.
-
-**context_project_update**
-```javascript
-{
-  project_path: string,      // Required: absolute path to project
-  name?: string,             // Optional: new project name
-  description?: string,      // Optional: new description
-  issue_prefix?: string      // Optional: new issue prefix
-}
-```
-Update project settings (name, description, issue prefix).
-
-**context_project_delete**
-```javascript
-{
-  project_path: string,      // Required: absolute path to project
-  confirm: boolean           // Required: must be true to confirm deletion
-}
-```
-Delete a project and all associated data (issues, plans, memory). Sessions are unlinked but not deleted.
-
-### Checkpoint Management
-
-**context_checkpoint**
-```javascript
-{
-  name: string,                    // Required: checkpoint name
-  description?: string,            // Optional: checkpoint description
-  include_git?: boolean,           // Default: false
-  // Filtering options for selective checkpoints:
-  include_tags?: string[],         // Only include items with these tags
-  include_keys?: string[],         // Only include keys matching patterns (e.g., ["feature_*"])
-  include_categories?: string[],   // Only include these categories
-  exclude_tags?: string[]          // Exclude items with these tags
-}
-```
-Creates a named checkpoint of the current session state. Supports selective checkpoints via filters. If `include_git` is true, captures git branch and working tree status.
-
-**context_restore**
-```javascript
-{
-  checkpoint_id: string,           // Required: checkpoint ID to restore
-  checkpoint_name: string,         // Required: checkpoint name (for verification)
-  // Filtering options for selective restoration:
-  restore_tags?: string[],         // Only restore items with these tags
-  restore_categories?: string[]    // Only restore items in these categories
-}
-```
-Restores context items from a checkpoint into the current session. Requires both `checkpoint_id` and `checkpoint_name` for verification. Supports selective restoration via filters.
-
-**context_tag**
-```javascript
-{
-  keys?: string[],          // Specific item keys to tag
-  key_pattern?: string,     // Wildcard pattern (e.g., "feature_*")
-  tags: string[],           // Required: tags to add/remove
-  action: 'add' | 'remove'  // Required: add or remove tags
-}
-```
-Tag context items for organization and filtering. Supports tagging by specific keys or wildcard patterns. Use to organize work streams and enable selective checkpoint creation.
-
-**context_checkpoint_add_items**
-```javascript
-{
-  checkpoint_id: string,   // Required: checkpoint to modify
-  checkpoint_name: string, // Required: checkpoint name (for verification)
-  item_keys: string[]      // Required: keys of items to add
-}
-```
-Add items to an existing checkpoint. Requires both ID and name for verification. Use to incrementally build up checkpoints or add items you forgot to include.
-
-**context_checkpoint_remove_items**
-```javascript
-{
-  checkpoint_id: string,   // Required: checkpoint to modify
-  checkpoint_name: string, // Required: checkpoint name (for verification)
-  item_keys: string[]      // Required: keys of items to remove
-}
-```
-Remove items from an existing checkpoint. Requires both ID and name for verification. Use to fix checkpoints that contain unwanted items or to clean up mixed work streams.
-
-**context_checkpoint_split**
-```javascript
-{
-  source_checkpoint_id: string,  // Required: checkpoint to split
-  source_checkpoint_name: string,  // Required: checkpoint name (for verification)
-  splits: [                      // Required: split configurations
-    {
-      name: string,              // Required: name for new checkpoint
-      description?: string,      // Optional: description
-      include_tags?: string[],   // Filter by tags
-      include_categories?: string[]  // Filter by categories
-    }
-  ]
-}
-```
-Split a checkpoint into multiple checkpoints based on tags or categories. Requires both ID and name for verification. Use to separate mixed work streams into organized checkpoints.
-
-**Workflow Example: Splitting a Mixed Checkpoint**
-```javascript
-// Step 1: Get checkpoint details to see all items
-context_get_checkpoint({ checkpoint_id: "ckpt_abc123" })
-// Returns: { items_preview: [
-//   { key: "auth_decision", ... },
-//   { key: "ui_component", ... },
-//   { key: "auth_impl", ... }
-// ]}
-
-// Step 2: Tag items by work stream (use specific keys, not patterns)
-context_tag({
-  keys: ["auth_decision", "auth_impl"],
-  tags: ["auth"],
-  action: "add"
-})
-
-context_tag({
-  keys: ["ui_component"],
-  tags: ["ui"],
-  action: "add"
-})
-
-// Step 3: Split checkpoint using tags
-context_checkpoint_split({
-  source_checkpoint_id: "ckpt_abc123",
-  source_checkpoint_name: "mixed-work-checkpoint",
-  splits: [
-    {
-      name: "auth-work",
-      include_tags: ["auth"]  // REQUIRED: must have filters
-    },
-    {
-      name: "ui-work",
-      include_tags: ["ui"]    // REQUIRED: must have filters
-    }
-  ]
-})
-// Returns warnings if item counts look wrong (0 items or all items)
-
-// Step 4: Delete original mixed checkpoint
-context_checkpoint_delete({
-  checkpoint_id: "ckpt_abc123",
-  checkpoint_name: "mixed-work-checkpoint"
-})
-```
-
-**context_checkpoint_delete**
-```javascript
-{
-  checkpoint_id: string,    // Required: checkpoint to delete
-  checkpoint_name: string   // Required: checkpoint name (for verification)
-}
-```
-Delete a checkpoint permanently. Requires both ID and name for verification. Use to clean up failed, duplicate, or unwanted checkpoints. Cannot be undone.
-
-**context_list_checkpoints**
-```javascript
-{
-  search?: string,              // Keyword search: name, description, session name
-  session_id?: string,          // Filter to specific session
-  project_path?: string,        // Filter to specific project (default: current)
-  include_all_projects?: boolean,  // Show all projects (default: false)
-  limit?: number,               // Max results (default: 20)
-  offset?: number               // Pagination (default: 0)
-}
-```
-Lightweight checkpoint search with keyword filtering. Returns minimal data to avoid context bloat. Defaults to current project. Use `context_get_checkpoint` to get full details for specific checkpoints.
-
-Returns:
-```javascript
-{
-  checkpoints: [
-    {
-      id: "ckpt_...",
-      name: "before-auth-refactor",
-      session_id: "sess_...",
-      session_name: "OAuth2 Implementation",
-      project_path: "/path/to/project",
-      item_count: 23,
-      created_at: 1730577600000
-    }
-  ],
-  count: 3,
-  total_matches: 15,
-  scope: "project",  // "session" | "project" | "all"
-  has_more: true
-}
-```
-
-**context_get_checkpoint**
-```javascript
-{
-  checkpoint_id: string  // Required: checkpoint ID
-}
-```
-Get full details for a specific checkpoint. Returns complete data including description, git status/branch, and preview of top 5 high-priority items. Use after `context_list_checkpoints` to drill down.
-
-Returns:
-```javascript
-{
-  id: "ckpt_...",
-  name: "before-auth-refactor",
-  description: "Before switching from sessions to JWT",
-  session_id: "sess_...",
-  session_name: "OAuth2 Implementation",
-  project_path: "/path/to/project",
-  item_count: 23,
-  total_size: 5678,
-  git_status: "M auth.ts\nA jwt.ts",
-  git_branch: "feature/auth",
-  created_at: 1730577600000,
-  items_preview: [
-    { key: "auth_decision", value: "Use JWT instead of sessions", category: "decision", priority: "high" }
-  ]
-}
-```
-
-**context_prepare_compaction**
-
-Creates an automatic checkpoint and analyzes the session to generate a restoration summary.
-
-Returns:
-```javascript
-{
-  checkpoint: {
-    id: "ckpt_...",
-    name: "pre-compact-2025-11-02T15-30-00",
-    session_id: "sess_...",
-    created_at: 1730577600000  // Unix timestamp in milliseconds
-  },
-  stats: {
-    total_items_saved: 47,
-    critical_items: 8,
-    pending_tasks: 3,
-    decisions_made: 12,
-    total_size_bytes: 12456
-  },
-  critical_context: {
-    high_priority_items: [
-      { key: "auth_method", value: "OAuth2", category: "decision", priority: "high" }
-    ],
-    next_steps: [
-      { key: "task_1", value: "Implement JWT refresh", priority: "high" }
-    ],
-    key_decisions: [
-      { key: "db_choice", value: "PostgreSQL", created_at: 1730577600000 }
-    ],
-    recent_progress: [
-      { key: "progress_1", value: "Completed login flow", created_at: 1730577600000 }
-    ]
-  },
-  restore_instructions: {
-    tool: "context_restore",
-    checkpoint_id: "ckpt_...",
-    message: "To continue this session, restore from checkpoint: pre-compact-2025-11-02T15-30-00",
-    summary: "Session has 3 pending tasks and 12 key decisions recorded."
-  }
-}
-```
-
-This tool is designed for AI agents to call proactively when `context_status` indicates high item counts.
-
-## Storage
-
-All data is stored locally at `~/.savecontext/data/savecontext.db`. The database uses WAL mode for better concurrency and reliability.
+---
 
 ## Development
 
 ```bash
-cd server
-pnpm install
-pnpm build    # Compile TypeScript and copy schema.sql
-pnpm dev      # Run with tsx watch for development
-pnpm start    # Run compiled version
+# CLI
+cd cli && cargo build --release && cargo test
+
+# MCP Server
+cd server && bun install && bun run build
+
+# Dashboard
+cd dashboard && bun install && bun dev
 ```
 
 ## Contributing
@@ -2512,8 +957,8 @@ See [CONTRIBUTING.md](https://github.com/greenfieldlabs-inc/savecontext/blob/mai
 ## Acknowledgments
 
 - [Jeffrey Emanuel](https://x.com/doodlestein) — Model2Vec approach for the 2-tier embedding system
-- [beads](https://github.com/steveyegge/beads) — CLI-as-agent-interface pattern for AI agents that inspired the SaveContext-CLI skill
+- [beads](https://github.com/steveyegge/beads) — CLI-as-agent-interface pattern that inspired the SaveContext-CLI skill
 
 ## License
 
-AGPL-3.0 - see [LICENSE](https://github.com/greenfieldlabs-inc/savecontext/blob/main/LICENSE). Commercial license available for proprietary use.
+[AGPL-3.0](LICENSE)

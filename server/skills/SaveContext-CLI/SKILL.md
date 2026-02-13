@@ -52,20 +52,35 @@ sc status                                      # Current session + stats
 ### Context Items
 ```bash
 sc save "key" "value" -c decision -p high      # Save context
-sc get -s "search query"                       # Semantic search
+sc get -s "search query"                       # Smart semantic search (auto-decomposes)
+sc get -s "auth" --search-all-sessions         # Search all sessions
 sc get -k "exact-key"                          # Get by key
 sc get -c decision -P high                     # Filter by category/priority
 sc update "key" --value "new value"            # Update item
 sc delete "key"                                # Delete item
 ```
 
+**Search tips:** Single keywords work best (`sc get -s "auth"` > `sc get -s "authentication login session token handling"`). Smart search auto-decomposes multi-word queries, adapts thresholds, and expands scope when no results found.
+
 ### Issues
 ```bash
-sc issue create "title" -t feature -p 2        # Create issue
-sc issue list -s open                          # List issues
+sc issue create "title" -t task -p 2           # Create issue
+sc issue create "title" -t epic -p 3           # Create epic (container)
+sc issue create "subtask" --parent SC-xxxx     # Create subtask under epic
+sc issue batch --json-input '{"issues":[...]}'  # Batch with hierarchy
+sc issue list -s open                          # List open issues
+sc issue list --parent SC-xxxx                 # List subtasks of an epic
 sc issue claim <id>                            # Claim for work
 sc issue complete <id>                         # Mark complete
+sc issue complete <id> --reason "Done"         # Complete with reason
 sc issue update <id> -s in_progress            # Update status
+sc issue count                                 # Count by status
+sc issue count --group-by type                 # Count by type/priority/assignee
+sc issue stale                                 # Stale issues (7+ days default)
+sc issue stale --days 3                        # Stale 3+ days
+sc issue blocked                               # Blocked issues + blockers
+sc issue dep tree <id>                         # Dependency tree
+sc issue dep tree                              # Trees for all epics
 ```
 
 ### Checkpoints
@@ -88,12 +103,18 @@ sc memory list                                 # List all
 sc plan create "title" --content "markdown"    # Create plan
 sc plan list                                   # List plans
 sc plan show <id>                              # Get plan details
+sc plan capture                                # Import plan from AI agent's plan file
+sc plan capture --agent claude --max-age 60    # Specific agent, 60min max age
+sc plan capture --file /path/to/plan.md        # Explicit file path
 ```
 
 ### Prime (full context)
 ```bash
 sc prime                                       # Full context aggregation
 sc prime --compact                             # Markdown for agent injection
+sc prime --smart --compact                     # Relevance-ranked within token budget
+sc prime --smart --compact --query "auth"      # Semantic boost for topic
+sc prime --smart --compact --budget 2000       # Custom token budget
 sc prime --transcript                          # Include session transcripts
 ```
 
@@ -108,6 +129,7 @@ sc prime --transcript                          # Include session transcripts
 | **Compaction** | "prepare for compaction" | `Workflows/Compaction.md` |
 | **IssueTracking** | "create issue", "track this bug" | `Workflows/IssueTracking.md` |
 | **Planning** | "plan this feature" | `Workflows/Planning.md` |
+| **FeatureLifecycle** | "implement", "build this", "plan and execute" | `Workflows/FeatureLifecycle.md` |
 | **Prime** | "what's the full context", conversation start | `Workflows/Prime.md` |
 | **Advanced** | Multi-day projects, multi-agent, branch switching, subagents | `Workflows/AdvancedWorkflows.md` |
 

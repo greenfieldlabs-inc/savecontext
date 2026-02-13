@@ -2,12 +2,27 @@
 
 For creating and tracking issues, bugs, and features.
 
+> **For full feature lifecycle** (plan → execute → review → iterate), see `FeatureLifecycle.md`.
+
 ## When to Use
 
 - User wants to track a bug or task
 - Work needs status tracking
 - Tasks may be picked up by another agent
 - Multi-step work items
+
+## Step 0: Check What Exists First
+
+**Before creating issues, check for existing work:**
+
+```bash
+sc issue ready                           # What's ready to work on?
+sc issue list --search "keyword"         # Search by title/description
+sc issue list -s open                    # All open issues
+sc issue list -t epic                    # Existing epics
+```
+
+Don't create duplicates. If related work exists, build on it or update it.
 
 ## Quick Issue Pattern
 
@@ -17,6 +32,33 @@ sc issue create "<title>" -t <type> -p <priority> -d "<description>"
 
 Types: `bug`, `feature`, `task`, `epic`, `chore`
 Priority: `0` (lowest) to `4` (critical)
+
+## Creating Epics with Subtasks
+
+**Use `-t epic` for containers, `-t task` for implementation steps.**
+
+Single creates:
+```bash
+sc issue create "Epic: Auth System" -t epic -p 3 -d "Implement JWT auth"
+sc issue create "Add JWT types" -t task --parent SC-xxxx
+sc issue create "Add middleware" -t task --parent SC-xxxx
+```
+
+Batch create (preferred for 3+ tasks):
+```bash
+sc issue batch --json-input '{
+  "issues": [
+    { "title": "Epic: Auth System", "issueType": "epic", "priority": 3 },
+    { "title": "Add JWT types", "parentId": "$0", "issueType": "task" },
+    { "title": "Add middleware", "parentId": "$0", "issueType": "task" }
+  ],
+  "dependencies": [
+    { "issueIndex": 2, "dependsOnIndex": 1, "dependencyType": "blocks" }
+  ]
+}'
+```
+
+List subtasks: `sc issue list --parent SC-xxxx`
 
 ## Work Execution Pattern
 
@@ -110,3 +152,5 @@ sc issue complete <id>
 - Complete issues without updating details
 - Leave stale details when implementation changes
 - Skip marking epic as in_progress before claiming tasks
+- Use `-t feature` for epics (use `-t epic` -- types affect filtering)
+- Create flat issues when work has parent-child structure

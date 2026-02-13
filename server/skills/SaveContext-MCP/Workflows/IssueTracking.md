@@ -2,12 +2,27 @@
 
 For creating and tracking issues, bugs, and features.
 
+> **For full feature lifecycle** (plan → execute → review → iterate), see `FeatureLifecycle.md`.
+
 ## When to Use
 
 - User wants to track a bug or task
 - Work needs status tracking
 - Tasks may be picked up by another agent
 - Multi-step work items
+
+## Step 0: Check What Exists First
+
+**Before creating issues, check for existing work:**
+
+```
+context_issue_get_ready                          # What's ready to work on?
+context_issue_list search="keyword"              # Search by title/description
+context_issue_list status="open"                 # All open issues
+context_issue_list issueType="epic"              # Existing epics
+```
+
+Don't create duplicates. If related work exists, build on it or update it.
 
 ## Quick Issue Pattern
 
@@ -18,6 +33,32 @@ context_issue_create
   issueType="bug|feature|task|chore"
   priority=2  # 0-4, where 4 is critical
 ```
+
+## Creating Epics with Subtasks
+
+**Use `issueType: "epic"` for containers, `"task"` for implementation steps.**
+
+```
+# Create epic
+context_issue_create title="Epic: Auth System" issueType="epic" priority=3
+
+# Create subtasks under the epic
+context_issue_create title="Add JWT types" issueType="task" parentId="SC-xxxx"
+context_issue_create title="Add middleware" issueType="task" parentId="SC-xxxx"
+```
+
+Batch create (preferred for 3+ tasks):
+```
+context_issue_create_batch issues=[
+  { "title": "Epic: Auth System", "issueType": "epic", "priority": 3 },
+  { "title": "Add JWT types", "parentId": "$0" },
+  { "title": "Add middleware", "parentId": "$0" }
+] dependencies=[
+  { "issueIndex": 2, "dependsOnIndex": 1, "dependencyType": "blocks" }
+]
+```
+
+List subtasks: `context_issue_list parentId="SC-xxxx"`
 
 ## Work Execution Pattern
 
@@ -108,3 +149,5 @@ User: "I fixed it differently than planned"
 - Complete issues without updating details
 - Leave stale details when implementation changes
 - Skip marking epic as in_progress before claiming tasks
+- Use issueType="feature" for epics (use "epic" -- types affect filtering)
+- Create flat issues when work has parent-child structure
