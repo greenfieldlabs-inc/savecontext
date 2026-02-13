@@ -14,12 +14,13 @@ use crate::sync::file::{count_lines, file_size};
 use crate::sync::types::{ExportFileInfo, SyncError, SyncResult, SyncStatus};
 
 /// Known export file names.
-const EXPORT_FILES: [&str; 6] = [
+const EXPORT_FILES: [&str; 7] = [
     "sessions.jsonl",
     "issues.jsonl",
     "context_items.jsonl",
     "memories.jsonl",
     "checkpoints.jsonl",
+    "plans.jsonl",
     "deletions.jsonl",
 ];
 

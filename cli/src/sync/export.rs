@@ -29,7 +29,7 @@ use crate::sync::file::{ensure_gitignore, read_jsonl, write_jsonl};
 use crate::sync::hash::content_hash;
 use crate::sync::types::{
     CheckpointRecord, ContextItemRecord, DeletionRecord, EntityType, ExportStats, IssueRecord,
-    MemoryRecord, SessionRecord, SyncError, SyncRecord, SyncResult,
+    MemoryRecord, PlanRecord, SessionRecord, SyncError, SyncRecord, SyncResult,
 };
 
 /// Exporter for JSONL sync files.
@@ -117,6 +117,7 @@ impl<'a> Exporter<'a> {
         self.export_context_items_snapshot(&mut stats, &now, force)?;
         self.export_memory_snapshot(&mut stats, &now, force)?;
         self.export_checkpoints_snapshot(&mut stats, &now, force)?;
+        self.export_plans_snapshot(&mut stats, &now, force)?;
 
         // Export pending deletions (separate file)
         self.export_deletions(&mut stats)?;
@@ -340,6 +341,47 @@ impl<'a> Exporter<'a> {
         Ok(())
     }
 
+    /// Export plans as a snapshot.
+    fn export_plans_snapshot(
+        &self,
+        stats: &mut ExportStats,
+        now: &str,
+        force: bool,
+    ) -> SyncResult<()> {
+        let plans = self
+            .storage
+            .get_plans_by_project(&self.project_path)
+            .map_err(|e| SyncError::Database(e.to_string()))?;
+
+        if plans.is_empty() {
+            return Ok(());
+        }
+
+        let path = self.output_dir.join("plans.jsonl");
+
+        // Safety check
+        if !force {
+            self.check_for_lost_records(&path, &plans.iter().map(|p| p.id.clone()).collect())?;
+        }
+
+        let records: Vec<SyncRecord> = plans
+            .into_iter()
+            .map(|plan| {
+                let hash = content_hash(&plan);
+                SyncRecord::Plan(PlanRecord {
+                    data: plan,
+                    content_hash: hash,
+                    exported_at: now.to_string(),
+                })
+            })
+            .collect();
+
+        stats.plans = records.len();
+        write_jsonl(&path, &records)?;
+
+        Ok(())
+    }
+
     /// Export deletions to a separate JSONL file.
     ///
     /// Unlike entity exports which use snapshot mode, deletions are **cumulative**:
@@ -421,6 +463,7 @@ impl<'a> Exporter<'a> {
                 SyncRecord::ContextItem(rec) => rec.data.id.clone(),
                 SyncRecord::Memory(rec) => rec.data.id.clone(),
                 SyncRecord::Checkpoint(rec) => rec.data.id.clone(),
+                SyncRecord::Plan(rec) => rec.data.id.clone(),
             })
             .collect();
 
@@ -460,6 +503,10 @@ impl<'a> Exporter<'a> {
             .storage
             .get_dirty_context_items_by_project(&self.project_path)
             .map_err(|e| SyncError::Database(e.to_string()))?;
+        let dirty_plans = self
+            .storage
+            .get_dirty_plans_by_project(&self.project_path)
+            .map_err(|e| SyncError::Database(e.to_string()))?;
 
         if !dirty_sessions.is_empty() {
             self.storage
@@ -474,6 +521,11 @@ impl<'a> Exporter<'a> {
         if !dirty_items.is_empty() {
             self.storage
                 .clear_dirty_context_items(&dirty_items)
+                .map_err(|e| SyncError::Database(e.to_string()))?;
+        }
+        if !dirty_plans.is_empty() {
+            self.storage
+                .clear_dirty_plans(&dirty_plans)
                 .map_err(|e| SyncError::Database(e.to_string()))?;
         }
 

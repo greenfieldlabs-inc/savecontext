@@ -56,6 +56,6 @@ pub use import::Importer;
 pub use status::{get_sync_status, print_status};
 pub use types::{
     CheckpointRecord, ContextItemRecord, DeletionRecord, EntityStats, EntityType, ExportFileInfo,
-    ExportStats, ImportStats, IssueRecord, MemoryRecord, MergeStrategy, SessionRecord, SyncError,
-    SyncRecord, SyncResult, SyncStatus,
+    ExportStats, ImportStats, IssueRecord, MemoryRecord, MergeStrategy, PlanRecord, SessionRecord,
+    SyncError, SyncRecord, SyncResult, SyncStatus,
 };

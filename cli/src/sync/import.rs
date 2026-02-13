@@ -14,7 +14,7 @@ use crate::sync::file::read_jsonl;
 use crate::sync::hash::content_hash;
 use crate::sync::types::{
     CheckpointRecord, ContextItemRecord, DeletionRecord, EntityStats, ImportStats, IssueRecord,
-    MemoryRecord, MergeStrategy, SessionRecord, SyncError, SyncRecord, SyncResult,
+    MemoryRecord, MergeStrategy, PlanRecord, SessionRecord, SyncError, SyncRecord, SyncResult,
 };
 
 /// Importer for JSONL sync files.
@@ -56,6 +56,9 @@ impl<'a> Importer<'a> {
                 SyncRecord::Checkpoint(rec) => {
                     self.import_checkpoint(rec, &mut stats.checkpoints)?;
                 }
+                SyncRecord::Plan(rec) => {
+                    self.import_plan(rec, &mut stats.plans)?;
+                }
             }
         }
 
@@ -81,6 +84,7 @@ impl<'a> Importer<'a> {
             ("context_items.jsonl", "context_items"),
             ("memories.jsonl", "memories"),
             ("checkpoints.jsonl", "checkpoints"),
+            ("plans.jsonl", "plans"),
         ];
 
         for (filename, _entity) in files {
@@ -346,6 +350,54 @@ impl<'a> Importer<'a> {
 
         Ok(())
     }
+
+    /// Import a plan record with merge.
+    fn import_plan(&mut self, rec: PlanRecord, stats: &mut EntityStats) -> SyncResult<()> {
+        let existing = self
+            .storage
+            .get_plan(&rec.data.id)
+            .map_err(|e| SyncError::Database(e.to_string()))?;
+
+        match existing {
+            Some(local) => {
+                let local_hash = content_hash(&local);
+                if local_hash == rec.content_hash {
+                    stats.skipped += 1;
+                    return Ok(());
+                }
+
+                match self.strategy {
+                    MergeStrategy::PreferNewer => {
+                        if rec.data.updated_at > local.updated_at {
+                            self.storage
+                                .upsert_plan(&rec.data)
+                                .map_err(|e| SyncError::Database(e.to_string()))?;
+                            stats.updated += 1;
+                        } else {
+                            stats.skipped += 1;
+                        }
+                    }
+                    MergeStrategy::PreferLocal => {
+                        stats.skipped += 1;
+                    }
+                    MergeStrategy::PreferExternal => {
+                        self.storage
+                            .upsert_plan(&rec.data)
+                            .map_err(|e| SyncError::Database(e.to_string()))?;
+                        stats.updated += 1;
+                    }
+                }
+            }
+            None => {
+                self.storage
+                    .upsert_plan(&rec.data)
+                    .map_err(|e| SyncError::Database(e.to_string()))?;
+                stats.created += 1;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Merge import stats from one operation into accumulated stats.
@@ -374,6 +426,11 @@ fn merge_stats(total: &mut ImportStats, add: &ImportStats) {
     total.checkpoints.updated += add.checkpoints.updated;
     total.checkpoints.skipped += add.checkpoints.skipped;
     total.checkpoints.conflicts += add.checkpoints.conflicts;
+
+    total.plans.created += add.plans.created;
+    total.plans.updated += add.plans.updated;
+    total.plans.skipped += add.plans.skipped;
+    total.plans.conflicts += add.plans.conflicts;
 }
 
 #[cfg(test)]
