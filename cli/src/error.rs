@@ -184,6 +184,13 @@ pub enum Error {
     #[error("Project not found: {id}")]
     ProjectNotFound { id: String },
 
+    #[error("No project found for current directory: {cwd}")]
+    NoProjectForDirectory {
+        cwd: String,
+        /// (path, name) of known projects for hint display.
+        available: Vec<(String, String)>,
+    },
+
     #[error("Database error: {0}")]
     Database(#[from] rusqlite::Error),
 
@@ -223,7 +230,9 @@ impl Error {
             Self::CheckpointNotFound { .. } | Self::CheckpointNotFoundSimilar { .. } => {
                 ErrorCode::CheckpointNotFound
             }
-            Self::ProjectNotFound { .. } => ErrorCode::ProjectNotFound,
+            Self::ProjectNotFound { .. } | Self::NoProjectForDirectory { .. } => {
+                ErrorCode::ProjectNotFound
+            }
             Self::NoActiveSession | Self::NoActiveSessionWithRecent { .. } => {
                 ErrorCode::NoActiveSession
             }
@@ -297,6 +306,24 @@ impl Error {
             Self::ProjectNotFound { id } => Some(format!(
                 "No project with ID '{id}'. Use `sc project list` to see available projects."
             )),
+
+            Self::NoProjectForDirectory { cwd, available } => {
+                let mut hint = format!("No project registered for '{cwd}'.\n");
+                if available.is_empty() {
+                    hint.push_str("  No projects exist yet.\n");
+                    hint.push_str(&format!("  Create one: sc project create {cwd}"));
+                } else {
+                    hint.push_str("  Known projects:\n");
+                    for (path, name) in available.iter().take(5) {
+                        hint.push_str(&format!("    {path}  \"{name}\"\n"));
+                    }
+                    if available.len() > 5 {
+                        hint.push_str(&format!("    ... and {} more\n", available.len() - 5));
+                    }
+                    hint.push_str(&format!("  Create one: sc project create {cwd}"));
+                }
+                Some(hint)
+            }
 
             Self::InvalidSessionStatus { expected, actual } => Some(format!(
                 "Session is '{actual}' but needs to be '{expected}'. \

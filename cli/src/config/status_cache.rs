@@ -35,6 +35,10 @@ pub struct StatusCacheEntry {
     pub provider: Option<String>,
     pub item_count: Option<u32>,
     pub session_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_plan_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_title: Option<String>,
 }
 
 /// Get the status cache directory path.
@@ -278,6 +282,8 @@ pub fn bind_session_to_terminal(
         provider: Some("cli".to_string()),
         item_count: None,
         session_status: Some(status.to_string()),
+        active_plan_id: None,
+        plan_title: None,
     };
 
     write_status_cache(&entry)

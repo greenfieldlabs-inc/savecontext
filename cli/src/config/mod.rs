@@ -12,6 +12,7 @@
 //! This allows the CLI and MCP server to share the same data, while each project
 //! maintains its own git-friendly JSONL exports.
 
+pub mod plan_discovery;
 mod status_cache;
 
 pub use status_cache::{
@@ -20,6 +21,9 @@ pub use status_cache::{
 };
 
 use crate::error::{Error, Result};
+use crate::model::Project;
+use crate::storage::SqliteStorage;
+use tracing::{debug, trace};
 
 use std::path::{Path, PathBuf};
 
@@ -143,23 +147,29 @@ pub fn test_db_path() -> Option<PathBuf> {
 pub fn resolve_db_path(explicit_path: Option<&Path>) -> Option<PathBuf> {
     // Priority 1: Explicit path from CLI flag
     if let Some(path) = explicit_path {
+        trace!(path = %path.display(), source = "explicit", "DB path resolved");
         return Some(path.to_path_buf());
     }
 
     // Priority 2: Test mode - use isolated test database
     if is_test_mode() {
-        return test_db_path();
+        let path = test_db_path();
+        trace!(path = ?path, source = "test mode", "DB path resolved");
+        return path;
     }
 
     // Priority 3: SAVECONTEXT_DB environment variable
     if let Ok(db_path) = std::env::var("SAVECONTEXT_DB") {
         if !db_path.trim().is_empty() {
+            trace!(path = %db_path, source = "SAVECONTEXT_DB env", "DB path resolved");
             return Some(PathBuf::from(db_path));
         }
     }
 
     // Priority 4: Global database location (matches MCP server)
-    global_savecontext_dir().map(|dir| dir.join("data").join("savecontext.db"))
+    let path = global_savecontext_dir().map(|dir| dir.join("data").join("savecontext.db"));
+    trace!(path = ?path, source = "global default", "DB path resolved");
+    path
 }
 
 /// Resolve the session ID for any CLI command.
@@ -176,22 +186,26 @@ pub fn resolve_db_path(explicit_path: Option<&Path>) -> Option<PathBuf> {
 pub fn resolve_session_id(explicit_session: Option<&str>) -> Result<String> {
     // 1. Explicit session from CLI flag or MCP bridge
     if let Some(id) = explicit_session {
+        debug!(session = id, source = "explicit", "Session resolved");
         return Ok(id.to_string());
     }
 
     // 2. SC_SESSION environment variable
     if let Ok(id) = std::env::var("SC_SESSION") {
         if !id.is_empty() {
+            debug!(session = %id, source = "SC_SESSION env", "Session resolved");
             return Ok(id);
         }
     }
 
     // 3. TTY-keyed status cache
     if let Some(id) = current_session_id() {
+        debug!(session = %id, source = "TTY status cache", "Session resolved");
         return Ok(id);
     }
 
     // 4. No session — hard error, never guess
+    debug!("Session resolution failed: no explicit, no env, no cache");
     Err(Error::NoActiveSession)
 }
 
@@ -243,6 +257,109 @@ pub fn resolve_session_or_suggest(
 pub fn current_project_path() -> Option<PathBuf> {
     // Find the .savecontext directory, then return its parent (the project root)
     discover_savecontext_dir().and_then(|sc_dir| sc_dir.parent().map(Path::to_path_buf))
+}
+
+/// Resolve a project from explicit input or CWD.
+///
+/// Accepts a project ID, a filesystem path, or `None` for CWD auto-detection.
+/// Always validates against the database — sessions can only be created for
+/// registered projects.
+///
+/// # Resolution
+///
+/// **Explicit value (`Some`):**
+/// 1. Try as project ID (`storage.get_project`)
+/// 2. Try as filesystem path, canonicalized (`storage.get_project_by_path`)
+/// 3. Error with `ProjectNotFound`
+///
+/// **Auto-detect (`None`):**
+/// 1. Canonicalize CWD
+/// 2. Check CWD and parent directories against known project paths (longest match)
+/// 3. Fall back to `.savecontext/` directory discovery (legacy)
+/// 4. Error with `NoProjectForDirectory` listing available projects
+///
+/// # Errors
+///
+/// Returns `ProjectNotFound` or `NoProjectForDirectory` if no match is found.
+pub fn resolve_project(
+    storage: &SqliteStorage,
+    explicit: Option<&str>,
+) -> Result<Project> {
+    if let Some(value) = explicit {
+        // Try as project ID first
+        if let Some(project) = storage.get_project(value)? {
+            return Ok(project);
+        }
+
+        // Try as filesystem path (canonicalize for consistent matching)
+        let canon = std::path::PathBuf::from(value)
+            .canonicalize()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| value.to_string());
+
+        if let Some(project) = storage.get_project_by_path(&canon)? {
+            return Ok(project);
+        }
+
+        return Err(Error::ProjectNotFound {
+            id: value.to_string(),
+        });
+    }
+
+    // Auto-detect from CWD
+    let cwd = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.canonicalize().ok())
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| ".".to_string());
+    trace!(cwd = %cwd, "Resolving project from CWD");
+
+    // Load all projects and find the best match (longest path that is a prefix of CWD)
+    let projects = storage.list_projects(200)?;
+    trace!(registered_projects = projects.len(), "Loaded projects for matching");
+
+    let mut best_match: Option<&Project> = None;
+    let mut best_len: usize = 0;
+
+    for project in &projects {
+        let pp = &project.project_path;
+        // CWD must equal or be a subdirectory of the project path
+        if cwd == *pp || cwd.starts_with(&format!("{pp}/")) {
+            if pp.len() > best_len {
+                best_len = pp.len();
+                best_match = Some(project);
+            }
+        }
+    }
+
+    if let Some(project) = best_match {
+        debug!(project = %project.project_path, name = %project.name, "Project resolved via CWD");
+        return Ok(project.clone());
+    }
+
+    // No match — error with suggestions
+    debug!(cwd = %cwd, "No project matched CWD");
+    let available: Vec<(String, String)> = projects
+        .iter()
+        .map(|p| (p.project_path.clone(), p.name.clone()))
+        .collect();
+
+    Err(Error::NoProjectForDirectory { cwd, available })
+}
+
+/// Resolve the project path from explicit input or CWD.
+///
+/// Convenience wrapper around [`resolve_project`] that returns just the path string.
+/// Use this in commands that need a project path but don't need the full `Project` object.
+///
+/// # Errors
+///
+/// Same as [`resolve_project`].
+pub fn resolve_project_path(
+    storage: &SqliteStorage,
+    explicit: Option<&str>,
+) -> Result<String> {
+    resolve_project(storage, explicit).map(|p| p.project_path)
 }
 
 /// Get the current git branch name.
