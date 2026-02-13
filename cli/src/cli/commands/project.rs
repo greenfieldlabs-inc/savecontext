@@ -95,11 +95,17 @@ fn execute_create(
     json_output: bool,
     actor: &str,
 ) -> Result<()> {
-    // Use provided path or current directory
+    // Use provided path or canonicalized CWD
     let project_path = args.path.clone().unwrap_or_else(|| {
-        current_project_path()
+        std::env::current_dir()
+            .ok()
+            .and_then(|p| p.canonicalize().ok())
             .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| ".".to_string())
+            .unwrap_or_else(|| {
+                current_project_path()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| ".".to_string())
+            })
     });
 
     // Canonicalize the path

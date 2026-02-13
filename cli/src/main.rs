@@ -11,34 +11,46 @@ use std::process::ExitCode;
 /// Agents (Claude Code, Codex, etc.) naturally generate `--title "foo"`
 /// instead of positional `"foo"`. This preprocessor transparently
 /// converts known flag patterns so both forms work.
+///
+/// Context-aware: some flags are positional in one command but named
+/// in another (e.g. `--value` is positional in `save` but named in
+/// `update`). The preprocessor detects the subcommand first.
 fn preprocess_args(args: impl Iterator<Item = String>) -> Vec<String> {
-    // Map of --flag names to their positional subcommand contexts.
-    // When we see e.g. `sc issue create --title "foo"`, we strip
-    // `--title` and leave `"foo"` as the positional arg.
-    //
-    // Only applies to flags that shadow positional args — named
-    // flags like --description already work via clap.
-    const POSITIONAL_ALIASES: &[&str] = &[
+    let raw: Vec<String> = args.collect();
+    let subcommand = detect_subcommand(&raw);
+
+    // Aliases safe to strip for ALL commands
+    let mut aliases: Vec<&str> = vec![
         "--title",  // issue create, plan create
         "--id",     // issue update/delete/show/complete/claim/release,
                     // project update, plan update, checkpoint restore,
                     // session resume/delete, memory delete/get
-        "--key",    // save, update, delete, tag, memory save/delete/get
-        "--value",  // save
         "--name",   // session start, session rename
         "--path",   // project create
     ];
 
+    // --key is positional in: save, update, delete, tag, memory save/delete/get
+    // --key is a NAMED flag in: get (GetArgs.key)
+    if subcommand.as_deref() != Some("get") {
+        aliases.push("--key");
+    }
+
+    // --value is positional in: save, memory save
+    // --value is a NAMED flag in: update (UpdateArgs.value)
+    if subcommand.as_deref() != Some("update") {
+        aliases.push("--value");
+    }
+
     let mut result = Vec::new();
-    let mut iter = args.peekable();
+    let mut iter = raw.into_iter().peekable();
 
     while let Some(arg) = iter.next() {
-        if POSITIONAL_ALIASES.contains(&arg.as_str()) {
+        if aliases.contains(&arg.as_str()) {
             // Strip the flag, keep the value
             if let Some(value) = iter.next() {
                 result.push(value);
             }
-        } else if let Some(flag) = POSITIONAL_ALIASES
+        } else if let Some(flag) = aliases
             .iter()
             .find(|f| arg.starts_with(&format!("{}=", f)))
         {
@@ -51,6 +63,24 @@ fn preprocess_args(args: impl Iterator<Item = String>) -> Vec<String> {
     }
 
     result
+}
+
+/// Detect the primary subcommand from the arg list.
+///
+/// Scans for the first known subcommand token after the binary name.
+/// Used by `preprocess_args` to apply context-aware alias stripping.
+fn detect_subcommand(args: &[String]) -> Option<String> {
+    const SUBCOMMANDS: &[&str] = &[
+        "save", "get", "update", "delete", "tag",
+        "session", "status", "issue", "checkpoint", "memory",
+        "sync", "project", "plan", "compaction", "prime",
+        "init", "version", "completions", "embeddings",
+    ];
+
+    args.iter()
+        .skip(1) // skip binary name
+        .find(|a| SUBCOMMANDS.contains(&a.as_str()))
+        .cloned()
 }
 
 fn main() -> ExitCode {
@@ -71,9 +101,11 @@ fn main() -> ExitCode {
     init_tracing(cli.verbose, cli.quiet);
 
     // Resolve effective JSON mode: --json OR --format json OR non-TTY stdout
+    // When --format csv is explicit, don't override with auto-JSON
     let json = cli.json
         || cli.format == OutputFormat::Json
-        || !std::io::IsTerminal::is_terminal(&std::io::stdout());
+        || (cli.format != OutputFormat::Csv
+            && !std::io::IsTerminal::is_terminal(&std::io::stdout()));
 
     // Run the command and handle errors
     match run(&cli, json) {
@@ -106,9 +138,9 @@ fn init_tracing(verbose: u8, quiet: bool) {
     } else {
         match verbose {
             0 => EnvFilter::new("warn"),
-            1 => EnvFilter::new("info"),
-            2 => EnvFilter::new("debug,rusqlite=info"),
-            _ => EnvFilter::new("trace"),
+            1 => EnvFilter::new("sc=info"),
+            2 => EnvFilter::new("sc=debug"),
+            _ => EnvFilter::new("sc=trace"),
         }
     };
 
@@ -185,8 +217,19 @@ fn run(cli: &Cli, json: bool) -> Result<(), Error> {
         }
 
         // Prime (read-only context aggregation for agent injection)
-        Commands::Prime { transcript, transcript_limit, compact } => {
-            commands::prime::execute(cli.db.as_ref(), cli.session.as_deref(), json, *transcript, *transcript_limit, *compact)
+        Commands::Prime { transcript, transcript_limit, compact, smart, budget, query, decay_days } => {
+            commands::prime::execute(
+                cli.db.as_ref(),
+                cli.session.as_deref(),
+                json,
+                *transcript,
+                *transcript_limit,
+                *compact,
+                *smart,
+                *budget,
+                query.as_deref(),
+                *decay_days,
+            )
         }
 
         // Shell completions
@@ -196,5 +239,96 @@ fn run(cli: &Cli, json: bool) -> Result<(), Error> {
         Commands::Embeddings { command } => {
             commands::embeddings::execute(command.clone(), cli.db.as_ref(), json)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pp(args: &[&str]) -> Vec<String> {
+        preprocess_args(args.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn test_save_strips_value_flag() {
+        // --value is positional for save, so strip the flag name
+        assert_eq!(
+            pp(&["sc", "save", "my-key", "--value", "hello world"]),
+            vec!["sc", "save", "my-key", "hello world"]
+        );
+    }
+
+    #[test]
+    fn test_save_strips_key_flag() {
+        assert_eq!(
+            pp(&["sc", "save", "--key", "my-key", "some value"]),
+            vec!["sc", "save", "my-key", "some value"]
+        );
+    }
+
+    #[test]
+    fn test_update_preserves_value_flag() {
+        // --value is a named flag for update, must NOT be stripped
+        assert_eq!(
+            pp(&["sc", "update", "my-key", "--value", "new content"]),
+            vec!["sc", "update", "my-key", "--value", "new content"]
+        );
+    }
+
+    #[test]
+    fn test_update_strips_key_flag() {
+        // --key IS positional for update, so strip it
+        assert_eq!(
+            pp(&["sc", "update", "--key", "my-key", "--value", "new content"]),
+            vec!["sc", "update", "my-key", "--value", "new content"]
+        );
+    }
+
+    #[test]
+    fn test_get_preserves_key_flag() {
+        // --key is a named flag for get, must NOT be stripped
+        assert_eq!(
+            pp(&["sc", "get", "--key", "my-key"]),
+            vec!["sc", "get", "--key", "my-key"]
+        );
+    }
+
+    #[test]
+    fn test_issue_create_strips_title() {
+        assert_eq!(
+            pp(&["sc", "issue", "create", "--title", "Bug report"]),
+            vec!["sc", "issue", "create", "Bug report"]
+        );
+    }
+
+    #[test]
+    fn test_equals_form() {
+        assert_eq!(
+            pp(&["sc", "save", "--key=my-key", "--value=hello"]),
+            vec!["sc", "save", "my-key", "hello"]
+        );
+    }
+
+    #[test]
+    fn test_global_flags_preserved() {
+        assert_eq!(
+            pp(&["sc", "--json", "save", "--key", "k", "--value", "v"]),
+            vec!["sc", "--json", "save", "k", "v"]
+        );
+    }
+
+    #[test]
+    fn test_detect_subcommand_basic() {
+        let args: Vec<String> = vec!["sc", "save", "key", "val"]
+            .into_iter().map(String::from).collect();
+        assert_eq!(detect_subcommand(&args), Some("save".to_string()));
+    }
+
+    #[test]
+    fn test_detect_subcommand_with_flags() {
+        let args: Vec<String> = vec!["sc", "--json", "--db", "/tmp/db", "update", "key"]
+            .into_iter().map(String::from).collect();
+        assert_eq!(detect_subcommand(&args), Some("update".to_string()));
     }
 }

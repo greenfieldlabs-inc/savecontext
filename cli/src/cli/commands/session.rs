@@ -2,8 +2,8 @@
 
 use crate::cli::SessionCommands;
 use crate::config::{
-    bind_session_to_terminal, clear_status_cache, current_git_branch, current_project_path,
-    default_actor, resolve_db_path, resolve_session_or_suggest,
+    bind_session_to_terminal, clear_status_cache, current_git_branch,
+    default_actor, resolve_db_path, resolve_project, resolve_project_path, resolve_session_or_suggest,
 };
 use crate::error::{Error, Result};
 use crate::storage::SqliteStorage;
@@ -102,19 +102,9 @@ fn start(
 ) -> Result<()> {
     let mut storage = SqliteStorage::open(db_path)?;
 
-    // Use provided project path or fall back to current directory
-    let project_path = match project {
-        Some(p) => {
-            // Canonicalize if possible for consistent paths
-            std::path::PathBuf::from(p)
-                .canonicalize()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| p.to_string())
-        }
-        None => current_project_path()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| ".".to_string()),
-    };
+    // Resolve project: validates against DB, accepts ID or path, auto-detects from CWD
+    let resolved = resolve_project(&storage, project)?;
+    let project_path = resolved.project_path;
     let branch = current_git_branch();
 
     // Use provided channel or derive from git branch
@@ -320,28 +310,41 @@ fn list(
 ) -> Result<()> {
     let storage = SqliteStorage::open(db_path)?;
 
+    // When --search is active, widen scope to "find it anywhere" unless
+    // the user explicitly narrowed with -s or -p/--project.
+    let (effective_status, effective_all_projects) = if search.is_some() {
+        let status_was_explicit = status != "active"; // user passed -s
+        let project_was_explicit = project.is_some(); // user passed -p
+        (
+            if status_was_explicit { status } else { "all" },
+            if project_was_explicit { all_projects } else { true },
+        )
+    } else {
+        (status, all_projects)
+    };
+
     // Determine project path filter:
     // - If all_projects is true, don't filter by project
     // - If project is provided, use that
     // - Otherwise, use current directory
-    let project_path = if all_projects {
+    let project_path = if effective_all_projects {
         None
     } else {
         project.map(ToString::to_string).or_else(|| {
-            current_project_path().map(|p| p.to_string_lossy().to_string())
+            resolve_project_path(&storage, None).ok()
         })
     };
 
     // Determine status filter
     // - "all" means no status filter
     // - include_completed means we fetch more and filter client-side
-    let status_filter = if status == "all" {
+    let status_filter = if effective_status == "all" {
         None
     } else if include_completed {
         // Fetch all statuses and filter client-side to include both the requested status and completed
         None
     } else {
-        Some(status)
+        Some(effective_status)
     };
 
     #[allow(clippy::cast_possible_truncation)]
@@ -354,8 +357,8 @@ fn list(
 
     // If we're not fetching "all" status and include_completed is set,
     // filter to only include the requested status OR completed
-    if status != "all" && include_completed {
-        sessions.retain(|s| s.status == status || s.status == "completed");
+    if effective_status != "all" && include_completed {
+        sessions.retain(|s| s.status == effective_status || s.status == "completed");
     }
 
     // Apply limit after filtering

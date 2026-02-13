@@ -163,6 +163,22 @@ pub enum Commands {
         /// Compact output for agent system prompt injection
         #[arg(long)]
         compact: bool,
+
+        /// Smart relevance-ranked context selection
+        #[arg(long)]
+        smart: bool,
+
+        /// Token budget for smart mode (default: 4000)
+        #[arg(long, default_value = "4000")]
+        budget: usize,
+
+        /// Topic query for semantic boosting in smart mode
+        #[arg(long)]
+        query: Option<String>,
+
+        /// Temporal decay half-life in days for smart mode (default: 14)
+        #[arg(long, default_value = "14")]
+        decay_days: u32,
     },
 
     /// Generate shell completions
@@ -322,7 +338,7 @@ pub struct SaveArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct GetArgs {
-    /// Search query (keyword search)
+    /// Search query (smart semantic search when embeddings enabled, keyword fallback)
     #[arg(short = 's', long)]
     pub query: Option<String>,
 
@@ -438,6 +454,10 @@ pub enum IssueCommands {
     Complete {
         /// Issue IDs (one or more)
         ids: Vec<String>,
+
+        /// Reason for closing
+        #[arg(short = 'r', long)]
+        reason: Option<String>,
     },
 
     /// Claim issue(s) (assign to self)
@@ -510,6 +530,31 @@ pub enum IssueCommands {
         #[arg(long)]
         json_input: String,
     },
+
+    /// Count issues grouped by a field
+    Count {
+        /// Group by: status, type, priority, assignee
+        #[arg(short, long, default_value = "status")]
+        group_by: String,
+    },
+
+    /// List stale issues (not updated recently)
+    Stale {
+        /// Issues not updated in this many days
+        #[arg(short, long, default_value = "7")]
+        days: u64,
+
+        /// Maximum issues to return
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+    },
+
+    /// List blocked issues with their blockers
+    Blocked {
+        /// Maximum issues to return
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -559,6 +604,12 @@ pub enum IssueDepCommands {
         /// ID of issue to remove dependency on
         #[arg(long)]
         depends_on: String,
+    },
+
+    /// Show dependency tree for an issue or all epics
+    Tree {
+        /// Root issue ID (omit for all epics)
+        id: Option<String>,
     },
 }
 
@@ -994,6 +1045,10 @@ pub enum PlanCommands {
         /// Maximum plans to return
         #[arg(short, long, default_value = "50")]
         limit: usize,
+
+        /// Filter by session ID (use "current" for active TTY session)
+        #[arg(long)]
+        session: Option<String>,
     },
 
     /// Show plan details
@@ -1004,6 +1059,21 @@ pub enum PlanCommands {
 
     /// Update a plan
     Update(PlanUpdateArgs),
+
+    /// Capture a plan from an AI coding agent's plan file
+    Capture {
+        /// Only look in a specific agent's directory (claude, gemini, opencode, cursor)
+        #[arg(long)]
+        agent: Option<String>,
+
+        /// Max age in minutes (default: 30)
+        #[arg(long, default_value = "30")]
+        max_age: u64,
+
+        /// Explicit plan file path (skip discovery)
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -1022,6 +1092,10 @@ pub struct PlanCreateArgs {
     /// Success criteria
     #[arg(long)]
     pub success_criteria: Option<String>,
+
+    /// Bind to a specific session (default: auto-resolve from TTY)
+    #[arg(long)]
+    pub session: Option<String>,
 }
 
 #[derive(Args, Debug)]

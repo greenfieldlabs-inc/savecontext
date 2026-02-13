@@ -1,7 +1,7 @@
 //! Memory command implementations (project-level persistent storage).
 
 use crate::cli::MemoryCommands;
-use crate::config::{current_project_path, default_actor, resolve_db_path};
+use crate::config::{default_actor, resolve_db_path, resolve_project_path};
 use crate::error::{Error, Result};
 use crate::storage::SqliteStorage;
 use serde::Serialize;
@@ -73,9 +73,7 @@ fn save(
 
     let mut storage = SqliteStorage::open(&db_path)?;
     let actor = actor.map(ToString::to_string).unwrap_or_else(default_actor);
-    let project_path = current_project_path()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| Error::Other("Could not determine project path".to_string()))?;
+    let project_path = resolve_project_path(&storage, None)?;
 
     // Generate ID
     let id = format!("mem_{}", &uuid::Uuid::new_v4().to_string()[..12]);
@@ -110,9 +108,7 @@ fn get(key: &str, db_path: Option<&PathBuf>, json: bool) -> Result<()> {
     }
 
     let storage = SqliteStorage::open(&db_path)?;
-    let project_path = current_project_path()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| Error::Other("Could not determine project path".to_string()))?;
+    let project_path = resolve_project_path(&storage, None)?;
 
     let memory = storage
         .get_memory(&project_path, key)?
@@ -141,9 +137,7 @@ fn list(category: Option<&str>, db_path: Option<&PathBuf>, json: bool) -> Result
     }
 
     let storage = SqliteStorage::open(&db_path)?;
-    let project_path = current_project_path()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| Error::Other("Could not determine project path".to_string()))?;
+    let project_path = resolve_project_path(&storage, None)?;
 
     let memories = storage.list_memory(&project_path, category)?;
 
@@ -203,9 +197,7 @@ fn delete(key: &str, db_path: Option<&PathBuf>, actor: Option<&str>, json: bool)
 
     let mut storage = SqliteStorage::open(&db_path)?;
     let actor = actor.map(ToString::to_string).unwrap_or_else(default_actor);
-    let project_path = current_project_path()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| Error::Other("Could not determine project path".to_string()))?;
+    let project_path = resolve_project_path(&storage, None)?;
 
     storage.delete_memory(&project_path, key, &actor)?;
 
