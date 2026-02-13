@@ -75,11 +75,20 @@ pub struct Plan {
     /// Success criteria for completion
     pub success_criteria: Option<String>,
 
-    /// Session where this plan was created
+    /// Session this plan is bound to (TTY-resolved)
+    pub session_id: Option<String>,
+
+    /// Session where this plan was created (legacy metadata)
     pub created_in_session: Option<String>,
 
     /// Session where this plan was completed
     pub completed_in_session: Option<String>,
+
+    /// Source file path (for multi-agent capture dedup)
+    pub source_path: Option<String>,
+
+    /// SHA-256 hash of source file content (for dedup)
+    pub source_hash: Option<String>,
 
     /// Creation timestamp (Unix milliseconds)
     pub created_at: i64,
@@ -106,8 +115,11 @@ impl Plan {
             content: None,
             status: PlanStatus::Draft,
             success_criteria: None,
+            session_id: None,
             created_in_session: None,
             completed_in_session: None,
+            source_path: None,
+            source_hash: None,
             created_at: now,
             updated_at: now,
             completed_at: None,
@@ -132,6 +144,21 @@ impl Plan {
     #[must_use]
     pub fn with_success_criteria(mut self, criteria: &str) -> Self {
         self.success_criteria = Some(criteria.to_string());
+        self
+    }
+
+    /// Bind to a session.
+    #[must_use]
+    pub fn with_session(mut self, session_id: &str) -> Self {
+        self.session_id = Some(session_id.to_string());
+        self
+    }
+
+    /// Set the source file path and content hash (for capture dedup).
+    #[must_use]
+    pub fn with_source(mut self, path: &str, hash: &str) -> Self {
+        self.source_path = Some(path.to_string());
+        self.source_hash = Some(hash.to_string());
         self
     }
 }

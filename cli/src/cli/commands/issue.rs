@@ -4,7 +4,7 @@ use crate::cli::{
     IssueCommands, IssueCreateArgs, IssueDepCommands, IssueLabelCommands, IssueListArgs,
     IssueUpdateArgs,
 };
-use crate::config::{current_project_path, default_actor, resolve_db_path};
+use crate::config::{default_actor, resolve_db_path, resolve_project_path};
 use crate::error::{Error, Result};
 use crate::storage::SqliteStorage;
 use serde::{Deserialize, Serialize};
@@ -107,7 +107,6 @@ pub fn execute(
         IssueCommands::List(args) => list(args, db_path, json),
         IssueCommands::Show { id } => show(id, db_path, json),
         IssueCommands::Update(args) => update(args, db_path, actor, json),
-        IssueCommands::Complete { ids } => complete(ids, db_path, actor, json),
         IssueCommands::Claim { ids } => claim(ids, db_path, actor, json),
         IssueCommands::Release { ids } => release(ids, db_path, actor, json),
         IssueCommands::Delete { ids } => delete(ids, db_path, actor, json),
@@ -118,6 +117,10 @@ pub fn execute(
         IssueCommands::Ready { limit } => ready(*limit, db_path, json),
         IssueCommands::NextBlock { count } => next_block(*count, db_path, actor, json),
         IssueCommands::Batch { json_input } => batch(json_input, db_path, actor, json),
+        IssueCommands::Count { group_by } => count(group_by, db_path, json),
+        IssueCommands::Stale { days, limit } => stale(*days, *limit, db_path, json),
+        IssueCommands::Blocked { limit } => blocked(*limit, db_path, json),
+        IssueCommands::Complete { ids, reason } => complete(ids, reason.as_deref(), db_path, actor, json),
     }
 }
 
@@ -140,9 +143,6 @@ fn create(
     }
 
     let actor = actor.map(ToString::to_string).unwrap_or_else(default_actor);
-    let project_path = current_project_path()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| Error::Other("Could not determine project path".to_string()))?;
 
     // Normalize type via synonym lookup
     let issue_type = crate::validate::normalize_type(&args.issue_type)
@@ -185,6 +185,7 @@ fn create(
     }
 
     let mut storage = SqliteStorage::open(&db_path)?;
+    let project_path = resolve_project_path(&storage, None)?;
 
     // Generate IDs
     let id = format!("issue_{}", &uuid::Uuid::new_v4().to_string()[..12]);
@@ -295,9 +296,7 @@ fn create_from_file(
 
     let mut storage = SqliteStorage::open(&db_path)?;
     let actor = actor.map(ToString::to_string).unwrap_or_else(default_actor);
-    let project_path = current_project_path()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| Error::Other("Could not determine project path".to_string()))?;
+    let project_path = resolve_project_path(&storage, None)?;
 
     let mut results: Vec<BatchIssueResult> = Vec::with_capacity(issues.len());
 
@@ -368,7 +367,7 @@ fn list(args: &IssueListArgs, db_path: Option<&PathBuf>, json: bool) -> Result<(
 
     // Handle single issue lookup by ID
     if let Some(ref id) = args.id {
-        let project_path = current_project_path().map(|p| p.to_string_lossy().to_string());
+        let project_path = resolve_project_path(&storage, None).ok();
         let issue = storage
             .get_issue(id, project_path.as_deref())?
             .ok_or_else(|| {
@@ -390,7 +389,7 @@ fn list(args: &IssueListArgs, db_path: Option<&PathBuf>, json: bool) -> Result<(
             };
             println!("{}", serde_json::to_string(&output)?);
         } else {
-            print_issue_list(&[issue]);
+            print_issue_list(&[issue], Some(&storage));
         }
         return Ok(());
     }
@@ -399,11 +398,7 @@ fn list(args: &IssueListArgs, db_path: Option<&PathBuf>, json: bool) -> Result<(
     let project_path = if args.all_projects {
         None
     } else {
-        Some(
-            current_project_path()
-                .map(|p| p.to_string_lossy().to_string())
-                .ok_or_else(|| Error::Other("Could not determine project path".to_string()))?,
-        )
+        Some(resolve_project_path(&storage, None)?)
     };
 
     // Normalize status filter via synonym lookup (e.g., "done" → "closed")
@@ -630,14 +625,14 @@ fn list(args: &IssueListArgs, db_path: Option<&PathBuf>, json: bool) -> Result<(
     } else if issues.is_empty() {
         println!("No issues found.");
     } else {
-        print_issue_list(&issues);
+        print_issue_list(&issues, Some(&storage));
     }
 
     Ok(())
 }
 
 /// Print formatted issue list to stdout.
-fn print_issue_list(issues: &[crate::storage::Issue]) {
+fn print_issue_list(issues: &[crate::storage::Issue], storage: Option<&SqliteStorage>) {
     println!("Issues ({} found):", issues.len());
     println!();
     for issue in issues {
@@ -658,8 +653,22 @@ fn print_issue_list(issues: &[crate::storage::Issue]) {
             _ => "  ",
         };
         let short_id = issue.short_id.as_deref().unwrap_or(&issue.id[..8]);
+
+        // Show epic progress inline if available
+        let progress_str = if issue.issue_type == "epic" {
+            storage.and_then(|s| s.get_epic_progress(&issue.id).ok())
+                .filter(|p| p.total > 0)
+                .map(|p| {
+                    let pct = (p.closed as f64 / p.total as f64 * 100.0) as u32;
+                    format!(" {}/{} ({pct}%)", p.closed, p.total)
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
         println!(
-            "{} [{}] {} {} ({})",
+            "{} [{}] {} {} ({}){progress_str}",
             status_icon, short_id, priority_str, issue.title, issue.issue_type
         );
         if let Some(ref desc) = issue.description {
@@ -682,7 +691,7 @@ fn show(id: &str, db_path: Option<&PathBuf>, json: bool) -> Result<()> {
     }
 
     let storage = SqliteStorage::open(&db_path)?;
-    let project_path = current_project_path().map(|p| p.to_string_lossy().to_string());
+    let project_path = resolve_project_path(&storage, None).ok();
 
     let issue = storage
         .get_issue(id, project_path.as_deref())?
@@ -699,8 +708,30 @@ fn show(id: &str, db_path: Option<&PathBuf>, json: bool) -> Result<()> {
             }
         })?;
 
+    // Check for epic progress
+    let progress = if issue.issue_type == "epic" {
+        storage.get_epic_progress(&issue.id).ok()
+            .filter(|p| p.total > 0)
+    } else {
+        None
+    };
+
+    // Check for close_reason
+    let close_reason = if issue.status == "closed" {
+        storage.get_close_reason(&issue.id).ok().flatten()
+    } else {
+        None
+    };
+
     if json {
-        println!("{}", serde_json::to_string(&issue)?);
+        let mut value = serde_json::to_value(&issue)?;
+        if let Some(ref p) = progress {
+            value["progress"] = serde_json::to_value(p)?;
+        }
+        if let Some(ref reason) = close_reason {
+            value["close_reason"] = serde_json::Value::String(reason.clone());
+        }
+        println!("{}", serde_json::to_string(&value)?);
     } else {
         let short_id = issue.short_id.as_deref().unwrap_or(&issue.id[..8]);
         println!("[{}] {}", short_id, issue.title);
@@ -721,6 +752,24 @@ fn show(id: &str, db_path: Option<&PathBuf>, json: bool) -> Result<()> {
         if let Some(ref agent) = issue.assigned_to_agent {
             println!();
             println!("Assigned to: {agent}");
+        }
+        if let Some(ref reason) = close_reason {
+            println!();
+            println!("Close reason: {reason}");
+        }
+        if let Some(ref p) = progress {
+            let pct = if p.total > 0 {
+                (p.closed as f64 / p.total as f64 * 100.0) as u32
+            } else {
+                0
+            };
+            println!();
+            println!("Progress: {}/{} tasks ({pct}%)", p.closed, p.total);
+            if p.closed > 0 { println!("  Closed:      {}", p.closed); }
+            if p.in_progress > 0 { println!("  In progress: {}", p.in_progress); }
+            if p.open > 0 { println!("  Open:        {}", p.open); }
+            if p.blocked > 0 { println!("  Blocked:     {}", p.blocked); }
+            if p.deferred > 0 { println!("  Deferred:    {}", p.deferred); }
         }
     }
 
@@ -811,7 +860,7 @@ fn update(
     Ok(())
 }
 
-fn complete(ids: &[String], db_path: Option<&PathBuf>, actor: Option<&str>, json: bool) -> Result<()> {
+fn complete(ids: &[String], reason: Option<&str>, db_path: Option<&PathBuf>, actor: Option<&str>, json: bool) -> Result<()> {
     let db_path = resolve_db_path(db_path.map(|p| p.as_path()))
         .ok_or(Error::NotInitialized)?;
 
@@ -832,6 +881,9 @@ fn complete(ids: &[String], db_path: Option<&PathBuf>, actor: Option<&str>, json
     let mut results = Vec::new();
     for id in ids {
         storage.update_issue_status(id, "closed", &actor)?;
+        if let Some(reason) = reason {
+            storage.set_close_reason(id, reason, &actor)?;
+        }
         results.push(id.as_str());
     }
 
@@ -840,15 +892,21 @@ fn complete(ids: &[String], db_path: Option<&PathBuf>, actor: Option<&str>, json
             println!("{id}");
         }
     } else if json {
-        let output = serde_json::json!({
+        let mut output = serde_json::json!({
             "ids": results,
             "status": "closed",
             "count": results.len()
         });
+        if let Some(reason) = reason {
+            output["close_reason"] = serde_json::Value::String(reason.to_string());
+        }
         println!("{output}");
     } else {
         for id in &results {
             println!("Completed issue: {id}");
+        }
+        if let Some(reason) = reason {
+            println!("  Reason: {reason}");
         }
     }
 
@@ -1093,6 +1151,9 @@ fn dep(
                 println!("Removed dependency: {} no longer depends on {}", id, depends_on);
             }
         }
+        IssueDepCommands::Tree { id } => {
+            return dep_tree(id.as_deref(), Some(&db_path), json);
+        }
     }
 
     Ok(())
@@ -1169,9 +1230,7 @@ fn ready(limit: usize, db_path: Option<&PathBuf>, json: bool) -> Result<()> {
     }
 
     let storage = SqliteStorage::open(&db_path)?;
-    let project_path = current_project_path()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| Error::Other("Could not determine project path".to_string()))?;
+    let project_path = resolve_project_path(&storage, None)?;
 
     #[allow(clippy::cast_possible_truncation)]
     let issues = storage.get_ready_issues(&project_path, limit as u32)?;
@@ -1222,9 +1281,7 @@ fn next_block(
 
     let mut storage = SqliteStorage::open(&db_path)?;
     let actor = actor.map(ToString::to_string).unwrap_or_else(default_actor);
-    let project_path = current_project_path()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| Error::Other("Could not determine project path".to_string()))?;
+    let project_path = resolve_project_path(&storage, None)?;
 
     #[allow(clippy::cast_possible_truncation)]
     let issues = storage.get_next_issue_block(&project_path, count as u32, &actor)?;
@@ -1276,9 +1333,7 @@ fn batch(
 
     let mut storage = SqliteStorage::open(&db_path)?;
     let actor = actor.map(ToString::to_string).unwrap_or_else(default_actor);
-    let project_path = current_project_path()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| Error::Other("Could not determine project path".to_string()))?;
+    let project_path = resolve_project_path(&storage, None)?;
 
     // Parse the JSON input
     let input: BatchInput = serde_json::from_str(json_input)
@@ -1390,4 +1445,303 @@ fn batch(
     }
 
     Ok(())
+}
+
+fn count(group_by: &str, db_path: Option<&PathBuf>, json: bool) -> Result<()> {
+    let db_path = resolve_db_path(db_path.map(|p| p.as_path()))
+        .ok_or(Error::NotInitialized)?;
+
+    if !db_path.exists() {
+        return Err(Error::NotInitialized);
+    }
+
+    let storage = SqliteStorage::open(&db_path)?;
+    let project_path = resolve_project_path(&storage, None)?;
+
+    let groups = storage.count_issues_grouped(&project_path, group_by)?;
+    let total: i64 = groups.iter().map(|(_, c)| c).sum();
+
+    if crate::is_csv() {
+        println!("group,count");
+        for (key, count) in &groups {
+            println!("{},{count}", crate::csv_escape(key));
+        }
+    } else if json {
+        let output = serde_json::json!({
+            "groups": groups.iter().map(|(k, c)| {
+                serde_json::json!({"key": k, "count": c})
+            }).collect::<Vec<_>>(),
+            "total": total,
+            "group_by": group_by
+        });
+        println!("{output}");
+    } else if groups.is_empty() {
+        println!("No issues found.");
+    } else {
+        println!("Issues by {group_by}:");
+        let max_key_len = groups.iter().map(|(k, _)| k.len()).max().unwrap_or(10);
+        for (key, count) in &groups {
+            println!("  {:<width$}  {count}", key, width = max_key_len);
+        }
+        println!("  {}", "─".repeat(max_key_len + 6));
+        println!("  {:<width$}  {total}", "Total", width = max_key_len);
+    }
+
+    Ok(())
+}
+
+fn stale(days: u64, limit: usize, db_path: Option<&PathBuf>, json: bool) -> Result<()> {
+    let db_path = resolve_db_path(db_path.map(|p| p.as_path()))
+        .ok_or(Error::NotInitialized)?;
+
+    if !db_path.exists() {
+        return Err(Error::NotInitialized);
+    }
+
+    let storage = SqliteStorage::open(&db_path)?;
+    let project_path = resolve_project_path(&storage, None)?;
+
+    #[allow(clippy::cast_possible_truncation)]
+    let issues = storage.get_stale_issues(&project_path, days, limit as u32)?;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+
+    if crate::is_csv() {
+        println!("id,title,status,priority,type,stale_days");
+        for issue in &issues {
+            let short_id = issue.short_id.as_deref().unwrap_or(&issue.id[..8]);
+            let title = crate::csv_escape(&issue.title);
+            let stale_d = (now_ms - issue.updated_at) / (24 * 60 * 60 * 1000);
+            println!("{short_id},{title},{},{},{},{stale_d}", issue.status, issue.priority, issue.issue_type);
+        }
+    } else if json {
+        let enriched: Vec<_> = issues.iter().map(|i| {
+            let stale_d = (now_ms - i.updated_at) / (24 * 60 * 60 * 1000);
+            serde_json::json!({
+                "issue": i,
+                "stale_days": stale_d
+            })
+        }).collect();
+        let output = serde_json::json!({
+            "issues": enriched,
+            "count": issues.len(),
+            "threshold_days": days
+        });
+        println!("{}", serde_json::to_string(&output)?);
+    } else if issues.is_empty() {
+        println!("No stale issues (threshold: {days} days).");
+    } else {
+        println!("Stale issues ({} found, threshold: {days} days):", issues.len());
+        println!();
+        for issue in &issues {
+            let short_id = issue.short_id.as_deref().unwrap_or(&issue.id[..8]);
+            let stale_d = (now_ms - issue.updated_at) / (24 * 60 * 60 * 1000);
+            let status_icon = match issue.status.as_str() {
+                "open" => "○",
+                "in_progress" => "●",
+                "blocked" => "⊘",
+                _ => "?",
+            };
+            println!(
+                "{status_icon} [{}] {} ({}) — last updated {stale_d} days ago",
+                short_id, issue.title, issue.issue_type
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn blocked(limit: usize, db_path: Option<&PathBuf>, json: bool) -> Result<()> {
+    let db_path = resolve_db_path(db_path.map(|p| p.as_path()))
+        .ok_or(Error::NotInitialized)?;
+
+    if !db_path.exists() {
+        return Err(Error::NotInitialized);
+    }
+
+    let storage = SqliteStorage::open(&db_path)?;
+    let project_path = resolve_project_path(&storage, None)?;
+
+    #[allow(clippy::cast_possible_truncation)]
+    let blocked_issues = storage.get_blocked_issues(&project_path, limit as u32)?;
+
+    if crate::is_csv() {
+        println!("id,title,status,blocked_by_ids");
+        for (issue, blockers) in &blocked_issues {
+            let short_id = issue.short_id.as_deref().unwrap_or(&issue.id[..8]);
+            let title = crate::csv_escape(&issue.title);
+            let blocker_ids: Vec<&str> = blockers.iter()
+                .map(|b| b.short_id.as_deref().unwrap_or(&b.id[..8]))
+                .collect();
+            println!("{short_id},{title},{},{}", issue.status, blocker_ids.join(";"));
+        }
+    } else if json {
+        let entries: Vec<_> = blocked_issues.iter().map(|(issue, blockers)| {
+            serde_json::json!({
+                "issue": issue,
+                "blocked_by": blockers
+            })
+        }).collect();
+        let output = serde_json::json!({
+            "blocked_issues": entries,
+            "count": blocked_issues.len()
+        });
+        println!("{}", serde_json::to_string(&output)?);
+    } else if blocked_issues.is_empty() {
+        println!("No blocked issues.");
+    } else {
+        println!("Blocked issues ({} found):", blocked_issues.len());
+        println!();
+        for (issue, blockers) in &blocked_issues {
+            let short_id = issue.short_id.as_deref().unwrap_or(&issue.id[..8]);
+            println!("⊘ [{}] {} ({})", short_id, issue.title, issue.issue_type);
+            for blocker in blockers {
+                let b_short_id = blocker.short_id.as_deref().unwrap_or(&blocker.id[..8]);
+                println!(
+                    "    blocked by: [{}] {} [{}]",
+                    b_short_id, blocker.title, blocker.status
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn dep_tree(id: Option<&str>, db_path: Option<&PathBuf>, json: bool) -> Result<()> {
+    let db_path = resolve_db_path(db_path.map(|p| p.as_path()))
+        .ok_or(Error::NotInitialized)?;
+
+    if !db_path.exists() {
+        return Err(Error::NotInitialized);
+    }
+
+    let storage = SqliteStorage::open(&db_path)?;
+    let project_path = resolve_project_path(&storage, None)?;
+
+    if let Some(root_id) = id {
+        // Show tree for a specific issue
+        let tree = storage.get_dependency_tree(root_id)?;
+        print_dep_tree(&tree, json)?;
+    } else {
+        // Show trees for all epics
+        let epics = storage.get_epics(&project_path)?;
+        if epics.is_empty() {
+            if json {
+                println!("{{\"trees\":[],\"count\":0}}");
+            } else {
+                println!("No epics found.");
+            }
+            return Ok(());
+        }
+
+        if json {
+            let mut trees = Vec::new();
+            for epic in &epics {
+                let tree = storage.get_dependency_tree(&epic.id)?;
+                trees.push(tree_to_json(&tree));
+            }
+            let output = serde_json::json!({
+                "trees": trees,
+                "count": epics.len()
+            });
+            println!("{}", serde_json::to_string(&output)?);
+        } else {
+            for (i, epic) in epics.iter().enumerate() {
+                if i > 0 {
+                    println!();
+                }
+                let tree = storage.get_dependency_tree(&epic.id)?;
+                print_ascii_tree(&tree);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn print_dep_tree(tree: &[(crate::storage::Issue, i32)], json: bool) -> Result<()> {
+    if json {
+        let output = tree_to_json(tree);
+        println!("{}", serde_json::to_string(&output)?);
+    } else {
+        print_ascii_tree(tree);
+    }
+    Ok(())
+}
+
+fn tree_to_json(tree: &[(crate::storage::Issue, i32)]) -> serde_json::Value {
+    if tree.is_empty() {
+        return serde_json::json!(null);
+    }
+
+    // Build nested structure from flat (issue, depth) list
+    #[derive(serde::Serialize)]
+    struct TreeNode {
+        issue: serde_json::Value,
+        children: Vec<TreeNode>,
+    }
+
+    fn build_children(
+        tree: &[(crate::storage::Issue, i32)],
+        parent_idx: usize,
+        parent_depth: i32,
+    ) -> Vec<TreeNode> {
+        let mut children = Vec::new();
+        let mut i = parent_idx + 1;
+        while i < tree.len() {
+            let (ref issue, depth) = tree[i];
+            if depth <= parent_depth {
+                break;
+            }
+            if depth == parent_depth + 1 {
+                let node = TreeNode {
+                    issue: serde_json::to_value(issue).unwrap_or_default(),
+                    children: build_children(tree, i, depth),
+                };
+                children.push(node);
+            }
+            i += 1;
+        }
+        children
+    }
+
+    let (ref root, root_depth) = tree[0];
+    let root_node = TreeNode {
+        issue: serde_json::to_value(root).unwrap_or_default(),
+        children: build_children(tree, 0, root_depth),
+    };
+
+    serde_json::to_value(root_node).unwrap_or_default()
+}
+
+fn print_ascii_tree(tree: &[(crate::storage::Issue, i32)]) {
+    if tree.is_empty() {
+        return;
+    }
+
+    for (idx, (issue, depth)) in tree.iter().enumerate() {
+        let short_id = issue.short_id.as_deref().unwrap_or(&issue.id[..8]);
+        let status_icon = match issue.status.as_str() {
+            "open" => "○",
+            "in_progress" => "●",
+            "blocked" => "⊘",
+            "closed" => "✓",
+            "deferred" => "◌",
+            _ => "?",
+        };
+
+        if *depth == 0 {
+            println!("{status_icon} {} [{}] {short_id}", issue.title, issue.issue_type);
+        } else {
+            // Find if this is the last child at this depth
+            let is_last = !tree[idx + 1..].iter().any(|(_, d)| *d == *depth);
+            let connector = if is_last { "└── " } else { "├── " };
+            let indent: String = (1..*depth).map(|_| "│   ").collect();
+            println!(
+                "{indent}{connector}{status_icon} {} [{}] {short_id}",
+                issue.title, issue.issue_type
+            );
+        }
+    }
 }
