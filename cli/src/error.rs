@@ -59,6 +59,13 @@ pub enum ErrorCode {
     // Embedding (exit 9)
     EmbeddingError,
 
+    // Skills / Download (exit 10)
+    SkillInstallError,
+    DownloadError,
+
+    // Remote (exit 11)
+    RemoteError,
+
     // Internal (exit 1)
     InternalError,
 }
@@ -90,6 +97,9 @@ impl ErrorCode {
             Self::IoError => "IO_ERROR",
             Self::JsonError => "JSON_ERROR",
             Self::EmbeddingError => "EMBEDDING_ERROR",
+            Self::SkillInstallError => "SKILL_INSTALL_ERROR",
+            Self::DownloadError => "DOWNLOAD_ERROR",
+            Self::RemoteError => "REMOTE_ERROR",
             Self::InternalError => "INTERNAL_ERROR",
         }
     }
@@ -117,6 +127,8 @@ impl ErrorCode {
             Self::ConfigError => 7,
             Self::IoError | Self::JsonError => 8,
             Self::EmbeddingError => 9,
+            Self::SkillInstallError | Self::DownloadError => 10,
+            Self::RemoteError => 11,
         }
     }
 
@@ -209,6 +221,15 @@ pub enum Error {
     #[error("Embedding error: {0}")]
     Embedding(String),
 
+    #[error("Skill install error: {0}")]
+    SkillInstall(String),
+
+    #[error("Download failed: {0}")]
+    Download(String),
+
+    #[error("Remote error: {0}")]
+    Remote(String),
+
     #[error("{0}")]
     Other(String),
 }
@@ -240,6 +261,9 @@ impl Error {
             Self::InvalidArgument(_) => ErrorCode::InvalidArgument,
             Self::Config(_) => ErrorCode::ConfigError,
             Self::Embedding(_) => ErrorCode::EmbeddingError,
+            Self::SkillInstall(_) => ErrorCode::SkillInstallError,
+            Self::Download(_) => ErrorCode::DownloadError,
+            Self::Remote(_) => ErrorCode::RemoteError,
             Self::Io(_) => ErrorCode::IoError,
             Self::Json(_) => ErrorCode::JsonError,
             Self::Other(_) => ErrorCode::InternalError,
@@ -353,6 +377,23 @@ impl Error {
                     None
                 }
             }
+
+            Self::SkillInstall(_) => Some(
+                "Check your internet connection and try again. \
+                 Use `sc skills status` to see installed skills."
+                    .to_string(),
+            ),
+
+            Self::Download(_) => Some(
+                "Check your internet connection. The download URL may be unreachable."
+                    .to_string(),
+            ),
+
+            Self::Remote(_) => Some(
+                "Check remote configuration with `sc config remote show`. \
+                 Ensure SSH access works: ssh user@host sc version"
+                    .to_string(),
+            ),
 
             Self::Database(_) | Self::Io(_) | Self::Json(_) | Self::Config(_)
             | Self::Embedding(_) | Self::Other(_) => None,
