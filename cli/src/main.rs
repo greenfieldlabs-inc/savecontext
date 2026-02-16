@@ -75,6 +75,7 @@ fn detect_subcommand(args: &[String]) -> Option<String> {
         "session", "status", "issue", "checkpoint", "memory",
         "sync", "project", "plan", "compaction", "prime",
         "init", "version", "completions", "embeddings",
+        "skills", "config", "remote",
     ];
 
     args.iter()
@@ -239,6 +240,15 @@ fn run(cli: &Cli, json: bool) -> Result<(), Error> {
         Commands::Embeddings { command } => {
             commands::embeddings::execute(command.clone(), cli.db.as_ref(), json)
         }
+
+        // Skills
+        Commands::Skills { command } => commands::skills::execute(command, json),
+
+        // Config
+        Commands::Config { command } => commands::config::execute(command, json),
+
+        // Remote (SSH proxy)
+        Commands::Remote { args } => commands::remote::execute(args, cli.db.as_ref(), json),
     }
 }
 

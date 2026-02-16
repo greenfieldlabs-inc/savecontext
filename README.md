@@ -216,6 +216,35 @@ SC_ACTOR=codex-agent-2 sc issue next-block --count 3
 sc issue list -s in_progress
 ```
 
+### Remote Access
+
+Access your SaveContext data from any machine. Run commands through SSH proxy or sync full JSONL exports between machines.
+
+```bash
+# Configure remote host
+sc config remote set --host myserver.com --user shane
+
+# Run any sc command on remote
+sc remote status
+sc remote session list
+sc remote issue list -s open
+
+# Sync data between machines
+sc sync push        # Export local → SCP to remote → import
+sc sync pull        # Export remote → SCP to local → import
+```
+
+### Skills & Hooks
+
+Install workflow skills and hooks without npm/bun. Downloads directly from GitHub.
+
+```bash
+sc skills install                    # Auto-detect tools, install everything
+sc skills install --tool claude-code # Target specific tool
+sc skills status                     # Check what's installed
+sc skills update                     # Re-download latest
+```
+
 ---
 
 ## Design Principles
@@ -231,7 +260,7 @@ bunx @savecontext/mcp     # MCP clients get the same commands
 
 ### 2. Local-Only
 
-No cloud, no accounts, no sync. All data lives in a single SQLite database with WAL mode for fast concurrent reads and crash-safe writes.
+No cloud, no accounts. All data lives in a single SQLite database with WAL mode for fast concurrent reads and crash-safe writes. Optional SSH-based sync (`sc sync push/pull`) lets you transfer data between machines without any cloud service.
 
 ```
 ~/.savecontext/
@@ -401,6 +430,15 @@ Full flag reference in [`cli/README.md`](cli/README.md). Agent integration patte
 | `sync status` | Check sync state | `sc sync status` |
 | `sync export` | Export to JSONL | `sc sync export` |
 | `sync import` | Import from JSONL | `sc sync import` |
+| `sync push` | Push local data to remote | `sc sync push` |
+| `sync pull` | Pull remote data to local | `sc sync pull` |
+| `skills install` | Install skills & hooks | `sc skills install` |
+| `skills status` | Show installed skills | `sc skills status` |
+| `skills update` | Update skills | `sc skills update` |
+| `config remote set` | Configure remote host | `sc config remote set --host myhost --user me` |
+| `config remote show` | Show remote config | `sc config remote show` |
+| `config remote remove` | Remove remote config | `sc config remote remove` |
+| `remote <cmd>` | Run sc on remote via SSH | `sc remote status` |
 | `completions` | Shell completions | `sc completions bash` |
 | `version` | Show version | `sc version` |
 

@@ -193,6 +193,26 @@ pub enum Commands {
         #[command(subcommand)]
         command: EmbeddingsCommands,
     },
+
+    /// Install and manage skills, hooks, and status line
+    Skills {
+        #[command(subcommand)]
+        command: SkillsCommands,
+    },
+
+    /// Configuration management
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+
+    /// Run sc commands on a remote host via SSH
+    #[command(trailing_var_arg = true)]
+    Remote {
+        /// Arguments to pass to sc on the remote host
+        #[arg(num_args = 1..)]
+        args: Vec<String>,
+    },
 }
 
 /// Supported shells for completions.
@@ -949,6 +969,28 @@ pub enum SyncCommands {
 
     /// Show sync status
     Status,
+
+    /// Push local JSONL exports to remote host via SCP
+    Push {
+        /// Force export before push
+        #[arg(long)]
+        force: bool,
+
+        /// Remote project path (defaults to local CWD path)
+        #[arg(long)]
+        remote_path: Option<String>,
+    },
+
+    /// Pull JSONL exports from remote host via SCP
+    Pull {
+        /// Force import after pull
+        #[arg(long)]
+        force: bool,
+
+        /// Remote project path (defaults to local CWD path)
+        #[arg(long)]
+        remote_path: Option<String>,
+    },
 }
 
 // ============================================================================
@@ -1204,4 +1246,84 @@ pub enum EmbeddingsCommands {
         #[arg(short, long)]
         session: Option<String>,
     },
+}
+
+// ============================================================================
+// Skills Commands
+// ============================================================================
+
+#[derive(Subcommand, Debug)]
+pub enum SkillsCommands {
+    /// Download and install skills, hooks, and status line
+    Install {
+        /// Target tool (claude-code, codex, gemini). Auto-detects if omitted.
+        #[arg(long)]
+        tool: Option<String>,
+
+        /// Skill mode: cli, mcp, or both (default: both)
+        #[arg(long, default_value = "both")]
+        mode: String,
+    },
+
+    /// Show installed skills and versions
+    Status,
+
+    /// Re-download and install latest skills
+    Update {
+        /// Target tool (claude-code, codex, gemini). Updates all if omitted.
+        #[arg(long)]
+        tool: Option<String>,
+    },
+}
+
+// ============================================================================
+// Config Commands
+// ============================================================================
+
+#[derive(Subcommand, Debug)]
+pub enum ConfigCommands {
+    /// Remote host configuration
+    Remote {
+        #[command(subcommand)]
+        command: ConfigRemoteCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ConfigRemoteCommands {
+    /// Set remote host configuration
+    Set(RemoteSetArgs),
+
+    /// Show current remote configuration
+    Show,
+
+    /// Remove remote configuration
+    Remove,
+}
+
+#[derive(Args, Debug)]
+pub struct RemoteSetArgs {
+    /// Remote hostname or IP
+    #[arg(long)]
+    pub host: String,
+
+    /// SSH username
+    #[arg(long)]
+    pub user: String,
+
+    /// SSH port (default: 22)
+    #[arg(long, default_value = "22")]
+    pub port: u16,
+
+    /// Path to SSH identity file (private key)
+    #[arg(long)]
+    pub identity_file: Option<String>,
+
+    /// Path to sc binary on remote host (default: sc)
+    #[arg(long, default_value = "sc")]
+    pub remote_sc_path: Option<String>,
+
+    /// Default remote project path
+    #[arg(long)]
+    pub remote_project_path: Option<String>,
 }

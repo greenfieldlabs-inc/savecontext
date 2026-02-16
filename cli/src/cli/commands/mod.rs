@@ -3,6 +3,7 @@
 pub mod checkpoint;
 pub mod compaction;
 pub mod completions;
+pub mod config;
 pub mod context;
 pub mod embeddings;
 pub mod init;
@@ -11,7 +12,9 @@ pub mod memory;
 pub mod plan;
 pub mod prime;
 pub mod project;
+pub mod remote;
 pub mod session;
+pub mod skills;
 pub mod status;
 pub mod sync;
 pub mod version;

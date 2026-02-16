@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 ## Historical Note
 Versions 0.1.0-0.1.2 were development releases with package.json version mismatches. v0.1.3 is the first npm-published release.
 
+## [0.1.31] - 2026-02-12
+
+### Added
+- **Skills install** (`sc skills install`) — Download and install skills, hooks, and statusline from GitHub
+  - Auto-detects installed tools (Claude Code, Codex, Gemini) from config directories
+  - Downloads CLI and MCP skill files (SKILL.md + 10 workflow files per mode)
+  - Installs Python hooks (`update-status-cache.py`, `statusline.py`) to `~/.savecontext/hooks/`
+  - Configures Claude Code `settings.json` with statusline command and PostToolUse hooks
+  - `--tool` flag to target specific tool, `--mode cli|mcp|both` for skill selection
+  - `sc skills status` shows installed tools and versions
+  - `sc skills update` re-downloads latest skills
+  - Tracks installation state in `~/.savecontext/skill-sync.json`
+- **Remote SSH proxy** (`sc remote`) — Run any sc command on a remote host via SSH
+  - `sc remote status`, `sc remote session list`, `sc remote issue list -s open`
+  - All arguments individually shell-quoted to prevent command injection
+  - Auto-appends `--json` when local `--json` flag is set
+  - Uses shared SSH connection helpers with BatchMode and ConnectTimeout
+- **Remote configuration** (`sc config remote`) — Manage SSH connection settings
+  - `sc config remote set --host <host> --user <user>` stores config at `~/.savecontext/config.json`
+  - `sc config remote show` displays current configuration
+  - `sc config remote remove` clears remote settings
+  - Supports `--port`, `--identity-file`, `--remote-sc-path`, `--remote-project-path`
+- **Sync push/pull** (`sc sync push/pull`) — Transfer JSONL exports between machines via SCP
+  - `sc sync push` exports locally then SCPs files to remote and runs import
+  - `sc sync pull` exports on remote then SCPs files locally and runs import
+  - `--force` flag for overwrite semantics on both push and pull
+  - Shell-quoted SSH/SCP commands throughout for injection safety
+  - Pull uses wildcard glob SCP (`*.jsonl`) — tolerates missing files on remote
+- **Shared SSH/SCP helpers** in `config.rs` — DRY connection building used by remote.rs and sync.rs
+  - `shell_quote()` — POSIX single-quote wrapping with `'\''` escape for embedded quotes
+  - `build_ssh_base_args()` — identity, port, BatchMode, ConnectTimeout, user@host
+  - `build_scp_base_args()` — same but uppercase `-P` for SCP port convention
+
 ## [0.1.30] - 2026-02-07
 
 ### Added
