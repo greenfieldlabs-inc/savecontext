@@ -88,6 +88,7 @@ mod tests {
             identity_file: None,
             remote_sc_path: Some("sc".to_string()),
             remote_project_path: None,
+            remote_db_path: None,
         };
 
         let args = build_ssh_base_args(&config);
@@ -104,6 +105,7 @@ mod tests {
             identity_file: None,
             remote_sc_path: None,
             remote_project_path: None,
+            remote_db_path: None,
         };
 
         let args = build_ssh_base_args(&config);
@@ -120,6 +122,7 @@ mod tests {
             identity_file: Some("~/.ssh/id_rsa".to_string()),
             remote_sc_path: None,
             remote_project_path: None,
+            remote_db_path: None,
         };
 
         let args = build_ssh_base_args(&config);

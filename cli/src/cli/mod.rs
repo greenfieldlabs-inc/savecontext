@@ -206,6 +206,12 @@ pub enum Commands {
         command: ConfigCommands,
     },
 
+    /// Time tracking (billable hours)
+    Time {
+        #[command(subcommand)]
+        command: TimeCommands,
+    },
+
     /// Run sc commands on a remote host via SSH
     #[command(trailing_var_arg = true)]
     Remote {
@@ -979,6 +985,10 @@ pub enum SyncCommands {
         /// Remote project path (defaults to local CWD path)
         #[arg(long)]
         remote_path: Option<String>,
+
+        /// Full database sync (SQLite backup) instead of JSONL
+        #[arg(long)]
+        full: bool,
     },
 
     /// Pull JSONL exports from remote host via SCP
@@ -990,6 +1000,17 @@ pub enum SyncCommands {
         /// Remote project path (defaults to local CWD path)
         #[arg(long)]
         remote_path: Option<String>,
+
+        /// Full database sync (SQLite backup) instead of JSONL
+        #[arg(long)]
+        full: bool,
+    },
+
+    /// Create a local database backup (used by full sync)
+    Backup {
+        /// Output path for the backup file
+        #[arg(long)]
+        output: Option<String>,
     },
 }
 
@@ -1263,6 +1284,10 @@ pub enum SkillsCommands {
         /// Skill mode: cli, mcp, or both (default: both)
         #[arg(long, default_value = "both")]
         mode: String,
+
+        /// Custom skills directory (overrides auto-detected path)
+        #[arg(long)]
+        path: Option<PathBuf>,
     },
 
     /// Show installed skills and versions
@@ -1326,4 +1351,145 @@ pub struct RemoteSetArgs {
     /// Default remote project path
     #[arg(long)]
     pub remote_project_path: Option<String>,
+
+    /// Path to SaveContext database on remote host
+    #[arg(long)]
+    pub remote_db_path: Option<String>,
+}
+
+// ============================================================================
+// Time Tracking Commands
+// ============================================================================
+
+#[derive(Subcommand, Debug)]
+pub enum TimeCommands {
+    /// Log hours worked
+    Log(TimeLogArgs),
+
+    /// List time entries
+    List(TimeListArgs),
+
+    /// Show grouped summary with subtotals
+    Summary {
+        /// Filter by billing period
+        #[arg(long)]
+        period: Option<String>,
+
+        /// Group by: period (default), date, issue, status
+        #[arg(long, default_value = "period")]
+        group_by: String,
+
+        /// Filter by status (logged, reviewed, invoiced)
+        #[arg(long)]
+        status: Option<String>,
+    },
+
+    /// Show total hours
+    Total {
+        /// Filter by billing period
+        #[arg(long)]
+        period: Option<String>,
+
+        /// Filter by status
+        #[arg(long)]
+        status: Option<String>,
+    },
+
+    /// Update a time entry
+    Update(TimeUpdateArgs),
+
+    /// Delete a time entry
+    Delete {
+        /// Time entry ID (full or short, e.g. TE-a1b2)
+        id: String,
+    },
+
+    /// Mark entries as invoiced for a billing period
+    Invoice {
+        /// Billing period to invoice
+        #[arg(long)]
+        period: String,
+
+        /// Source status to transition from (default: logged)
+        #[arg(long, default_value = "logged")]
+        from: String,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct TimeLogArgs {
+    /// Hours worked (e.g. 4, 1.5, 0.25)
+    pub hours: f64,
+
+    /// Description of work performed
+    pub description: String,
+
+    /// Link to an issue (short ID like SC-a1b2)
+    #[arg(long)]
+    pub issue: Option<String>,
+
+    /// Billing period identifier (e.g. GL-ABG-2026-001)
+    #[arg(long)]
+    pub period: Option<String>,
+
+    /// Work date (YYYY-MM-DD, defaults to today)
+    #[arg(long)]
+    pub date: Option<String>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct TimeListArgs {
+    /// Filter by billing period
+    #[arg(long)]
+    pub period: Option<String>,
+
+    /// Filter by status (logged, reviewed, invoiced)
+    #[arg(long)]
+    pub status: Option<String>,
+
+    /// Filter by issue ID
+    #[arg(long)]
+    pub issue: Option<String>,
+
+    /// Filter from date (YYYY-MM-DD)
+    #[arg(long)]
+    pub from: Option<String>,
+
+    /// Filter to date (YYYY-MM-DD)
+    #[arg(long)]
+    pub to: Option<String>,
+
+    /// Maximum entries to return
+    #[arg(short, long, default_value = "200")]
+    pub limit: u32,
+}
+
+#[derive(Args, Debug)]
+pub struct TimeUpdateArgs {
+    /// Time entry ID (full or short)
+    pub id: String,
+
+    /// New hours
+    #[arg(long)]
+    pub hours: Option<f64>,
+
+    /// New description
+    #[arg(long)]
+    pub description: Option<String>,
+
+    /// New billing period
+    #[arg(long)]
+    pub period: Option<String>,
+
+    /// New issue link
+    #[arg(long)]
+    pub issue: Option<String>,
+
+    /// New work date
+    #[arg(long)]
+    pub date: Option<String>,
+
+    /// New status (logged, reviewed, invoiced)
+    #[arg(long)]
+    pub status: Option<String>,
 }

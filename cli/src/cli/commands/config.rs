@@ -33,6 +33,8 @@ pub struct RemoteConfig {
     pub remote_sc_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_project_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_db_path: Option<String>,
 }
 
 fn default_port() -> u16 {
@@ -101,6 +103,7 @@ fn remote_set(args: &crate::cli::RemoteSetArgs, json: bool) -> Result<()> {
         identity_file: args.identity_file.clone(),
         remote_sc_path: args.remote_sc_path.clone(),
         remote_project_path: args.remote_project_path.clone(),
+        remote_db_path: args.remote_db_path.clone(),
     });
 
     save_config(&config)?;
@@ -150,6 +153,9 @@ fn remote_show(json: bool) -> Result<()> {
         );
         if let Some(ref path) = remote.remote_project_path {
             println!("  Path: {path}");
+        }
+        if let Some(ref db) = remote.remote_db_path {
+            println!("  DB:   {db}");
         }
     } else {
         println!("No remote configured.");
@@ -282,6 +288,7 @@ mod tests {
                 identity_file: None,
                 remote_sc_path: Some("sc".to_string()),
                 remote_project_path: None,
+                remote_db_path: None,
             }),
         };
 
@@ -336,6 +343,7 @@ mod tests {
             identity_file: None,
             remote_sc_path: None,
             remote_project_path: None,
+            remote_db_path: None,
         };
         let args = build_ssh_base_args(&config);
         assert!(args.contains(&"shane@example.com".to_string()));
@@ -351,6 +359,7 @@ mod tests {
             identity_file: None,
             remote_sc_path: None,
             remote_project_path: None,
+            remote_db_path: None,
         };
         let args = build_scp_base_args(&config);
         assert!(args.contains(&"-P".to_string())); // uppercase for SCP
