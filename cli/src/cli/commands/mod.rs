@@ -17,4 +17,5 @@ pub mod session;
 pub mod skills;
 pub mod status;
 pub mod sync;
+pub mod time_entry;
 pub mod version;

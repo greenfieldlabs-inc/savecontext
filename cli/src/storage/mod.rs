@@ -19,5 +19,5 @@ pub mod sqlite;
 
 pub use sqlite::{
     BackfillStats, Checkpoint, ContextItem, Issue, Memory, MutationContext, ProjectCounts,
-    SemanticSearchResult, Session, SqliteStorage,
+    SemanticSearchResult, Session, SqliteStorage, TimeEntry,
 };

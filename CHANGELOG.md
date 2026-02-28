@@ -8,6 +8,20 @@ Versions 0.1.0-0.1.2 were development releases with package.json version mismatc
 ## [0.1.31] - 2026-02-12
 
 ### Added
+- **Time tracking** (`sc time`) — Log billable hours linked to issues and billing periods
+  - `sc time log 4 "Description" --period "INV-001"` — Log hours with optional period and issue link
+  - `sc time list` — List entries with filtering by period, status, issue, or date range
+  - `sc time summary` — Group entries by period, date, issue, or status with subtotals
+  - `sc time total` — Aggregate hours with optional period/status filter
+  - `sc time update TE-xxxx --hours 5` — Partial field updates (hours, description, period, issue, date, status)
+  - `sc time invoice --period "INV-001"` — Batch transition `logged → invoiced` for a billing period
+  - `sc time delete TE-xxxx` — Delete a time entry
+  - Status lifecycle: `logged → reviewed → invoiced`
+  - Short ID pattern: `TE-xxxx` (human-friendly identifiers)
+  - `sc issue show` now displays total time logged against an issue
+  - Supports `--json`, `--format csv`, and table output
+  - Full JSONL sync support (export/import via `time_entries.jsonl`)
+  - Migration 015: `time_entries` table with dirty tracking triggers
 - **Skills install** (`sc skills install`) — Download and install skills, hooks, and statusline from GitHub
   - Auto-detects installed tools (Claude Code, Codex, Gemini) from config directories
   - Downloads CLI and MCP skill files (SKILL.md + 10 workflow files per mode)
@@ -37,6 +51,20 @@ Versions 0.1.0-0.1.2 were development releases with package.json version mismatc
   - `shell_quote()` — POSIX single-quote wrapping with `'\''` escape for embedded quotes
   - `build_ssh_base_args()` — identity, port, BatchMode, ConnectTimeout, user@host
   - `build_scp_base_args()` — same but uppercase `-P` for SCP port convention
+- **Factory AI plan detection** (`sc plan capture --agent factory`)
+  - Discovers plan files from `~/.factory/specs/*.md`
+  - Supports `FACTORY_HOME` environment variable for custom location
+  - Agent aliases: `factory`, `factory-ai`, `factoryai`
+  - Auto-discovery includes Factory AI in default search
+  - Works with `sc plan capture --agent factory-ai`
+- **Factory AI skills install** (`sc skills install --tool factory-ai`)
+  - Installs skills to `~/.factory/skills/`
+  - Supports CLI and MCP skill modes
+  - Auto-detects Factory AI in tool discovery
+- **Skills custom path override** (`--path` option)
+  - `sc skills install --path /custom/path` overrides auto-detected skills directory
+  - Useful for custom installations or testing
+  - Context-aware: named flag for skills install, positional for project create
 
 ## [0.1.30] - 2026-02-07
 

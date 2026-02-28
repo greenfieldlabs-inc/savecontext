@@ -288,3 +288,23 @@ context_issue_create_batch({
 7. Repeat 4-6 for remaining tasks
 8. `context_issue_complete` - Mark epic done when all tasks complete
 9. `context_plan_update` - Mark plan complete when all epics done
+
+### Time Tracking (CLI)
+
+Log billable hours linked to issues and billing periods via the `sc` CLI:
+
+```bash
+# Log hours
+sc time log 4 "VSB Parser Split" --period "GL-ABG-2026-001"
+sc time log 1.5 "Bug fix" --issue SC-xxxx --period "CLIENT-001"
+
+# Review
+sc time list --period "CLIENT-001"
+sc time summary --period "CLIENT-001"
+sc time total --status logged                  # Unbilled hours
+
+# Invoice a period (batch logged → invoiced)
+sc time invoice --period "CLIENT-001"
+```
+
+MCP tools for time tracking are planned for a future release.

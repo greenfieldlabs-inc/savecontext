@@ -723,6 +723,9 @@ fn show(id: &str, db_path: Option<&PathBuf>, json: bool) -> Result<()> {
         None
     };
 
+    // Check for logged time
+    let time_total = storage.get_issue_time_total(&issue.id).unwrap_or(0.0);
+
     if json {
         let mut value = serde_json::to_value(&issue)?;
         if let Some(ref p) = progress {
@@ -730,6 +733,9 @@ fn show(id: &str, db_path: Option<&PathBuf>, json: bool) -> Result<()> {
         }
         if let Some(ref reason) = close_reason {
             value["close_reason"] = serde_json::Value::String(reason.clone());
+        }
+        if time_total > 0.0 {
+            value["time_logged"] = serde_json::json!(time_total);
         }
         println!("{}", serde_json::to_string(&value)?);
     } else {
@@ -756,6 +762,10 @@ fn show(id: &str, db_path: Option<&PathBuf>, json: bool) -> Result<()> {
         if let Some(ref reason) = close_reason {
             println!();
             println!("Close reason: {reason}");
+        }
+        if time_total > 0.0 {
+            println!();
+            println!("Time logged: {time_total:.1}hrs");
         }
         if let Some(ref p) = progress {
             let pct = if p.total > 0 {

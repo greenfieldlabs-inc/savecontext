@@ -43,7 +43,7 @@ AI Coding Tools (Claude Code, Cursor, Cline, etc.)
                         ▼
     ┌───────────────────────────────────────────┐
     │  Rust CLI (`sc`)                          │
-    │  45+ commands for sessions, issues,       │
+    │  50+ commands: sessions, issues, time,    │
     │  context, memory, plans, checkpoints      │
     │  Background embedding generation          │
     └───────────────────┬───────────────────────┘
@@ -171,7 +171,33 @@ sc plan list
 sc plan show <id>
 sc plan update <id> --status completed
 sc plan capture                                # Import plan from AI agent's plan file
-sc plan capture --agent claude --max-age 60    # Specific agent, 60min max age
+sc plan capture --agent claude --max-age 60    # Specific agent (claude, gemini, opencode, cursor, factory), 60min max age
+sc plan capture --agent factory-ai             # Factory AI plans
+```
+
+#### Skills & Hooks
+```bash
+sc skills install                    # Auto-detect tools (claude-code, codex, gemini, factory-ai), install everything
+sc skills install --tool claude-code # Target specific tool
+sc skills install --tool factory-ai  # Factory AI tools
+sc skills install --path /custom/path # Override skills directory
+sc skills status                     # Check installed tools
+sc skills update                     # Re-download latest
+```
+
+#### Time Tracking
+```bash
+sc time log 4 "Implementation work" --period "INV-001"   # Log hours
+sc time log 1.5 "Bug fix" --issue SC-a1b2                # Link to issue
+sc time log 2 "Research" --date 2026-02-10               # Backdate
+sc time list                                              # All entries + total
+sc time list --period "INV-001" --status logged           # Filter
+sc time summary --period "INV-001"                        # Grouped subtotals
+sc time total                                             # Running total
+sc time total --status logged                             # Unbilled total
+sc time update TE-a1b2 --hours 5                          # Update entry
+sc time invoice --period "INV-001"                        # Batch logged→invoiced
+sc time delete TE-a1b2                                    # Delete entry
 ```
 
 #### Embeddings

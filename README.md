@@ -15,7 +15,7 @@
 
 ---
 
-SaveContext gives AI coding agents the operational layer they're missing — sessions, issue tracking, plans, semantic search, and multi-agent coordination, all stored locally in SQLite and available through a native CLI (`sc`) or any MCP-compatible client.
+SaveContext gives AI coding agents the operational layer they're missing — sessions, issue tracking, time tracking, plans, semantic search, and multi-agent coordination, all stored locally in SQLite and available through a native CLI (`sc`) or any MCP-compatible client.
 
 No cloud account. No API keys. No rate limits.
 
@@ -77,6 +77,7 @@ SaveContext is a local operational layer that runs alongside your AI coding agen
 | Works offline | **Yes** | No | No | Yes | Yes |
 | Sessions & context | **Yes** | No | No | No | No |
 | Issue tracking | **Yes** | Yes | Yes | Yes | No |
+| Time tracking | **Yes** | No | Limited | No | No |
 | Plans & specs | **Yes** | Projects | Yes | No | No |
 | Semantic search | **Yes** | No | No | No | No |
 | Smart context injection | **Yes** | No | No | No | No |
@@ -234,13 +235,33 @@ sc sync push        # Export local → SCP to remote → import
 sc sync pull        # Export remote → SCP to local → import
 ```
 
+### Time Tracking
+
+Log billable hours linked to issues and billing periods. Track time across projects, review summaries, and batch-invoice completed work.
+
+```bash
+# Log hours
+sc time log 4 "Auth middleware implementation" --period "CLIENT-2026-001"
+sc time log 1.5 "Bug fix" --issue SC-a1b2 --period "CLIENT-2026-001"
+
+# Review
+sc time list --period "CLIENT-2026-001"
+sc time summary --period "CLIENT-2026-001"
+sc time total --status logged                  # Unbilled hours
+
+# Invoice a billing period
+sc time invoice --period "CLIENT-2026-001"
+```
+
 ### Skills & Hooks
 
 Install workflow skills and hooks without npm/bun. Downloads directly from GitHub.
 
 ```bash
-sc skills install                    # Auto-detect tools, install everything
+sc skills install                    # Auto-detect tools (Claude Code, Codex, Gemini, Factory AI), install everything
 sc skills install --tool claude-code # Target specific tool
+sc skills install --tool factory-ai  # Factory AI tools
+sc skills install --path /custom/path # Override skills directory
 sc skills status                     # Check what's installed
 sc skills update                     # Re-download latest
 ```
@@ -393,6 +414,18 @@ Full flag reference in [`cli/README.md`](cli/README.md). Agent integration patte
 | `memory list` | List memory | `sc memory list -c command` |
 | `memory delete` | Delete memory | `sc memory delete test-cmd` |
 
+### Time Tracking
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `time log` | Log hours | `sc time log 4 "Work" --period "INV-001"` |
+| `time list` | List entries | `sc time list --period "INV-001"` |
+| `time summary` | Grouped subtotals | `sc time summary --period "INV-001"` |
+| `time total` | Aggregate hours | `sc time total --status logged` |
+| `time update` | Update entry | `sc time update TE-a1b2 --hours 5` |
+| `time invoice` | Batch invoice | `sc time invoice --period "INV-001"` |
+| `time delete` | Delete entry | `sc time delete TE-a1b2` |
+
 ### Plans
 
 | Command | Description | Example |
@@ -432,7 +465,7 @@ Full flag reference in [`cli/README.md`](cli/README.md). Agent integration patte
 | `sync import` | Import from JSONL | `sc sync import` |
 | `sync push` | Push local data to remote | `sc sync push` |
 | `sync pull` | Pull remote data to local | `sc sync pull` |
-| `skills install` | Install skills & hooks | `sc skills install` |
+| `skills install` | Install skills & hooks | `sc skills install` (supports --tool, --path, --mode) |
 | `skills status` | Show installed skills | `sc skills status` |
 | `skills update` | Update skills | `sc skills update` |
 | `config remote set` | Configure remote host | `sc config remote set --host myhost --user me` |
@@ -972,6 +1005,78 @@ sc sync export
 # Option 2: Copy the database file
 cp ~/.savecontext/data/savecontext.db ~/backups/
 ```
+
+---
+
+## Self-Hosted Deployment
+
+Run SaveContext on any VPS or server with Docker. SSH in to use `sc` directly, sync data from your local machine, and optionally expose the dashboard.
+
+```bash
+# 1. Clone and start
+git clone https://github.com/greenfieldlabs-inc/savecontext.git
+cd savecontext/docker
+docker compose up -d
+
+# 2. Use it (default password: savecontext)
+ssh -p 2222 root@localhost sc status
+ssh -p 2222 root@localhost sc session list
+```
+
+Default SSH password is `savecontext`. Change it for production:
+
+```yaml
+environment:
+  - SSH_PASSWORD=your-secure-password
+```
+
+### Service Toggles
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ENABLE_SSH` | `true` | OpenSSH server for CLI access, sync, and MCP |
+| `ENABLE_DASHBOARD` | `true` | Web dashboard on port 3333 |
+| `SSH_PASSWORD` | `savecontext` | SSH login password (change for production) |
+
+```bash
+# CLI-only (no dashboard)
+ENABLE_DASHBOARD=false docker compose up -d
+```
+
+### Remote MCP Access
+
+MCP clients connect via SSH pipe — SSH handles auth and encryption:
+
+```json
+{
+  "mcpServers": {
+    "savecontext-remote": {
+      "command": "sshpass",
+      "args": ["-p", "savecontext", "ssh", "-p", "2222",
+               "-o", "StrictHostKeyChecking=no", "root@your-server",
+               "SAVECONTEXT_DB=/data/savecontext.db",
+               "bun", "/opt/savecontext/server/dist/index.js"]
+    }
+  }
+}
+```
+
+For production, use SSH keys instead of `sshpass`.
+
+### Sync Between Machines
+
+```bash
+# On your local machine, configure the remote
+sc config remote set --host your-server --port 2222 --user root
+
+# Push local data to server
+sc sync push
+
+# Pull server data to local
+sc sync pull
+```
+
+Data persists in a Docker volume (`sc-data`). The SQLite database lives at `/data/savecontext.db` inside the container.
 
 ---
 
