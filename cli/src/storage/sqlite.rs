@@ -36,6 +36,7 @@ pub struct MutationContext {
     pub dirty_issues: HashSet<String>,
     pub dirty_items: HashSet<String>,
     pub dirty_plans: HashSet<String>,
+    pub dirty_time_entries: HashSet<String>,
 }
 
 impl MutationContext {
@@ -50,6 +51,7 @@ impl MutationContext {
             dirty_issues: HashSet::new(),
             dirty_items: HashSet::new(),
             dirty_plans: HashSet::new(),
+            dirty_time_entries: HashSet::new(),
         }
     }
 
@@ -102,6 +104,11 @@ impl MutationContext {
     pub fn mark_plan_dirty(&mut self, plan_id: &str) {
         self.dirty_plans.insert(plan_id.to_string());
     }
+
+    /// Mark a time entry as dirty for sync export.
+    pub fn mark_time_entry_dirty(&mut self, time_entry_id: &str) {
+        self.dirty_time_entries.insert(time_entry_id.to_string());
+    }
 }
 
 /// Statistics from backfilling dirty records for a project.
@@ -118,19 +125,21 @@ pub struct BackfillStats {
     pub context_items: usize,
     /// Number of plans marked dirty.
     pub plans: usize,
+    /// Number of time entries marked dirty.
+    pub time_entries: usize,
 }
 
 impl BackfillStats {
     /// Returns true if any records were marked dirty.
     #[must_use]
     pub fn any(&self) -> bool {
-        self.sessions > 0 || self.issues > 0 || self.context_items > 0 || self.plans > 0
+        self.sessions > 0 || self.issues > 0 || self.context_items > 0 || self.plans > 0 || self.time_entries > 0
     }
 
     /// Returns total number of records marked dirty.
     #[must_use]
     pub fn total(&self) -> usize {
-        self.sessions + self.issues + self.context_items + self.plans
+        self.sessions + self.issues + self.context_items + self.plans + self.time_entries
     }
 }
 
@@ -206,6 +215,31 @@ impl SqliteStorage {
     #[must_use]
     pub fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    /// Flush the WAL journal into the main database file.
+    ///
+    /// Runs `PRAGMA wal_checkpoint(TRUNCATE)` which moves all WAL content
+    /// into the main DB file and then truncates the WAL to zero bytes.
+    /// This ensures the `.db` file is self-contained for backup purposes.
+    pub fn checkpoint(&self) -> Result<()> {
+        self.conn
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(())
+    }
+
+    /// Create a consistent backup of the database at `dest_path`.
+    ///
+    /// First checkpoints the WAL, then uses SQLite's Online Backup API
+    /// to produce a point-in-time snapshot. Safe to call while the
+    /// database is open and even during concurrent reads.
+    pub fn backup_to(&self, dest_path: &Path) -> Result<()> {
+        self.checkpoint()?;
+        let mut dest = Connection::open(dest_path)?;
+        let backup = rusqlite::backup::Backup::new(&self.conn, &mut dest)?;
+        // Copy all pages in one step (-1 = all remaining pages)
+        backup.step(-1)?;
+        Ok(())
     }
 
     /// Execute a mutation with the transaction protocol.
@@ -3419,11 +3453,19 @@ impl SqliteStorage {
             rusqlite::params![now, project_path],
         )?;
 
+        // Backfill time entries
+        let time_entries_count = self.conn.execute(
+            "INSERT OR IGNORE INTO dirty_time_entries (time_entry_id, marked_at)
+             SELECT id, ?1 FROM time_entries WHERE project_path = ?2",
+            rusqlite::params![now, project_path],
+        )?;
+
         Ok(BackfillStats {
             sessions: sessions_count,
             issues: issues_count,
             context_items: context_items_count,
             plans: plans_count,
+            time_entries: time_entries_count,
         })
     }
 
@@ -4184,6 +4226,384 @@ impl SqliteStorage {
         Ok(())
     }
 
+    // ==========================
+    // Time Entry Operations
+    // ==========================
+
+    /// Create a new time entry.
+    pub fn create_time_entry(
+        &mut self,
+        id: &str,
+        short_id: Option<&str>,
+        project_path: &str,
+        hours: f64,
+        description: &str,
+        work_date: &str,
+        issue_id: Option<&str>,
+        period: Option<&str>,
+        actor: &str,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+
+        self.mutate("create_time_entry", actor, |tx, ctx| {
+            tx.execute(
+                "INSERT INTO time_entries (id, short_id, project_path, issue_id, period, hours, description, work_date, status, actor, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'logged', ?9, ?10, ?10)",
+                rusqlite::params![id, short_id, project_path, issue_id, period, hours, description, work_date, actor, now],
+            )?;
+
+            ctx.record_event("time_entry", id, EventType::TimeEntryCreated);
+            ctx.mark_time_entry_dirty(id);
+
+            Ok(())
+        })
+    }
+
+    /// Get a time entry by ID (full or short).
+    pub fn get_time_entry(&self, id: &str, project_path: Option<&str>) -> Result<Option<TimeEntry>> {
+        let sql = if project_path.is_some() {
+            "SELECT id, short_id, project_path, issue_id, period, hours, description, work_date, status, actor, created_at, updated_at
+             FROM time_entries WHERE (id = ?1 OR short_id = ?1) AND project_path = ?2"
+        } else {
+            "SELECT id, short_id, project_path, issue_id, period, hours, description, work_date, status, actor, created_at, updated_at
+             FROM time_entries WHERE id = ?1 OR short_id = ?1"
+        };
+
+        let mut stmt = self.conn.prepare(sql)?;
+
+        let entry = if let Some(path) = project_path {
+            stmt.query_row(rusqlite::params![id, path], map_time_entry_row)
+        } else {
+            stmt.query_row(rusqlite::params![id], map_time_entry_row)
+        }
+        .optional()?;
+
+        Ok(entry)
+    }
+
+    /// List time entries with optional filters.
+    pub fn list_time_entries(
+        &self,
+        project_path: &str,
+        period: Option<&str>,
+        status: Option<&str>,
+        issue_id: Option<&str>,
+        date_from: Option<&str>,
+        date_to: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<Vec<TimeEntry>> {
+        let mut conditions = vec!["project_path = ?1".to_string()];
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(project_path.to_string())];
+        let mut idx = 2;
+
+        if let Some(p) = period {
+            conditions.push(format!("period = ?{idx}"));
+            params.push(Box::new(p.to_string()));
+            idx += 1;
+        }
+        if let Some(s) = status {
+            conditions.push(format!("status = ?{idx}"));
+            params.push(Box::new(s.to_string()));
+            idx += 1;
+        }
+        if let Some(iid) = issue_id {
+            conditions.push(format!("issue_id = ?{idx}"));
+            params.push(Box::new(iid.to_string()));
+            idx += 1;
+        }
+        if let Some(df) = date_from {
+            conditions.push(format!("work_date >= ?{idx}"));
+            params.push(Box::new(df.to_string()));
+            idx += 1;
+        }
+        if let Some(dt) = date_to {
+            conditions.push(format!("work_date <= ?{idx}"));
+            params.push(Box::new(dt.to_string()));
+            idx += 1;
+        }
+
+        let limit_val = limit.unwrap_or(200);
+        conditions.push(format!("1=1"));
+        let where_clause = conditions.join(" AND ");
+        let sql = format!(
+            "SELECT id, short_id, project_path, issue_id, period, hours, description, work_date, status, actor, created_at, updated_at
+             FROM time_entries WHERE {where_clause} ORDER BY work_date DESC, created_at DESC LIMIT ?{idx}"
+        );
+
+        params.push(Box::new(limit_val));
+
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), map_time_entry_row)?;
+        let entries: Vec<TimeEntry> = rows.collect::<std::result::Result<_, _>>()?;
+        Ok(entries)
+    }
+
+    /// Update a time entry (partial fields).
+    pub fn update_time_entry(
+        &mut self,
+        id: &str,
+        project_path: &str,
+        hours: Option<f64>,
+        description: Option<&str>,
+        period: Option<&str>,
+        issue_id: Option<&str>,
+        work_date: Option<&str>,
+        actor: &str,
+    ) -> Result<()> {
+        // Resolve full ID from short ID
+        let full_id = self.resolve_time_entry_id(id, Some(project_path))?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        self.mutate("update_time_entry", actor, |tx, ctx| {
+            let mut sets = vec!["updated_at = ?1".to_string()];
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+            let mut idx = 2;
+
+            if let Some(h) = hours {
+                sets.push(format!("hours = ?{idx}"));
+                params.push(Box::new(h));
+                idx += 1;
+            }
+            if let Some(d) = description {
+                sets.push(format!("description = ?{idx}"));
+                params.push(Box::new(d.to_string()));
+                idx += 1;
+            }
+            if let Some(p) = period {
+                sets.push(format!("period = ?{idx}"));
+                params.push(Box::new(p.to_string()));
+                idx += 1;
+            }
+            if let Some(iid) = issue_id {
+                sets.push(format!("issue_id = ?{idx}"));
+                params.push(Box::new(iid.to_string()));
+                idx += 1;
+            }
+            if let Some(wd) = work_date {
+                sets.push(format!("work_date = ?{idx}"));
+                params.push(Box::new(wd.to_string()));
+                idx += 1;
+            }
+
+            let set_clause = sets.join(", ");
+            let sql = format!("UPDATE time_entries SET {set_clause} WHERE id = ?{idx}");
+            params.push(Box::new(full_id.clone()));
+
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            tx.execute(&sql, param_refs.as_slice())?;
+
+            ctx.record_event("time_entry", &full_id, EventType::TimeEntryUpdated);
+            ctx.mark_time_entry_dirty(&full_id);
+
+            Ok(())
+        })
+    }
+
+    /// Update time entry status.
+    pub fn update_time_entry_status(
+        &mut self,
+        id: &str,
+        project_path: &str,
+        status: &str,
+        actor: &str,
+    ) -> Result<()> {
+        let full_id = self.resolve_time_entry_id(id, Some(project_path))?;
+        let now = chrono::Utc::now().timestamp_millis();
+
+        self.mutate("update_time_entry_status", actor, |tx, ctx| {
+            tx.execute(
+                "UPDATE time_entries SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![status, now, full_id],
+            )?;
+
+            ctx.record_event("time_entry", &full_id, EventType::TimeEntryStatusChanged);
+            ctx.mark_time_entry_dirty(&full_id);
+
+            Ok(())
+        })
+    }
+
+    /// Batch update time entries from one status to another for a period.
+    /// Returns (count, total_hours).
+    pub fn invoice_time_entries(
+        &mut self,
+        project_path: &str,
+        period: &str,
+        from_status: &str,
+        to_status: &str,
+        actor: &str,
+    ) -> Result<(usize, f64)> {
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // First get the entries to update (for event tracking)
+        let entries = self.list_time_entries(project_path, Some(period), Some(from_status), None, None, None, None)?;
+        let count = entries.len();
+        let total_hours: f64 = entries.iter().map(|e| e.hours).sum();
+
+        if count == 0 {
+            return Ok((0, 0.0));
+        }
+
+        self.mutate("invoice_time_entries", actor, |tx, ctx| {
+            tx.execute(
+                "UPDATE time_entries SET status = ?1, updated_at = ?2 WHERE project_path = ?3 AND period = ?4 AND status = ?5",
+                rusqlite::params![to_status, now, project_path, period, from_status],
+            )?;
+
+            for entry in &entries {
+                ctx.record_event("time_entry", &entry.id, EventType::TimeEntryStatusChanged);
+                ctx.mark_time_entry_dirty(&entry.id);
+            }
+
+            Ok(())
+        })?;
+
+        Ok((count, total_hours))
+    }
+
+    /// Delete a time entry.
+    pub fn delete_time_entry(
+        &mut self,
+        id: &str,
+        project_path: &str,
+        actor: &str,
+    ) -> Result<()> {
+        let full_id = self.resolve_time_entry_id(id, Some(project_path))?;
+
+        self.mutate("delete_time_entry", actor, |tx, ctx| {
+            tx.execute(
+                "DELETE FROM time_entries WHERE id = ?1",
+                rusqlite::params![full_id],
+            )?;
+
+            // Clean up dirty tracking
+            tx.execute(
+                "DELETE FROM dirty_time_entries WHERE time_entry_id = ?1",
+                rusqlite::params![full_id],
+            )?;
+
+            ctx.record_event("time_entry", &full_id, EventType::TimeEntryDeleted);
+
+            Ok(())
+        })
+    }
+
+    /// Get total hours for a project, optionally filtered by period and/or status.
+    pub fn get_time_total(
+        &self,
+        project_path: &str,
+        period: Option<&str>,
+        status: Option<&str>,
+    ) -> Result<f64> {
+        let mut conditions = vec!["project_path = ?1".to_string()];
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(project_path.to_string())];
+        let mut idx = 2;
+
+        if let Some(p) = period {
+            conditions.push(format!("period = ?{idx}"));
+            params.push(Box::new(p.to_string()));
+            idx += 1;
+        }
+        if let Some(s) = status {
+            conditions.push(format!("status = ?{idx}"));
+            params.push(Box::new(s.to_string()));
+            let _ = idx;
+        }
+
+        let where_clause = conditions.join(" AND ");
+        let sql = format!("SELECT COALESCE(SUM(hours), 0) FROM time_entries WHERE {where_clause}");
+
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let total: f64 = self.conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
+        Ok(total)
+    }
+
+    /// Get total hours logged against a specific issue.
+    pub fn get_issue_time_total(&self, issue_id: &str) -> Result<f64> {
+        let total: f64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(hours), 0) FROM time_entries WHERE issue_id = ?1",
+            rusqlite::params![issue_id],
+            |row| row.get(0),
+        )?;
+        Ok(total)
+    }
+
+    /// Get all time entries for a project (for sync export).
+    pub fn get_time_entries_by_project(&self, project_path: &str) -> Result<Vec<TimeEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, short_id, project_path, issue_id, period, hours, description, work_date, status, actor, created_at, updated_at
+             FROM time_entries WHERE project_path = ?1 ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map([project_path], map_time_entry_row)?;
+        let entries: Vec<TimeEntry> = rows.collect::<std::result::Result<_, _>>()?;
+        Ok(entries)
+    }
+
+    /// Resolve a time entry ID (full or short) to a full ID.
+    fn resolve_time_entry_id(&self, id: &str, project_path: Option<&str>) -> Result<String> {
+        let entry = self.get_time_entry(id, project_path)?
+            .ok_or_else(|| Error::InvalidArgument(format!("Time entry not found: {id}")))?;
+        Ok(entry.id)
+    }
+
+    /// Get dirty time entry IDs for a project.
+    pub fn get_dirty_time_entries_by_project(&self, project_path: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT dte.time_entry_id
+             FROM dirty_time_entries dte
+             INNER JOIN time_entries te ON dte.time_entry_id = te.id
+             WHERE te.project_path = ?1",
+        )?;
+        let rows = stmt.query_map([project_path], |row| row.get(0))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Clear dirty flags for time entries after export.
+    pub fn clear_dirty_time_entries(&mut self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let placeholders = vec!["?"; ids.len()].join(",");
+        let sql = format!("DELETE FROM dirty_time_entries WHERE time_entry_id IN ({placeholders})");
+        let params: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        self.conn.execute(&sql, params.as_slice())?;
+        Ok(())
+    }
+
+    /// Upsert a time entry (for sync import).
+    pub fn upsert_time_entry(&mut self, entry: &TimeEntry) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO time_entries (id, short_id, project_path, issue_id, period, hours, description, work_date, status, actor, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(id) DO UPDATE SET
+               short_id = excluded.short_id,
+               issue_id = excluded.issue_id,
+               period = excluded.period,
+               hours = excluded.hours,
+               description = excluded.description,
+               work_date = excluded.work_date,
+               status = excluded.status,
+               actor = excluded.actor,
+               updated_at = excluded.updated_at",
+            rusqlite::params![
+                entry.id,
+                entry.short_id,
+                entry.project_path,
+                entry.issue_id,
+                entry.period,
+                entry.hours,
+                entry.description,
+                entry.work_date,
+                entry.status,
+                entry.actor,
+                entry.created_at,
+                entry.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
     // ======================
     // Embedding Operations
     // ======================
@@ -4859,6 +5279,23 @@ fn map_issue_row(row: &rusqlite::Row) -> rusqlite::Result<Issue> {
     })
 }
 
+fn map_time_entry_row(row: &rusqlite::Row) -> rusqlite::Result<TimeEntry> {
+    Ok(TimeEntry {
+        id: row.get(0)?,
+        short_id: row.get(1)?,
+        project_path: row.get(2)?,
+        issue_id: row.get(3)?,
+        period: row.get(4)?,
+        hours: row.get(5)?,
+        description: row.get(6)?,
+        work_date: row.get(7)?,
+        status: row.get(8)?,
+        actor: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
+}
+
 // ==================
 // Data Structures
 // ==================
@@ -4924,6 +5361,23 @@ pub struct EpicProgress {
     pub open: usize,
     pub blocked: usize,
     pub deferred: usize,
+}
+
+/// A time entry record for billable hour tracking.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TimeEntry {
+    pub id: String,
+    pub short_id: Option<String>,
+    pub project_path: String,
+    pub issue_id: Option<String>,
+    pub period: Option<String>,
+    pub hours: f64,
+    pub description: String,
+    pub work_date: String,
+    pub status: String,
+    pub actor: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 /// A checkpoint record.

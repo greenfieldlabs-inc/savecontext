@@ -76,6 +76,10 @@ const MIGRATIONS: &[Migration] = &[
         version: "014_close_reason",
         sql: include_str!("../../migrations/014_close_reason.sql"),
     },
+    Migration {
+        version: "015_add_time_entries",
+        sql: include_str!("../../migrations/015_add_time_entries.sql"),
+    },
 ];
 
 /// Run all pending migrations on the database.
@@ -161,7 +165,7 @@ mod tests {
         // This test verifies that all include_str! paths are valid
         // If any path is wrong, compilation will fail
         assert!(!MIGRATIONS.is_empty());
-        assert_eq!(MIGRATIONS.len(), 14);
+        assert_eq!(MIGRATIONS.len(), 15);
     }
 
     #[test]
@@ -176,7 +180,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 14);
+        assert_eq!(count, 15);
     }
 
     #[test]
@@ -194,6 +198,6 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 14);
+        assert_eq!(count, 15);
     }
 }
