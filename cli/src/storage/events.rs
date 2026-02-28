@@ -39,6 +39,12 @@ pub enum EventType {
     PlanUpdated,
     PlanCompleted,
 
+    // Time entry events
+    TimeEntryCreated,
+    TimeEntryUpdated,
+    TimeEntryDeleted,
+    TimeEntryStatusChanged,
+
     // Memory events
     MemorySaved,
     MemoryDeleted,
@@ -76,6 +82,10 @@ impl EventType {
             Self::PlanCreated => "plan_created",
             Self::PlanUpdated => "plan_updated",
             Self::PlanCompleted => "plan_completed",
+            Self::TimeEntryCreated => "time_entry_created",
+            Self::TimeEntryUpdated => "time_entry_updated",
+            Self::TimeEntryDeleted => "time_entry_deleted",
+            Self::TimeEntryStatusChanged => "time_entry_status_changed",
             Self::MemorySaved => "memory_saved",
             Self::MemoryDeleted => "memory_deleted",
             Self::ProjectCreated => "project_created",
@@ -221,6 +231,10 @@ fn parse_event_type(s: &str) -> EventType {
         "plan_created" => EventType::PlanCreated,
         "plan_updated" => EventType::PlanUpdated,
         "plan_completed" => EventType::PlanCompleted,
+        "time_entry_created" => EventType::TimeEntryCreated,
+        "time_entry_updated" => EventType::TimeEntryUpdated,
+        "time_entry_deleted" => EventType::TimeEntryDeleted,
+        "time_entry_status_changed" => EventType::TimeEntryStatusChanged,
         "memory_saved" => EventType::MemorySaved,
         "memory_deleted" => EventType::MemoryDeleted,
         "project_created" => EventType::ProjectCreated,
