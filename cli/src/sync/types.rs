@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::model::Plan;
-use crate::storage::sqlite::{Checkpoint, ContextItem, Issue, Memory, Session};
+use crate::storage::sqlite::{Checkpoint, ContextItem, Issue, Memory, Session, TimeEntry};
 
 /// Tagged union for JSONL records.
 ///
@@ -28,6 +28,8 @@ pub enum SyncRecord {
     Checkpoint(CheckpointRecord),
     /// A plan record with sync metadata.
     Plan(PlanRecord),
+    /// A time entry record with sync metadata.
+    TimeEntry(TimeEntryRecord),
 }
 
 /// Session with sync metadata.
@@ -102,6 +104,18 @@ pub struct PlanRecord {
     pub exported_at: String,
 }
 
+/// Time entry with sync metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeEntryRecord {
+    /// The time entry data.
+    #[serde(flatten)]
+    pub data: TimeEntry,
+    /// SHA256 hash of the serialized data.
+    pub content_hash: String,
+    /// ISO8601 timestamp when this record was exported.
+    pub exported_at: String,
+}
+
 /// A deletion record for sync.
 ///
 /// When a record is deleted locally, a deletion record is created so that
@@ -143,6 +157,8 @@ pub enum EntityType {
     Checkpoint,
     /// A plan.
     Plan,
+    /// A time entry.
+    TimeEntry,
 }
 
 impl std::fmt::Display for EntityType {
@@ -154,6 +170,7 @@ impl std::fmt::Display for EntityType {
             Self::Memory => write!(f, "memory"),
             Self::Checkpoint => write!(f, "checkpoint"),
             Self::Plan => write!(f, "plan"),
+            Self::TimeEntry => write!(f, "time_entry"),
         }
     }
 }
@@ -169,6 +186,7 @@ impl std::str::FromStr for EntityType {
             "memory" => Ok(Self::Memory),
             "checkpoint" => Ok(Self::Checkpoint),
             "plan" => Ok(Self::Plan),
+            "time_entry" => Ok(Self::TimeEntry),
             _ => Err(format!("Unknown entity type: {s}")),
         }
     }
@@ -204,6 +222,8 @@ pub struct ExportStats {
     pub checkpoints: usize,
     /// Number of plans exported.
     pub plans: usize,
+    /// Number of time entries exported.
+    pub time_entries: usize,
     /// Number of deletions exported.
     pub deletions: usize,
 }
@@ -212,7 +232,7 @@ impl ExportStats {
     /// Total number of data records exported (excludes deletions).
     #[must_use]
     pub fn total(&self) -> usize {
-        self.sessions + self.issues + self.context_items + self.memories + self.checkpoints + self.plans
+        self.sessions + self.issues + self.context_items + self.memories + self.checkpoints + self.plans + self.time_entries
     }
 
     /// Total including deletions.
@@ -243,6 +263,8 @@ pub struct ImportStats {
     pub checkpoints: EntityStats,
     /// Statistics for plans.
     pub plans: EntityStats,
+    /// Statistics for time entries.
+    pub time_entries: EntityStats,
 }
 
 impl ImportStats {
@@ -255,6 +277,7 @@ impl ImportStats {
             + self.memories.total()
             + self.checkpoints.total()
             + self.plans.total()
+            + self.time_entries.total()
     }
 
     /// Total number of records created.
@@ -266,6 +289,7 @@ impl ImportStats {
             + self.memories.created
             + self.checkpoints.created
             + self.plans.created
+            + self.time_entries.created
     }
 
     /// Total number of records updated.
@@ -277,6 +301,7 @@ impl ImportStats {
             + self.memories.updated
             + self.checkpoints.updated
             + self.plans.updated
+            + self.time_entries.updated
     }
 }
 

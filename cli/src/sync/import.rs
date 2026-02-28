@@ -15,6 +15,7 @@ use crate::sync::hash::content_hash;
 use crate::sync::types::{
     CheckpointRecord, ContextItemRecord, DeletionRecord, EntityStats, ImportStats, IssueRecord,
     MemoryRecord, MergeStrategy, PlanRecord, SessionRecord, SyncError, SyncRecord, SyncResult,
+    TimeEntryRecord,
 };
 
 /// Importer for JSONL sync files.
@@ -59,6 +60,9 @@ impl<'a> Importer<'a> {
                 SyncRecord::Plan(rec) => {
                     self.import_plan(rec, &mut stats.plans)?;
                 }
+                SyncRecord::TimeEntry(rec) => {
+                    self.import_time_entry(rec, &mut stats.time_entries)?;
+                }
             }
         }
 
@@ -85,6 +89,7 @@ impl<'a> Importer<'a> {
             ("memories.jsonl", "memories"),
             ("checkpoints.jsonl", "checkpoints"),
             ("plans.jsonl", "plans"),
+            ("time_entries.jsonl", "time_entries"),
         ];
 
         for (filename, _entity) in files {
@@ -398,6 +403,57 @@ impl<'a> Importer<'a> {
 
         Ok(())
     }
+
+    fn import_time_entry(
+        &mut self,
+        rec: TimeEntryRecord,
+        stats: &mut EntityStats,
+    ) -> SyncResult<()> {
+        let existing = self
+            .storage
+            .get_time_entry(&rec.data.id, None)
+            .map_err(|e| SyncError::Database(e.to_string()))?;
+
+        match existing {
+            Some(local) => {
+                let local_hash = content_hash(&local);
+                if local_hash == rec.content_hash {
+                    stats.skipped += 1;
+                    return Ok(());
+                }
+
+                match self.strategy {
+                    MergeStrategy::PreferNewer => {
+                        if rec.data.updated_at > local.updated_at {
+                            self.storage
+                                .upsert_time_entry(&rec.data)
+                                .map_err(|e| SyncError::Database(e.to_string()))?;
+                            stats.updated += 1;
+                        } else {
+                            stats.skipped += 1;
+                        }
+                    }
+                    MergeStrategy::PreferLocal => {
+                        stats.skipped += 1;
+                    }
+                    MergeStrategy::PreferExternal => {
+                        self.storage
+                            .upsert_time_entry(&rec.data)
+                            .map_err(|e| SyncError::Database(e.to_string()))?;
+                        stats.updated += 1;
+                    }
+                }
+            }
+            None => {
+                self.storage
+                    .upsert_time_entry(&rec.data)
+                    .map_err(|e| SyncError::Database(e.to_string()))?;
+                stats.created += 1;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Merge import stats from one operation into accumulated stats.
@@ -431,6 +487,11 @@ fn merge_stats(total: &mut ImportStats, add: &ImportStats) {
     total.plans.updated += add.plans.updated;
     total.plans.skipped += add.plans.skipped;
     total.plans.conflicts += add.plans.conflicts;
+
+    total.time_entries.created += add.time_entries.created;
+    total.time_entries.updated += add.time_entries.updated;
+    total.time_entries.skipped += add.time_entries.skipped;
+    total.time_entries.conflicts += add.time_entries.conflicts;
 }
 
 #[cfg(test)]
