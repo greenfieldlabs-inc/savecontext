@@ -29,12 +29,13 @@ let writeDb: Database | null = null;
  * Get database path - auto-detect or use config
  */
 export function getDatabasePath(): string {
-  // Default: ~/.savecontext/data/savecontext.db
-  const defaultPath = join(homedir(), '.savecontext', 'data', 'savecontext.db');
+  // Environment variable override (used by Docker, CI, custom setups)
+  if (process.env.SAVECONTEXT_DB) {
+    return process.env.SAVECONTEXT_DB;
+  }
 
-  // TODO: Add config file support for custom paths
-  // For now, always use default
-  return defaultPath;
+  // Default: ~/.savecontext/data/savecontext.db
+  return join(homedir(), '.savecontext', 'data', 'savecontext.db');
 }
 
 /**

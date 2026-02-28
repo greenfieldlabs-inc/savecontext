@@ -1,7 +1,7 @@
 //! Skills install and management commands.
 //!
 //! Downloads skills, hooks, and status line scripts from GitHub
-//! and installs them for detected AI coding tools (Claude Code, Codex, Gemini).
+//! and installs them for detected AI coding tools (Claude Code, Codex, Gemini, Factory AI).
 //!
 //! This enables Rust CLI users to get full skill/hook support without
 //! needing npm/bun or cloning the repository.
@@ -64,6 +64,7 @@ const KNOWN_TOOLS: &[(&str, &str)] = &[
     ("claude-code", ".claude/skills"),
     ("codex", ".codex/skills"),
     ("gemini", ".gemini/skills"),
+    ("factory-ai", ".factory/skills"),
 ];
 
 // ── Types ────────────────────────────────────────────────────
@@ -114,36 +115,43 @@ struct ToolInstallResult {
 /// Execute skills commands.
 pub fn execute(command: &SkillsCommands, json: bool) -> Result<()> {
     match command {
-        SkillsCommands::Install { tool, mode } => install(tool.as_deref(), mode, json),
+        SkillsCommands::Install { tool, mode, path } => install(tool.as_deref(), mode, path.as_deref(), json),
         SkillsCommands::Status => status(json),
         SkillsCommands::Update { tool } => update(tool.as_deref(), json),
     }
 }
 
-fn install(tool: Option<&str>, mode: &str, json: bool) -> Result<()> {
+fn install(tool: Option<&str>, mode: &str, path_override: Option<&Path>, json: bool) -> Result<()> {
     let modes = parse_modes(mode)?;
     let home = home_dir()?;
 
     // Detect or filter tools
-    let tools = if let Some(name) = tool {
+    let mut tools = if let Some(name) = tool {
         let t = resolve_tool(name, &home)?;
         vec![t]
     } else {
         detect_tools(&home)
     };
 
+    // Apply custom path override if provided
+    if let Some(override_path) = path_override {
+        for detected_tool in &mut tools {
+            detected_tool.skills_dir = override_path.to_path_buf();
+        }
+    }
+
     if tools.is_empty() {
         if json {
             let output = serde_json::json!({
                 "success": false,
-                "error": "No AI coding tools detected. Install Claude Code, Codex, or Gemini first.",
+                "error": "No AI coding tools detected. Install Claude Code, Codex, Gemini, or Factory AI first.",
                 "tools": []
             });
             println!("{}", serde_json::to_string(&output)?);
             return Ok(());
         }
         return Err(Error::SkillInstall(
-            "No AI coding tools detected. Install Claude Code, Codex, or Gemini CLI first."
+            "No AI coding tools detected. Install Claude Code, Codex, Gemini, or Factory AI first."
                 .to_string(),
         ));
     }
@@ -280,7 +288,7 @@ fn status(json: bool) -> Result<()> {
 
 fn update(tool: Option<&str>, json: bool) -> Result<()> {
     // Update is just re-install
-    install(tool, "both", json)
+    install(tool, "both", None, json)
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -325,9 +333,10 @@ fn resolve_tool(name: &str, home: &Path) -> Result<DetectedTool> {
         "claude" | "claude-code" | "claudecode" => "claude-code",
         "codex" | "codex-cli" => "codex",
         "gemini" | "gemini-cli" => "gemini",
+        "factory" | "factory-ai" | "factoryai" => "factory-ai",
         other => {
             return Err(Error::InvalidArgument(format!(
-                "Unknown tool '{other}'. Supported: claude-code, codex, gemini"
+                "Unknown tool '{other}'. Supported: claude-code, codex, gemini, factory-ai"
             )));
         }
     };
