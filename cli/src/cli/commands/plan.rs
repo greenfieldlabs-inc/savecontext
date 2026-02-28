@@ -390,7 +390,7 @@ fn execute_capture(
         let agent_filter = agent
             .map(|a| AgentKind::from_arg(a)
                 .ok_or_else(|| Error::Other(format!(
-                    "Unknown agent: {a}. Use: claude, gemini, opencode, cursor"
+                    "Unknown agent: {a}. Use: claude, gemini, opencode, cursor, factory"
                 ))))
             .transpose()?;
 
@@ -407,7 +407,7 @@ fn execute_capture(
                 if let Some(agent_name) = agent {
                     println!("  Searched agent: {agent_name}");
                 } else {
-                    println!("  Searched: Claude Code, Gemini CLI, OpenCode, Cursor");
+                    println!("  Searched: Claude Code, Gemini CLI, OpenCode, Cursor, Factory AI");
                 }
                 println!("  Max age: {max_age_minutes} minutes");
             }

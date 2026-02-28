@@ -5,6 +5,7 @@
 //! - Gemini CLI: `~/.gemini/tmp/<sha256(project)>/plans/*.md`
 //! - OpenCode: `<project>/.opencode/plans/*.md`
 //! - Cursor: `<project>/.cursor/plans/*.md`
+//! - Factory AI: `~/.factory/specs/*.md`
 //!
 //! Used by `sc plan capture` to import plans into SaveContext.
 
@@ -34,6 +35,7 @@ pub enum AgentKind {
     GeminiCli,
     OpenCode,
     Cursor,
+    FactoryAi,
 }
 
 impl AgentKind {
@@ -44,6 +46,7 @@ impl AgentKind {
             "gemini" | "gemini-cli" => Some(Self::GeminiCli),
             "opencode" | "open-code" => Some(Self::OpenCode),
             "cursor" => Some(Self::Cursor),
+            "factory" | "factory-ai" | "factoryai" => Some(Self::FactoryAi),
             _ => None,
         }
     }
@@ -55,6 +58,7 @@ impl AgentKind {
             Self::GeminiCli => "Gemini CLI",
             Self::OpenCode => "OpenCode",
             Self::Cursor => "Cursor",
+            Self::FactoryAi => "Factory AI",
         }
     }
 }
@@ -79,6 +83,7 @@ pub fn discover_plans(
             AgentKind::GeminiCli,
             AgentKind::OpenCode,
             AgentKind::Cursor,
+            AgentKind::FactoryAi,
         ],
     };
 
@@ -154,6 +159,21 @@ fn plan_directories(agent: AgentKind, project_path: &Path) -> Vec<PathBuf> {
         }
         AgentKind::Cursor => {
             vec![project_path.join(".cursor").join("plans")]
+        }
+        AgentKind::FactoryAi => {
+            // Check FACTORY_HOME env var first, then fallback to ~/.factory
+            let factory_home = std::env::var("FACTORY_HOME")
+                .map(PathBuf::from)
+                .ok()
+                .or_else(|| {
+                    directories::BaseDirs::new()
+                        .map(|b| b.home_dir().join(".factory"))
+                });
+            if let Some(home) = factory_home {
+                vec![home.join("specs")]
+            } else {
+                vec![]
+            }
         }
     }
 }
@@ -256,6 +276,9 @@ mod tests {
         assert_eq!(AgentKind::from_arg("gemini"), Some(AgentKind::GeminiCli));
         assert_eq!(AgentKind::from_arg("opencode"), Some(AgentKind::OpenCode));
         assert_eq!(AgentKind::from_arg("cursor"), Some(AgentKind::Cursor));
+        assert_eq!(AgentKind::from_arg("factory"), Some(AgentKind::FactoryAi));
+        assert_eq!(AgentKind::from_arg("factory-ai"), Some(AgentKind::FactoryAi));
+        assert_eq!(AgentKind::from_arg("factoryai"), Some(AgentKind::FactoryAi));
         assert_eq!(AgentKind::from_arg("unknown"), None);
     }
 

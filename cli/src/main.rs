@@ -17,7 +17,7 @@ use std::process::ExitCode;
 /// `update`). The preprocessor detects the subcommand first.
 fn preprocess_args(args: impl Iterator<Item = String>) -> Vec<String> {
     let raw: Vec<String> = args.collect();
-    let subcommand = detect_subcommand(&raw);
+    let (subcommand, subsubcommand) = detect_subcommand(&raw);
 
     // Aliases safe to strip for ALL commands
     let mut aliases: Vec<&str> = vec![
@@ -26,8 +26,14 @@ fn preprocess_args(args: impl Iterator<Item = String>) -> Vec<String> {
                     // project update, plan update, checkpoint restore,
                     // session resume/delete, memory delete/get
         "--name",   // session start, session rename
-        "--path",   // project create
+        "--hours",  // time log
     ];
+
+    // --path is positional in: project create
+    // --path is NAMED in: skills install
+    if subcommand.as_deref() == Some("project") && subsubcommand.as_deref() == Some("create") {
+        aliases.push("--path");
+    }
 
     // --key is positional in: save, update, delete, tag, memory save/delete/get
     // --key is a NAMED flag in: get (GetArgs.key)
@@ -65,23 +71,53 @@ fn preprocess_args(args: impl Iterator<Item = String>) -> Vec<String> {
     result
 }
 
-/// Detect the primary subcommand from the arg list.
+/// Detect the primary subcommand and sub-subcommand from the arg list.
 ///
-/// Scans for the first known subcommand token after the binary name.
+/// Scans for the first known subcommand token after the binary name,
+/// then checks for sub-subcommands (e.g., "install" from "skills install").
 /// Used by `preprocess_args` to apply context-aware alias stripping.
-fn detect_subcommand(args: &[String]) -> Option<String> {
+fn detect_subcommand(args: &[String]) -> (Option<String>, Option<String>) {
     const SUBCOMMANDS: &[&str] = &[
         "save", "get", "update", "delete", "tag",
         "session", "status", "issue", "checkpoint", "memory",
         "sync", "project", "plan", "compaction", "prime",
         "init", "version", "completions", "embeddings",
-        "skills", "config", "remote",
+        "skills", "config", "remote", "time",
     ];
 
-    args.iter()
+    // Known sub-subcommands to recognize
+    const SUBSUBCOMMANDS: &[&str] = &[
+        "create", "update", "delete", "list", "show", "resume", "pause", "end",
+        "install", "status", "update", "tree", "add", "remove", "set",
+        "log", "list", "summary", "total", "invoice",
+    ];
+
+    let subcommand = args.iter()
         .skip(1) // skip binary name
         .find(|a| SUBCOMMANDS.contains(&a.as_str()))
-        .cloned()
+        .cloned();
+
+    // Detect sub-subcommand (e.g., "create" from "project create")
+    let subsubcommand = if let Some(ref cmd) = subcommand {
+        let mut iter = args.iter().skip(1).skip_while(|a| a != &cmd.as_str());
+        // Skip the subcommand itself, get the next token
+        iter.next();
+        let next = iter.next().cloned();
+        // Only return if it's a known sub-subcommand
+        if let Some(ref s) = next {
+            if SUBSUBCOMMANDS.contains(&s.as_str()) {
+                next
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    (subcommand, subsubcommand)
 }
 
 fn main() -> ExitCode {
@@ -247,6 +283,11 @@ fn run(cli: &Cli, json: bool) -> Result<(), Error> {
         // Config
         Commands::Config { command } => commands::config::execute(command, json),
 
+        // Time tracking
+        Commands::Time { command } => {
+            commands::time_entry::execute(command, cli.db.as_ref(), cli.actor.as_deref(), json)
+        }
+
         // Remote (SSH proxy)
         Commands::Remote { args } => commands::remote::execute(args, cli.db.as_ref(), json),
     }
@@ -332,13 +373,27 @@ mod tests {
     fn test_detect_subcommand_basic() {
         let args: Vec<String> = vec!["sc", "save", "key", "val"]
             .into_iter().map(String::from).collect();
-        assert_eq!(detect_subcommand(&args), Some("save".to_string()));
+        assert_eq!(detect_subcommand(&args), (Some("save".to_string()), None));
     }
 
     #[test]
     fn test_detect_subcommand_with_flags() {
         let args: Vec<String> = vec!["sc", "--json", "--db", "/tmp/db", "update", "key"]
             .into_iter().map(String::from).collect();
-        assert_eq!(detect_subcommand(&args), Some("update".to_string()));
+        assert_eq!(detect_subcommand(&args), (Some("update".to_string()), None));
+    }
+
+    #[test]
+    fn test_detect_subcommand_subsubcommand() {
+        let args: Vec<String> = vec!["sc", "project", "create", "/tmp/path"]
+            .into_iter().map(String::from).collect();
+        assert_eq!(detect_subcommand(&args), (Some("project".to_string()), Some("create".to_string())));
+    }
+
+    #[test]
+    fn test_detect_subcommand_skills_install() {
+        let args: Vec<String> = vec!["sc", "skills", "install", "--path", "/tmp/skills"]
+            .into_iter().map(String::from).collect();
+        assert_eq!(detect_subcommand(&args), (Some("skills".to_string()), Some("install".to_string())));
     }
 }
