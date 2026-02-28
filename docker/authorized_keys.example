@@ -1,0 +1,5 @@
+# Add your public SSH key(s) here, one per line.
+# Copy this file to `authorized_keys` before starting the container.
+#
+# Example:
+# ssh-ed25519 AAAA... user@machine

@@ -1,0 +1,20 @@
+services:
+  savecontext:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: savecontext
+    ports:
+      - "2222:22"       # SSH (CLI + sync + MCP via stdio pipe)
+      - "3333:3333"     # Dashboard
+    volumes:
+      - sc-data:/data
+      - ./authorized_keys:/root/.ssh/authorized_keys:ro
+    environment:
+      - ENABLE_SSH=true
+      - ENABLE_DASHBOARD=true
+      - SSH_PASSWORD=savecontext   # Change this for production
+    restart: unless-stopped
+
+volumes:
+  sc-data:

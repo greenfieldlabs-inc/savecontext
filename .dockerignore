@@ -1,0 +1,10 @@
+cli/target/
+server/node_modules/
+server/dist/
+dashboard/node_modules/
+dashboard/.next/
+node_modules/
+.git/
+**/*.md
+!server/src/database/schema.sql
+docker/authorized_keys
