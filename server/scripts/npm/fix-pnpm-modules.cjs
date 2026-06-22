@@ -15,6 +15,11 @@ const pnpmDir = path.join(nodeModulesDir, '.pnpm');
 // Modules that need fixing (native modules with build artifacts)
 const modulesToFix = ['better-sqlite3', 'bindings', 'file-uri-to-path', 'detect-libc'];
 
+if (!fs.existsSync(pnpmDir)) {
+  console.log('No pnpm module store found in standalone bundle; skipping module fix');
+  process.exit(0);
+}
+
 for (const moduleName of modulesToFix) {
   const stubDir = path.join(nodeModulesDir, moduleName);
 
