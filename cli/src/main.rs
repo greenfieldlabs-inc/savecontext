@@ -26,13 +26,18 @@ fn preprocess_args(args: impl Iterator<Item = String>) -> Vec<String> {
                     // project update, plan update, checkpoint restore,
                     // session resume/delete, memory delete/get
         "--name",   // session start, session rename
-        "--hours",  // time log
     ];
 
     // --path is positional in: project create
     // --path is NAMED in: skills install
     if subcommand.as_deref() == Some("project") && subsubcommand.as_deref() == Some("create") {
         aliases.push("--path");
+    }
+
+    // --hours is positional in: time log
+    // --hours is a NAMED field in: time update
+    if subcommand.as_deref() == Some("time") && subsubcommand.as_deref() == Some("log") {
+        aliases.push("--hours");
     }
 
     // --key is positional in: save, update, delete, tag, memory save/delete/get

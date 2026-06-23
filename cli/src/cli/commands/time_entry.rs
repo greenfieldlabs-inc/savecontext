@@ -81,15 +81,6 @@ fn log(
         ));
     }
 
-    let db_path = resolve_db_path(db_path.map(|p| p.as_path())).ok_or(Error::NotInitialized)?;
-    if !db_path.exists() {
-        return Err(Error::NotInitialized);
-    }
-
-    let actor = actor.map(ToString::to_string).unwrap_or_else(default_actor);
-    let mut storage = SqliteStorage::open(&db_path)?;
-    let project_path = resolve_project_path(&storage, None)?;
-
     // Validate and default date
     let work_date = match &args.date {
         Some(d) => {
@@ -98,6 +89,46 @@ fn log(
         }
         None => chrono::Local::now().format("%Y-%m-%d").to_string(),
     };
+
+    if crate::is_dry_run() {
+        if json {
+            let output = serde_json::json!({
+                "dry_run": true,
+                "action": "log_time_entry",
+                "hours": args.hours,
+                "description": args.description,
+                "work_date": work_date,
+                "period": args.period,
+                "issue": args.issue,
+            });
+            println!("{}", serde_json::to_string(&output)?);
+        } else {
+            let period_str = args
+                .period
+                .as_deref()
+                .map(|p| format!(" [{p}]"))
+                .unwrap_or_default();
+            let issue_str = args
+                .issue
+                .as_deref()
+                .map(|i| format!(" (issue: {i})"))
+                .unwrap_or_default();
+            println!(
+                "Would log {:.1}hrs  {}  {work_date}{period_str}{issue_str}",
+                args.hours, args.description
+            );
+        }
+        return Ok(());
+    }
+
+    let db_path = resolve_db_path(db_path.map(|p| p.as_path())).ok_or(Error::NotInitialized)?;
+    if !db_path.exists() {
+        return Err(Error::NotInitialized);
+    }
+
+    let actor = actor.map(ToString::to_string).unwrap_or_else(default_actor);
+    let mut storage = SqliteStorage::open(&db_path)?;
+    let project_path = resolve_project_path(&storage, None)?;
 
     // Resolve issue short ID to full ID if provided
     let issue_id = if let Some(ref issue_ref) = args.issue {
@@ -412,6 +443,26 @@ fn update(
         validate_status(s)?;
     }
 
+    if crate::is_dry_run() {
+        if json {
+            let output = serde_json::json!({
+                "dry_run": true,
+                "action": "update_time_entry",
+                "id": args.id,
+                "hours": args.hours,
+                "description": args.description,
+                "period": args.period,
+                "issue": args.issue,
+                "date": args.date,
+                "status": args.status,
+            });
+            println!("{}", serde_json::to_string(&output)?);
+        } else {
+            println!("Would update time entry: {}", args.id);
+        }
+        return Ok(());
+    }
+
     let db_path = resolve_db_path(db_path.map(|p| p.as_path())).ok_or(Error::NotInitialized)?;
     if !db_path.exists() {
         return Err(Error::NotInitialized);
@@ -471,6 +522,20 @@ fn update(
 }
 
 fn delete(id: &str, db_path: Option<&PathBuf>, actor: Option<&str>, json: bool) -> Result<()> {
+    if crate::is_dry_run() {
+        if json {
+            let output = serde_json::json!({
+                "dry_run": true,
+                "action": "delete_time_entry",
+                "id": id,
+            });
+            println!("{}", serde_json::to_string(&output)?);
+        } else {
+            println!("Would delete time entry: {id}");
+        }
+        return Ok(());
+    }
+
     let db_path = resolve_db_path(db_path.map(|p| p.as_path())).ok_or(Error::NotInitialized)?;
     if !db_path.exists() {
         return Err(Error::NotInitialized);
@@ -502,6 +567,24 @@ fn invoice(
     actor: Option<&str>,
     json: bool,
 ) -> Result<()> {
+    if crate::is_dry_run() {
+        if json {
+            let output = serde_json::json!({
+                "dry_run": true,
+                "action": "invoice_time_entries",
+                "period": period,
+                "from_status": from,
+                "to_status": "invoiced",
+            });
+            println!("{}", serde_json::to_string(&output)?);
+        } else {
+            println!(
+                "Would mark {from} entries as invoiced for period: {period}"
+            );
+        }
+        return Ok(());
+    }
+
     let db_path = resolve_db_path(db_path.map(|p| p.as_path())).ok_or(Error::NotInitialized)?;
     if !db_path.exists() {
         return Err(Error::NotInitialized);
